@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import type { DocumentCategory, StoredDocument } from "@/lib/types";
+import { getSupabaseClient } from "@/lib/supabase";
 
 const categories: { name: DocumentCategory; icon: React.ReactNode }[] = [
   { name: "Casa", icon: <Building2 size={20} /> },
