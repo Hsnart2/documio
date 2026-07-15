@@ -63,6 +63,34 @@ function isExpiringWithin30Days(expiryDate?: string | null) {
 }
 
 export default function Home() {
+  const [email, setEmail] = useState("");
+const [password, setPassword] = useState("");
+const [user, setUser] = useState<string | null>(null);
+async function signUp() {
+  const supabase = getSupabaseClient();
+  if (!supabase) return alert("Supabase non configurato");
+
+  const { error } = await supabase.auth.signUp({
+    email,
+    password,
+  });
+
+  if (error) return alert(error.message);
+  alert("Controlla la tua email per confermare la registrazione.");
+}
+
+async function signIn() {
+  const supabase = getSupabaseClient();
+  if (!supabase) return alert("Supabase non configurato");
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) return alert(error.message);
+  setUser(data.user.email ?? "utente");
+}
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
   const [query, setQuery] = useState("");
   const [activeCategory, setActiveCategory] =
@@ -115,7 +143,40 @@ export default function Home() {
 
     setDocuments((current) => current.filter((doc) => doc.id !== id));
   }
+if (!user) {
+  return (
+    <main style={{ maxWidth: 420, margin: "80px auto", padding: 24 }}>
+      <h1>Accedi a Documio</h1>
 
+      <input
+        type="email"
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        style={{ width: "100%", padding: 12, marginBottom: 12 }}
+      />
+
+      <input
+        type="password"
+        placeholder="Password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        style={{ width: "100%", padding: 12, marginBottom: 12 }}
+      />
+
+      <button onClick={signIn} style={{ width: "100%", padding: 12 }}>
+        Accedi
+      </button>
+
+      <button
+        onClick={signUp}
+        style={{ width: "100%", padding: 12, marginTop: 10 }}
+      >
+        Registrati
+      </button>
+    </main>
+  );
+}
   return (
     <main>
       <header className="topbar">
