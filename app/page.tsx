@@ -82,6 +82,13 @@ type Translation = {
   organizing: string;
   analyzeAndArchive: string;
   archiveError: string;
+  analyzingAttachment: string;
+  possibleMatch: string;
+  matchReasons: string;
+  linkSelected: string;
+  saveAsNew: string;
+  chooseDocument: string;
+  noMatchFound: string;
   close: string;
   categories: Record<DocumentCategory, string>;
 };
@@ -151,6 +158,13 @@ const translations: Record<Language, Translation> = {
     analyzeAndArchive: "Analizza e archivia",
     archiveError:
       "Non sono riuscito ad archiviare il documento. Controlla il server e riprova.",
+    analyzingAttachment: "Analisi IA dell’allegato…",
+    possibleMatch: "Possibile collegamento trovato",
+    matchReasons: "Motivi",
+    linkSelected: "Collega al documento selezionato",
+    saveAsNew: "Salva come nuovo documento",
+    chooseDocument: "Scegli il documento",
+    noMatchFound: "Nessun collegamento sicuro trovato.",
     close: "Chiudi",
     categories: {
       Casa: "Casa",
@@ -230,6 +244,13 @@ const translations: Record<Language, Translation> = {
     analyzeAndArchive: "Analyze and archive",
     archiveError:
       "I couldn’t archive the document. Check the server and try again.",
+    analyzingAttachment: "AI attachment analysis…",
+    possibleMatch: "Possible link found",
+    matchReasons: "Reasons",
+    linkSelected: "Link to selected document",
+    saveAsNew: "Save as a new document",
+    chooseDocument: "Choose document",
+    noMatchFound: "No reliable match found.",
     close: "Close",
     categories: {
       Casa: "Home",
@@ -1291,8 +1312,10 @@ export default function Home() {
       {showUpload && (
         <UploadModal
           language={language}
+          documents={documents}
           onClose={() => setShowUpload(false)}
           onSaved={saveDocument}
+          onLinkedAttachment={saveAttachment}
         />
       )}
     </main>
@@ -1326,10 +1349,59 @@ function AttachmentModal({
   const [paymentMethod, setPaymentMethod] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const t = translations[language];
 
+  async function analyzeSelectedFile(selectedFile: File) {
+    setAnalyzing(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("language", language);
+      formData.append("mode", "attachment");
+      formData.append(
+        "candidateDocuments",
+        JSON.stringify([
+          {
+            id: document.id,
+            title: document.title,
+            category: document.category,
+            summary: document.summary,
+            keywords: document.keywords,
+            expiryDate: document.expiryDate,
+            paymentStatus: document.paymentStatus,
+            paidAmount: document.paidAmount,
+          },
+        ]),
+      );
+
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Analysis failed");
+      }
+
+      setTitle(data.title || selectedFile.name);
+      setAttachmentType(data.attachmentType || "Altro");
+      setPaymentDate(data.paymentDate || "");
+      setAmount(data.amount != null ? String(data.amount) : "");
+      setPaymentMethod(data.paymentMethod || "");
+      setNotes(data.notes || data.summary || "");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : t.archiveError);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   async function submit() {
-    if (!file || !title.trim() || loading) return;
+    if (!file || !title.trim() || loading || analyzing) return;
 
     setLoading(true);
 
@@ -1367,11 +1439,15 @@ function AttachmentModal({
           <input
             type="file"
             accept="application/pdf,image/*"
-            onChange={(event) => setFile(event.target.files?.[0] || null)}
+            onChange={(event) => {
+              const selectedFile = event.target.files?.[0] || null;
+              setFile(selectedFile);
+              if (selectedFile) void analyzeSelectedFile(selectedFile);
+            }}
           />
           <Upload size={28} />
           <strong>{file ? file.name : t.chooseFile}</strong>
-          <span>{t.fileFormats}</span>
+          <span>{analyzing ? t.analyzingAttachment : t.fileFormats}</span>
         </label>
 
         <label className="field">
@@ -1379,7 +1455,6 @@ function AttachmentModal({
           <input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder={language === "it" ? "Es. Ricevuta PagoPA" : "E.g. PagoPA receipt"}
           />
         </label>
 
@@ -1426,7 +1501,6 @@ function AttachmentModal({
           <input
             value={paymentMethod}
             onChange={(event) => setPaymentMethod(event.target.value)}
-            placeholder={language === "it" ? "Es. PagoPA, F24, bonifico" : "E.g. bank transfer"}
           />
         </label>
 
@@ -1440,10 +1514,14 @@ function AttachmentModal({
 
         <button
           className="primary full"
-          disabled={!file || !title.trim() || loading}
+          disabled={!file || !title.trim() || loading || analyzing}
           onClick={submit}
         >
-          {loading ? t.savingAttachment : t.saveAttachment}
+          {loading
+            ? t.savingAttachment
+            : analyzing
+              ? t.analyzingAttachment
+              : t.saveAttachment}
         </button>
       </div>
     </div>
@@ -1452,18 +1530,61 @@ function AttachmentModal({
 
 function UploadModal({
   language,
+  documents,
   onClose,
   onSaved,
+  onLinkedAttachment,
 }: {
   language: Language;
+  documents: StoredDocument[];
   onClose: () => void;
   onSaved: (doc: StoredDocument, file: File) => void | Promise<void>;
+  onLinkedAttachment: (
+    document: StoredDocument,
+    attachment: Omit<
+      DocumentAttachment,
+      "id" | "uploadedAt" | "storagePath"
+    >,
+    file: File,
+  ) => void | Promise<void>;
 }) {
+  type SmartAnalysis = {
+    title: string;
+    category: DocumentCategory;
+    summary: string;
+    keywords: string[];
+    expiryDate: string | null;
+    isAttachment: boolean;
+    attachmentType: DocumentAttachment["attachmentType"];
+    paymentDate: string | null;
+    amount: number | null;
+    paymentMethod: string | null;
+    notes: string;
+    suggestedDocumentId: string | null;
+    matchConfidence: number;
+    matchReasons: string[];
+  };
+
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analysis, setAnalysis] = useState<SmartAnalysis | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const t = translations[language];
+
+  const candidateDocuments = documents.map((document) => ({
+    id: document.id,
+    title: document.title,
+    category: document.category,
+    summary: document.summary,
+    keywords: document.keywords,
+    expiryDate: document.expiryDate,
+    paymentStatus: document.paymentStatus,
+    paidAt: document.paidAt,
+    paidAmount: document.paidAmount,
+    paymentMethod: document.paymentMethod,
+  }));
 
   async function analyze() {
     if (!file || loading) return;
@@ -1474,8 +1595,8 @@ function UploadModal({
       if (file.size > 4 * 1024 * 1024) {
         throw new Error(
           language === "it"
-            ? "Il file supera 4 MB. Per il primo test scegli un file più piccolo."
-            : "The file is larger than 4 MB. For the first test, choose a smaller file.",
+            ? "Il file supera 4 MB. Scegli un file più piccolo."
+            : "The file is larger than 4 MB. Choose a smaller file.",
         );
       }
 
@@ -1483,19 +1604,52 @@ function UploadModal({
       formData.append("file", file);
       formData.append("userNote", note);
       formData.append("language", language);
+      formData.append("mode", "document");
+      formData.append(
+        "candidateDocuments",
+        JSON.stringify(candidateDocuments),
+      );
 
       const response = await fetch("/api/analyze", {
         method: "POST",
         body: formData,
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as SmartAnalysis & {
+        error?: string;
+      };
 
       if (!response.ok) {
         throw new Error(data.error || "Analysis failed");
       }
 
-      await onSaved({
+      if (data.isAttachment && documents.length > 0) {
+        const suggestedExists = documents.some(
+          (document) => document.id === data.suggestedDocumentId,
+        );
+
+        setAnalysis(data);
+        setSelectedDocumentId(
+          suggestedExists
+            ? data.suggestedDocumentId || ""
+            : documents[0]?.id || "",
+        );
+        return;
+      }
+
+      await saveAsNewDocument(data);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : t.archiveError);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveAsNewDocument(data = analysis) {
+    if (!file || !data) return;
+
+    await onSaved(
+      {
         id: crypto.randomUUID(),
         title: data.title || file.name,
         category: data.category || "Altro",
@@ -1512,12 +1666,117 @@ function UploadModal({
         paidAt: null,
         paidAmount: null,
         paymentMethod: null,
-      }, file);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : t.archiveError);
+      },
+      file,
+    );
+  }
+
+  async function linkToSelectedDocument() {
+    if (!file || !analysis || !selectedDocumentId) return;
+
+    const selectedDocument = documents.find(
+      (document) => document.id === selectedDocumentId,
+    );
+
+    if (!selectedDocument) return;
+
+    setLoading(true);
+
+    try {
+      await onLinkedAttachment(
+        selectedDocument,
+        {
+          documentId: selectedDocument.id,
+          title: analysis.title || file.name,
+          attachmentType: analysis.attachmentType || "Altro",
+          fileName: file.name,
+          paymentDate: analysis.paymentDate || null,
+          amount: analysis.amount ?? null,
+          paymentMethod: analysis.paymentMethod || null,
+          notes: analysis.notes || analysis.summary || null,
+        },
+        file,
+      );
+      onClose();
     } finally {
       setLoading(false);
     }
+  }
+
+  if (analysis?.isAttachment) {
+    const suggestedDocument = documents.find(
+      (document) => document.id === analysis.suggestedDocumentId,
+    );
+
+    return (
+      <div className="modal-backdrop" onMouseDown={onClose}>
+        <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className="close"
+            onClick={onClose}
+            aria-label={t.close}
+          >
+            <X />
+          </button>
+
+          <h2>{t.possibleMatch}</h2>
+          <p>
+            <strong>{analysis.title}</strong>
+          </p>
+
+          {suggestedDocument ? (
+            <div
+              style={{
+                border: "1px solid #dbeafe",
+                borderRadius: 12,
+                padding: 12,
+                marginBottom: 12,
+              }}
+            >
+              <strong>{suggestedDocument.title}</strong>
+              <div style={{ marginTop: 6 }}>
+                {analysis.matchConfidence.toFixed(0)}% ·{" "}
+                {analysis.matchReasons.join(" · ")}
+              </div>
+            </div>
+          ) : (
+            <p>{t.noMatchFound}</p>
+          )}
+
+          <label className="field">
+            {t.chooseDocument}
+            <select
+              value={selectedDocumentId}
+              onChange={(event) => setSelectedDocumentId(event.target.value)}
+            >
+              {documents.map((document) => (
+                <option key={document.id} value={document.id}>
+                  {document.title}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            className="primary full"
+            disabled={!selectedDocumentId || loading}
+            onClick={linkToSelectedDocument}
+          >
+            {t.linkSelected}
+          </button>
+
+          <button
+            type="button"
+            style={{ width: "100%", marginTop: 10 }}
+            disabled={loading}
+            onClick={() => saveAsNewDocument()}
+          >
+            {t.saveAsNew}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1542,7 +1801,10 @@ function UploadModal({
           <input
             type="file"
             accept="application/pdf,image/*"
-            onChange={(event) => setFile(event.target.files?.[0] || null)}
+            onChange={(event) => {
+              setFile(event.target.files?.[0] || null);
+              setAnalysis(null);
+            }}
           />
           <Upload size={28} />
           <strong>{file ? file.name : t.chooseFile}</strong>

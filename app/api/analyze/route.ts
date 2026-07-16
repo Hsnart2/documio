@@ -17,11 +17,17 @@ const allowedCategories = [
   "Altro",
 ] as const;
 
-type AllowedCategory = (typeof allowedCategories)[number];
+const allowedAttachmentTypes = [
+  "Ricevuta",
+  "Quietanza",
+  "Pagamento",
+  "Sollecito",
+  "Comunicazione",
+  "Altro",
+] as const;
 
 type OpenAIResponse = {
   output?: Array<{
-    type?: string;
     content?: Array<{
       type?: string;
       text?: string;
@@ -32,10 +38,19 @@ type OpenAIResponse = {
 
 type AnalysisResult = {
   title: string;
-  category: AllowedCategory;
+  category: (typeof allowedCategories)[number];
   summary: string;
   keywords: string[];
   expiryDate: string | null;
+  isAttachment: boolean;
+  attachmentType: (typeof allowedAttachmentTypes)[number];
+  paymentDate: string | null;
+  amount: number | null;
+  paymentMethod: string | null;
+  notes: string;
+  suggestedDocumentId: string | null;
+  matchConfidence: number;
+  matchReasons: string[];
 };
 
 export async function POST(request: Request) {
@@ -53,6 +68,19 @@ export async function POST(request: Request) {
     const file = formData.get("file");
     const userNote = String(formData.get("userNote") || "");
     const language = formData.get("language") === "en" ? "en" : "it";
+    const mode = formData.get("mode") === "attachment" ? "attachment" : "document";
+    const candidateDocumentsRaw = String(
+      formData.get("candidateDocuments") || "[]",
+    );
+
+    let candidateDocuments: unknown[] = [];
+
+    try {
+      const parsed = JSON.parse(candidateDocumentsRaw);
+      candidateDocuments = Array.isArray(parsed) ? parsed.slice(0, 50) : [];
+    } catch {
+      candidateDocuments = [];
+    }
 
     if (!(file instanceof File)) {
       return NextResponse.json(
@@ -66,8 +94,8 @@ export async function POST(request: Request) {
         {
           error:
             language === "it"
-              ? "Il file supera 4 MB. Scegli un file più piccolo per questo primo test."
-              : "The file is larger than 4 MB. Choose a smaller file for this first test.",
+              ? "Il file supera 4 MB. Scegli un file più piccolo."
+              : "The file is larger than 4 MB. Choose a smaller file.",
         },
         { status: 413 },
       );
@@ -78,17 +106,60 @@ export async function POST(request: Request) {
     const mimeType = file.type || "application/octet-stream";
     const fileData = `data:${mimeType};base64,${base64}`;
 
+    const candidateText =
+      candidateDocuments.length > 0
+        ? JSON.stringify(candidateDocuments)
+        : "[]";
+
     const instructions =
       language === "it"
-        ? `Analizza il documento allegato per DocuMio.
-Restituisci un titolo chiaro, una categoria tra quelle consentite, un riassunto breve,
-da 2 a 6 parole chiave e una data di scadenza/appuntamento in formato YYYY-MM-DD.
-Se non esiste una data certa, usa null. Non inventare dati.
-Nota dell'utente: ${userNote || "nessuna"}`
-        : `Analyze the attached document for DocuMio.
-Return a clear title, one allowed category, a short summary, 2 to 6 keywords,
-and an expiry/appointment date in YYYY-MM-DD format.
-If there is no certain date, use null. Do not invent information.
+        ? `Analizza il file per DocuMio.
+Modalità richiesta: ${mode}.
+
+Devi capire se il file è un documento principale oppure un allegato collegabile:
+ricevuta, quietanza, pagamento, sollecito o comunicazione.
+
+Estrai senza inventare:
+- titolo
+- categoria
+- riassunto
+- 2-6 parole chiave
+- eventuale scadenza
+- tipo allegato
+- data pagamento
+- importo
+- metodo pagamento
+- note brevi
+
+Se sono presenti documenti candidati, confronta ente/beneficiario, importo,
+anno, date, codici avviso/pratica, categoria, titolo, riassunto e parole chiave.
+Proponi il documento migliore SOLO se il collegamento è plausibile.
+Non collegare mai da solo: restituisci solo id, confidenza e motivi.
+Se non c'è una corrispondenza credibile usa suggestedDocumentId=null.
+
+Documenti candidati:
+${candidateText}
+
+Nota utente: ${userNote || "nessuna"}`
+        : `Analyze the file for DocuMio.
+Requested mode: ${mode}.
+
+Determine whether it is a main document or a linkable attachment:
+receipt, payment proof, payment, reminder, or communication.
+
+Extract without inventing:
+title, category, short summary, 2-6 keywords, expiry date,
+attachment type, payment date, amount, payment method, and short notes.
+
+When candidate documents are provided, compare recipient/entity, amount,
+year, dates, reference codes, category, title, summary, and keywords.
+Suggest the best document ONLY when the link is plausible.
+Never link automatically: return only its id, confidence, and reasons.
+Use suggestedDocumentId=null when no credible match exists.
+
+Candidate documents:
+${candidateText}
+
 User note: ${userNote || "none"}`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -115,7 +186,7 @@ User note: ${userNote || "none"}`;
         text: {
           format: {
             type: "json_schema",
-            name: "documio_document_analysis",
+            name: "documio_smart_analysis",
             strict: true,
             schema: {
               type: "object",
@@ -136,6 +207,37 @@ User note: ${userNote || "none"}`;
                     { type: "null" },
                   ],
                 },
+                isAttachment: { type: "boolean" },
+                attachmentType: {
+                  type: "string",
+                  enum: allowedAttachmentTypes,
+                },
+                paymentDate: {
+                  anyOf: [
+                    { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+                    { type: "null" },
+                  ],
+                },
+                amount: {
+                  anyOf: [{ type: "number" }, { type: "null" }],
+                },
+                paymentMethod: {
+                  anyOf: [{ type: "string" }, { type: "null" }],
+                },
+                notes: { type: "string" },
+                suggestedDocumentId: {
+                  anyOf: [{ type: "string" }, { type: "null" }],
+                },
+                matchConfidence: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: 100,
+                },
+                matchReasons: {
+                  type: "array",
+                  items: { type: "string" },
+                  maxItems: 5,
+                },
               },
               required: [
                 "title",
@@ -143,6 +245,15 @@ User note: ${userNote || "none"}`;
                 "summary",
                 "keywords",
                 "expiryDate",
+                "isAttachment",
+                "attachmentType",
+                "paymentDate",
+                "amount",
+                "paymentMethod",
+                "notes",
+                "suggestedDocumentId",
+                "matchConfidence",
+                "matchReasons",
               ],
             },
           },
@@ -170,8 +281,6 @@ User note: ${userNote || "none"}`;
       .find((part) => part.type === "output_text")?.text;
 
     if (!outputText) {
-      console.error("OpenAI response without output text:", result);
-
       return NextResponse.json(
         {
           error:
@@ -187,6 +296,29 @@ User note: ${userNote || "none"}`;
 
     if (!allowedCategories.includes(analysis.category)) {
       analysis.category = "Altro";
+    }
+
+    if (!allowedAttachmentTypes.includes(analysis.attachmentType)) {
+      analysis.attachmentType = "Altro";
+    }
+
+    const candidateIds = new Set(
+      candidateDocuments
+        .map((item) =>
+          typeof item === "object" && item !== null && "id" in item
+            ? String((item as { id: unknown }).id)
+            : "",
+        )
+        .filter(Boolean),
+    );
+
+    if (
+      !analysis.suggestedDocumentId ||
+      !candidateIds.has(analysis.suggestedDocumentId)
+    ) {
+      analysis.suggestedDocumentId = null;
+      analysis.matchConfidence = 0;
+      analysis.matchReasons = [];
     }
 
     return NextResponse.json(analysis);
