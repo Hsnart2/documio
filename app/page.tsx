@@ -176,9 +176,43 @@ useEffect(() => {
     });
   }, [documents, query, activeCategory]);
 
-  function deleteDocument(id: string) {
+  async function deleteDocument(id: string) {
     const confirmed = window.confirm("Vuoi eliminare questo documento?");
     if (!confirmed) return;
+
+    const supabase = getSupabaseClient();
+
+    if (!supabase) {
+      alert("Supabase non configurato");
+      return;
+    }
+
+    const {
+      data: { user: currentUser },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !currentUser) {
+      alert("Sessione non valida. Accedi nuovamente.");
+      return;
+    }
+
+    const { data: deletedRows, error } = await supabase
+      .from("documents")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", currentUser.id)
+      .select("id");
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      alert("Nessun documento eliminato. Ricarica la pagina e riprova.");
+      return;
+    }
 
     setDocuments((current) => current.filter((doc) => doc.id !== id));
   }
@@ -455,7 +489,7 @@ function UploadModal({
   onSaved,
 }: {
   onClose: () => void;
-  onSaved: (doc: StoredDocument) => void;
+  onSaved: (doc: StoredDocument) => void | Promise<void>;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
@@ -483,7 +517,7 @@ function UploadModal({
 
       const data = await response.json();
 
-      onSaved({
+      await onSaved({
         id: crypto.randomUUID(),
         title: data.title || file.name,
         category: data.category || "Altro",
