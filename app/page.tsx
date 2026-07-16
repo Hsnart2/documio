@@ -775,14 +775,22 @@ function UploadModal({
     setLoading(true);
 
     try {
+      if (file.size > 4 * 1024 * 1024) {
+        throw new Error(
+          language === "it"
+            ? "Il file supera 4 MB. Per il primo test scegli un file più piccolo."
+            : "The file is larger than 4 MB. For the first test, choose a smaller file.",
+        );
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("userNote", note);
+      formData.append("language", language);
+
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: file.name,
-          userNote: note,
-          language,
-        }),
+        body: formData,
       });
 
       if (!response.ok) {
@@ -797,13 +805,15 @@ function UploadModal({
         category: data.category || "Altro",
         fileName: file.name,
         uploadedAt: new Date().toISOString(),
-        expiryDate: expiryDate || null,
-        summary: data.summary || (language === "it" ? "Documento caricato." : "Document uploaded."),
+        expiryDate: expiryDate || data.expiryDate || null,
+        summary:
+          data.summary ||
+          (language === "it" ? "Documento caricato." : "Document uploaded."),
         keywords: Array.isArray(data.keywords) ? data.keywords : [],
         size: file.size,
       });
-    } catch {
-      window.alert(t.archiveError);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : t.archiveError);
     } finally {
       setLoading(false);
     }
