@@ -89,6 +89,10 @@ type Translation = {
   saveAsNew: string;
   chooseDocument: string;
   noMatchFound: string;
+  matchVeryHigh: string;
+  matchHigh: string;
+  matchMedium: string;
+  paidProgress: string;
   close: string;
   categories: Record<DocumentCategory, string>;
 };
@@ -139,6 +143,7 @@ const translations: Record<Language, Translation> = {
     statusUpdated: "Stato aggiornato",
     statuses: {
       "Da pagare": "Da pagare",
+      "Parzialmente pagato": "Parzialmente pagato",
       Pagato: "Pagato",
       Scaduto: "Scaduto",
       Contestato: "Contestato",
@@ -165,6 +170,10 @@ const translations: Record<Language, Translation> = {
     saveAsNew: "Salva come nuovo documento",
     chooseDocument: "Scegli il documento",
     noMatchFound: "Nessun collegamento sicuro trovato.",
+    matchVeryHigh: "Corrispondenza molto alta",
+    matchHigh: "Corrispondenza alta",
+    matchMedium: "Corrispondenza possibile",
+    paidProgress: "Pagato",
     close: "Chiudi",
     categories: {
       Casa: "Casa",
@@ -225,6 +234,7 @@ const translations: Record<Language, Translation> = {
     statusUpdated: "Status updated",
     statuses: {
       "Da pagare": "To pay",
+      "Parzialmente pagato": "Partially paid",
       Pagato: "Paid",
       Scaduto: "Overdue",
       Contestato: "Disputed",
@@ -251,6 +261,10 @@ const translations: Record<Language, Translation> = {
     saveAsNew: "Save as a new document",
     chooseDocument: "Choose document",
     noMatchFound: "No reliable match found.",
+    matchVeryHigh: "Very high match",
+    matchHigh: "High match",
+    matchMedium: "Possible match",
+    paidProgress: "Paid",
     close: "Close",
     categories: {
       Casa: "Home",
@@ -281,14 +295,39 @@ const categories: { name: DocumentCategory; icon: React.ReactNode }[] = [
   { name: "Istruzione", icon: <GraduationCap size={20} /> },
 ];
 
-function isExpiringWithin30Days(expiryDate?: string | null) {
-  if (!expiryDate) return false;
+function isExpiringWithin30Days(document: StoredDocument) {
+  if (!document.expiryDate) return false;
+  if (document.paymentStatus === "Pagato") return false;
 
-  const expiry = new Date(`${expiryDate}T23:59:59`).getTime();
+  const expiry = new Date(`${document.expiryDate}T23:59:59`).getTime();
   const now = Date.now();
   const thirtyDaysFromNow = now + 30 * 24 * 60 * 60 * 1000;
 
   return expiry >= now && expiry <= thirtyDaysFromNow;
+}
+
+function getPaidTotal(items: DocumentAttachment[]) {
+  return items
+    .filter((item) =>
+      ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
+    )
+    .reduce((total, item) => total + (Number(item.amount) || 0), 0);
+}
+
+function getMatchLabel(confidence: number, language: Language) {
+  if (confidence >= 85) {
+    return language === "it"
+      ? "Corrispondenza molto alta"
+      : "Very high match";
+  }
+
+  if (confidence >= 65) {
+    return language === "it" ? "Corrispondenza alta" : "High match";
+  }
+
+  return language === "it"
+    ? "Corrispondenza possibile"
+    : "Possible match";
 }
 
 function getDisplayedPaymentStatus(document: StoredDocument): PaymentStatus {
@@ -429,6 +468,9 @@ export default function Home() {
         paidAt: item.paid_at ?? null,
         paidAmount: item.paid_amount ?? null,
         paymentMethod: item.payment_method ?? null,
+        totalAmount: item.total_amount ?? null,
+        installmentCount: item.installment_count ?? null,
+        isSinglePaymentOption: item.is_single_payment_option ?? false,
       }));
 
       setDocuments(loadedDocuments);
@@ -524,7 +566,7 @@ export default function Home() {
 
   const expiringCount = useMemo(
     () =>
-      documents.filter((doc) => isExpiringWithin30Days(doc.expiryDate)).length,
+      documents.filter((doc) => isExpiringWithin30Days(doc)).length,
     [documents],
   );
 
@@ -535,7 +577,7 @@ export default function Home() {
       const matchesCategory =
         activeCategory === "Tutti" ||
         (activeCategory === "In scadenza" &&
-          isExpiringWithin30Days(doc.expiryDate)) ||
+          isExpiringWithin30Days(doc)) ||
         doc.category === activeCategory;
 
       const translatedCategory = t.categories[doc.category] ?? doc.category;
@@ -617,7 +659,10 @@ export default function Home() {
       payment_status: paymentStatus,
     };
 
-    if (paymentStatus === "Pagato") {
+    if (
+      paymentStatus === "Pagato" ||
+      paymentStatus === "Parzialmente pagato"
+    ) {
       updateData.paid_at =
         paymentDetails?.paidAt ?? document.paidAt ?? new Date().toISOString().slice(0, 10);
       updateData.paid_amount =
@@ -732,10 +777,103 @@ export default function Home() {
     }));
   }
 
+  async function recalculateDocumentPaymentStatus(
+    document: StoredDocument,
+    allAttachments: DocumentAttachment[],
+    inferredTotalAmount?: number | null,
+    inferredInstallmentCount?: number | null,
+    inferredSinglePaymentOption?: boolean,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    const paidTotal = getPaidTotal(allAttachments);
+    const totalAmount =
+      Number(document.totalAmount) > 0
+        ? Number(document.totalAmount)
+        : Number(inferredTotalAmount) > 0
+          ? Number(inferredTotalAmount)
+          : null;
+
+    let paymentStatus: PaymentStatus = document.paymentStatus ?? "Da pagare";
+
+    if (totalAmount != null) {
+      const tolerance = 0.01;
+      if (paidTotal + tolerance >= totalAmount) {
+        paymentStatus = "Pagato";
+      } else if (paidTotal > 0) {
+        paymentStatus = "Parzialmente pagato";
+      } else {
+        paymentStatus = "Da pagare";
+      }
+    } else if (paidTotal > 0) {
+      // Senza un totale certo non dichiariamo saldato l'intero documento.
+      paymentStatus = "Parzialmente pagato";
+    }
+
+    const latestPayment = [...allAttachments]
+      .filter((item) =>
+        ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
+      )
+      .sort((a, b) =>
+        String(b.paymentDate ?? b.uploadedAt).localeCompare(
+          String(a.paymentDate ?? a.uploadedAt),
+        ),
+      )[0];
+
+    const updateData = {
+      payment_status: paymentStatus,
+      paid_at: latestPayment?.paymentDate ?? null,
+      paid_amount: paidTotal || null,
+      payment_method: latestPayment?.paymentMethod ?? null,
+      total_amount: totalAmount,
+      installment_count:
+        document.installmentCount ??
+        inferredInstallmentCount ??
+        null,
+      is_single_payment_option:
+        document.isSinglePaymentOption ??
+        inferredSinglePaymentOption ??
+        false,
+    };
+
+    const { error } = await supabase
+      .from("documents")
+      .update(updateData)
+      .eq("id", document.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setDocuments((current) =>
+      current.map((item) =>
+        item.id === document.id
+          ? {
+              ...item,
+              paymentStatus,
+              paidAt: updateData.paid_at,
+              paidAmount: updateData.paid_amount,
+              paymentMethod: updateData.payment_method,
+              totalAmount,
+              installmentCount: updateData.installment_count,
+              isSinglePaymentOption: updateData.is_single_payment_option,
+            }
+          : item,
+      ),
+    );
+  }
+
   async function saveAttachment(
     document: StoredDocument,
     attachment: Omit<DocumentAttachment, "id" | "uploadedAt" | "storagePath">,
     file: File,
+    analysisMeta?: {
+      documentTotalAmount?: number | null;
+      installmentCount?: number | null;
+      isSinglePaymentOption?: boolean;
+    },
   ) {
     const supabase = getSupabaseClient();
     if (!supabase) return alert(t.notConfigured);
@@ -817,13 +955,13 @@ export default function Home() {
         savedAttachment.attachmentType,
       )
     ) {
-      await updatePaymentStatus(document, "Pagato", {
-        paidAt:
-          savedAttachment.paymentDate ??
-          new Date().toISOString().slice(0, 10),
-        paidAmount: savedAttachment.amount ?? null,
-        paymentMethod: savedAttachment.paymentMethod ?? null,
-      });
+      await recalculateDocumentPaymentStatus(
+        document,
+        [savedAttachment, ...(attachments[document.id] ?? [])],
+        analysisMeta?.documentTotalAmount,
+        analysisMeta?.installmentCount,
+        analysisMeta?.isSinglePaymentOption,
+      );
     }
 
     setAttachmentDocument(null);
@@ -884,6 +1022,9 @@ export default function Home() {
         paid_at: doc.paidAt ?? null,
         paid_amount: doc.paidAmount ?? null,
         payment_method: doc.paymentMethod ?? null,
+        total_amount: doc.totalAmount ?? null,
+        installment_count: doc.installmentCount ?? null,
+        is_single_payment_option: doc.isSinglePaymentOption ?? false,
       })
       .select()
       .single();
@@ -909,6 +1050,9 @@ export default function Home() {
       paidAt: data.paid_at ?? null,
       paidAmount: data.paid_amount ?? null,
       paymentMethod: data.payment_method ?? null,
+      totalAmount: data.total_amount ?? null,
+      installmentCount: data.installment_count ?? null,
+      isSinglePaymentOption: data.is_single_payment_option ?? false,
     };
 
     setDocuments((previous) => [savedDocument, ...previous]);
@@ -1124,7 +1268,7 @@ export default function Home() {
                 <h3>{doc.title}</h3>
                 <p>{doc.summary}</p>
 
-                {doc.expiryDate && (
+                {doc.expiryDate && doc.paymentStatus !== "Pagato" && (
                   <span className="expiry-date">
                     {t.expiresOn} {" "}
                     {new Date(
@@ -1156,18 +1300,26 @@ export default function Home() {
                     <option value="Da pagare">
                       {t.statuses["Da pagare"]}
                     </option>
+                    <option value="Parzialmente pagato">
+                      {t.statuses["Parzialmente pagato"]}
+                    </option>
                     <option value="Pagato">{t.statuses.Pagato}</option>
                     <option value="Scaduto">{t.statuses.Scaduto}</option>
                     <option value="Contestato">{t.statuses.Contestato}</option>
                   </select>
 
-                  {doc.paymentStatus === "Pagato" && doc.paidAt && (
+                  {["Pagato", "Parzialmente pagato"].includes(
+                    doc.paymentStatus ?? "",
+                  ) && doc.paidAt && (
                     <span style={{ fontSize: 13 }}>
                       {new Date(`${doc.paidAt}T12:00:00`).toLocaleDateString(
                         language === "it" ? "it-IT" : "en-GB",
                       )}
                       {doc.paidAmount != null
                         ? ` · €${Number(doc.paidAmount).toFixed(2)}`
+                        : ""}
+                      {doc.totalAmount != null
+                        ? ` su €${Number(doc.totalAmount).toFixed(2)}`
                         : ""}
                       {doc.paymentMethod ? ` · ${doc.paymentMethod}` : ""}
                     </span>
@@ -1546,6 +1698,11 @@ function UploadModal({
       "id" | "uploadedAt" | "storagePath"
     >,
     file: File,
+    analysisMeta?: {
+      documentTotalAmount?: number | null;
+      installmentCount?: number | null;
+      isSinglePaymentOption?: boolean;
+    },
   ) => void | Promise<void>;
 }) {
   type SmartAnalysis = {
@@ -1560,6 +1717,9 @@ function UploadModal({
     amount: number | null;
     paymentMethod: string | null;
     notes: string;
+    documentTotalAmount: number | null;
+    installmentCount: number | null;
+    isSinglePaymentOption: boolean;
     suggestedDocumentId: string | null;
     matchConfidence: number;
     matchReasons: string[];
@@ -1584,6 +1744,9 @@ function UploadModal({
     paidAt: document.paidAt,
     paidAmount: document.paidAmount,
     paymentMethod: document.paymentMethod,
+    totalAmount: document.totalAmount,
+    installmentCount: document.installmentCount,
+    isSinglePaymentOption: document.isSinglePaymentOption,
   }));
 
   async function analyze() {
@@ -1666,6 +1829,9 @@ function UploadModal({
         paidAt: null,
         paidAmount: null,
         paymentMethod: null,
+        totalAmount: data.documentTotalAmount ?? null,
+        installmentCount: data.installmentCount ?? null,
+        isSinglePaymentOption: data.isSinglePaymentOption ?? false,
       },
       file,
     );
@@ -1696,6 +1862,11 @@ function UploadModal({
           notes: analysis.notes || analysis.summary || null,
         },
         file,
+        {
+          documentTotalAmount: analysis.documentTotalAmount,
+          installmentCount: analysis.installmentCount,
+          isSinglePaymentOption: analysis.isSinglePaymentOption,
+        },
       );
       onClose();
     } finally {
@@ -1736,8 +1907,17 @@ function UploadModal({
             >
               <strong>{suggestedDocument.title}</strong>
               <div style={{ marginTop: 6 }}>
-                {analysis.matchConfidence.toFixed(0)}% ·{" "}
-                {analysis.matchReasons.join(" · ")}
+                {getMatchLabel(analysis.matchConfidence, language)}
+                {" · "}
+                {Math.round(
+                  analysis.matchConfidence <= 1
+                    ? analysis.matchConfidence * 100
+                    : analysis.matchConfidence,
+                )}
+                %
+                {analysis.matchReasons.length > 0
+                  ? ` · ${analysis.matchReasons.slice(0, 3).join(" · ")}`
+                  : ""}
               </div>
             </div>
           ) : (

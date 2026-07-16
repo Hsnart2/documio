@@ -48,6 +48,9 @@ type AnalysisResult = {
   amount: number | null;
   paymentMethod: string | null;
   notes: string;
+  documentTotalAmount: number | null;
+  installmentCount: number | null;
+  isSinglePaymentOption: boolean;
   suggestedDocumentId: string | null;
   matchConfidence: number;
   matchReasons: string[];
@@ -130,6 +133,14 @@ Estrai senza inventare:
 - importo
 - metodo pagamento
 - note brevi
+- importo totale del documento principale, se certo
+- numero di rate, se certo
+- se il documento consente anche il pagamento in unica soluzione
+
+Per ricevute e pagamenti, se il documento candidato contiene nel titolo, riassunto
+o parole chiave un importo totale o un piano rateale, estrailo in documentTotalAmount
+e installmentCount. Non confondere l'importo della singola ricevuta con il totale
+del documento principale.
 
 Se sono presenti documenti candidati, confronta ente/beneficiario, importo,
 anno, date, codici avviso/pratica, categoria, titolo, riassunto e parole chiave.
@@ -149,7 +160,13 @@ receipt, payment proof, payment, reminder, or communication.
 
 Extract without inventing:
 title, category, short summary, 2-6 keywords, expiry date,
-attachment type, payment date, amount, payment method, and short notes.
+attachment type, payment date, amount, payment method, short notes,
+the main document total amount when certain, installment count when certain,
+and whether a single-payment option is available.
+
+For receipts and payments, when a candidate document title, summary, or keywords
+contain a total amount or installment plan, extract it as documentTotalAmount and
+installmentCount. Do not confuse the receipt amount with the main document total.
 
 When candidate documents are provided, compare recipient/entity, amount,
 year, dates, reference codes, category, title, summary, and keywords.
@@ -225,6 +242,16 @@ User note: ${userNote || "none"}`;
                   anyOf: [{ type: "string" }, { type: "null" }],
                 },
                 notes: { type: "string" },
+                documentTotalAmount: {
+                  anyOf: [{ type: "number" }, { type: "null" }],
+                },
+                installmentCount: {
+                  anyOf: [
+                    { type: "integer", minimum: 1 },
+                    { type: "null" },
+                  ],
+                },
+                isSinglePaymentOption: { type: "boolean" },
                 suggestedDocumentId: {
                   anyOf: [{ type: "string" }, { type: "null" }],
                 },
@@ -251,6 +278,9 @@ User note: ${userNote || "none"}`;
                 "amount",
                 "paymentMethod",
                 "notes",
+                "documentTotalAmount",
+                "installmentCount",
+                "isSinglePaymentOption",
                 "suggestedDocumentId",
                 "matchConfidence",
                 "matchReasons",
@@ -293,6 +323,20 @@ User note: ${userNote || "none"}`;
     }
 
     const analysis = JSON.parse(outputText) as AnalysisResult;
+
+    // Alcuni modelli possono restituire la confidenza come 0-1 anziché 0-100.
+    // La normalizziamo per evitare casi come "1%" quando in realtà significa 100%.
+    if (analysis.matchConfidence > 0 && analysis.matchConfidence <= 1) {
+      analysis.matchConfidence = analysis.matchConfidence * 100;
+    }
+    analysis.matchConfidence = Math.max(
+      0,
+      Math.min(100, Math.round(analysis.matchConfidence)),
+    );
+    analysis.matchReasons = (analysis.matchReasons ?? [])
+      .map((reason) => reason.trim())
+      .filter(Boolean)
+      .slice(0, 3);
 
     if (!allowedCategories.includes(analysis.category)) {
       analysis.category = "Altro";

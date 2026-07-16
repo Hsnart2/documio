@@ -11,7 +11,12 @@ export type DocumentCategory =
   | "Istruzione"
   | "Altro";
 
-export type PaymentStatus = "Da pagare" | "Pagato" | "Scaduto" | "Contestato";
+export type PaymentStatus =
+  | "Da pagare"
+  | "Parzialmente pagato"
+  | "Pagato"
+  | "Scaduto"
+  | "Contestato";
 
 export type StoredDocument = {
   id: string;
@@ -28,8 +33,10 @@ export type StoredDocument = {
   paidAt?: string | null;
   paidAmount?: number | null;
   paymentMethod?: string | null;
+  totalAmount?: number | null;
+  installmentCount?: number | null;
+  isSinglePaymentOption?: boolean;
 };
-
 
 export type DocumentAttachmentType =
   | "Ricevuta"
