@@ -24,7 +24,13 @@ import type { DocumentAttachment, DocumentCategory, PaymentStatus, StoredDocumen
 import { getSupabaseClient } from "@/lib/supabase";
 
 type Language = "it" | "en";
-type ActiveCategory = DocumentCategory | "Tutti" | "In scadenza";
+type ActiveCategory =
+  | DocumentCategory
+  | "Tutti"
+  | "In scadenza"
+  | "Da pagare"
+  | "Parzialmente pagato"
+  | "Pagato";
 
 type Translation = {
   loginTitle: string;
@@ -93,6 +99,13 @@ type Translation = {
   matchHigh: string;
   matchMedium: string;
   paidProgress: string;
+  dashboardToPay: string;
+  dashboardPartial: string;
+  dashboardExpiring: string;
+  dashboardPaid: string;
+  dashboardOutstanding: string;
+  smartSearchHint: string;
+  searchingWithAi: string;
   close: string;
   categories: Record<DocumentCategory, string>;
 };
@@ -174,6 +187,13 @@ const translations: Record<Language, Translation> = {
     matchHigh: "Corrispondenza alta",
     matchMedium: "Corrispondenza possibile",
     paidProgress: "Pagato",
+    dashboardToPay: "Da pagare",
+    dashboardPartial: "Parzialmente pagati",
+    dashboardExpiring: "In scadenza",
+    dashboardPaid: "Pagati",
+    dashboardOutstanding: "Totale ancora da pagare",
+    smartSearchHint: "Scrivi una frase e premi Invio per la ricerca IA",
+    searchingWithAi: "Ricerca IA in corso…",
     close: "Chiudi",
     categories: {
       Casa: "Casa",
@@ -265,6 +285,13 @@ const translations: Record<Language, Translation> = {
     matchHigh: "High match",
     matchMedium: "Possible match",
     paidProgress: "Paid",
+    dashboardToPay: "To pay",
+    dashboardPartial: "Partially paid",
+    dashboardExpiring: "Expiring",
+    dashboardPaid: "Paid",
+    dashboardOutstanding: "Total still to pay",
+    smartSearchHint: "Type a sentence and press Enter for AI search",
+    searchingWithAi: "AI search in progress…",
     close: "Close",
     categories: {
       Casa: "Home",
@@ -342,6 +369,95 @@ function getDisplayedPaymentStatus(document: StoredDocument): PaymentStatus {
   return document.paymentStatus ?? "Da pagare";
 }
 
+
+const searchStopWords = new Set([
+  "a", "al", "alla", "alle", "allo", "anche", "che", "chi", "con", "da",
+  "dal", "dalla", "delle", "dei", "del", "di", "dove", "e", "è", "gli",
+  "il", "in", "io", "la", "le", "lo", "mi", "mio", "nel", "nella", "per",
+  "qual", "quale", "sono", "trovami", "trova", "un", "una",
+  "and", "find", "for", "in", "is", "me", "my", "of", "show", "the", "where",
+]);
+
+const searchSynonyms: Record<string, string[]> = {
+  solare: ["fotovoltaico", "pannelli", "impianto", "batterie", "accumulo"],
+  solari: ["fotovoltaico", "pannelli", "impianto", "batterie", "accumulo"],
+  pannelli: ["fotovoltaico", "solare", "impianto"],
+  fotovoltaico: ["pannelli", "solare", "impianto", "accumulo"],
+  contatto: ["telefono", "email", "pec", "referente", "azienda"],
+  numero: ["telefono", "cellulare", "contatto"],
+  bolletta: ["fattura", "utenza", "pagamento"],
+  bollette: ["fatture", "utenze", "pagamenti"],
+  macchina: ["auto", "veicolo", "automobile"],
+  auto: ["macchina", "veicolo", "automobile"],
+  assicurazione: ["polizza", "rca", "copertura"],
+  pagamento: ["ricevuta", "quietanza", "pagato", "versamento"],
+  contratto: ["accordo", "ordine", "fornitura", "modulo"],
+};
+
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9€@._-]+/g, " ")
+    .trim();
+}
+
+function getSearchTokens(value: string) {
+  const baseTokens = normalizeSearchText(value)
+    .split(/\s+/)
+    .filter((token) => token.length > 1 && !searchStopWords.has(token));
+
+  return Array.from(
+    new Set(
+      baseTokens.flatMap((token) => [
+        token,
+        ...(searchSynonyms[token] ?? []),
+      ]),
+    ),
+  );
+}
+
+function getDocumentSearchScore(
+  document: StoredDocument,
+  queryValue: string,
+  translatedCategory: string,
+  documentAttachments: DocumentAttachment[],
+) {
+  const tokens = getSearchTokens(queryValue);
+  if (!tokens.length) return 1;
+
+  const title = normalizeSearchText(document.title);
+  const keywords = normalizeSearchText(document.keywords.join(" "));
+  const summary = normalizeSearchText(document.summary);
+  const attachmentText = normalizeSearchText(
+    documentAttachments
+      .map((item) =>
+        `${item.title} ${item.attachmentType} ${item.fileName} ${item.paymentMethod ?? ""} ${item.notes ?? ""}`,
+      )
+      .join(" "),
+  );
+  const completeText = normalizeSearchText(
+    `${document.title} ${document.fileName} ${document.summary} ${document.keywords.join(" ")} ${document.category} ${translatedCategory} ${attachmentText}`,
+  );
+
+  let score = 0;
+
+  for (const token of tokens) {
+    if (title.includes(token)) score += 8;
+    if (keywords.includes(token)) score += 6;
+    if (summary.includes(token)) score += 3;
+    if (attachmentText.includes(token)) score += 3;
+    if (completeText.includes(token)) score += 1;
+  }
+
+  const normalizedQuery = normalizeSearchText(queryValue);
+  if (title.includes(normalizedQuery)) score += 15;
+  if (completeText.includes(normalizedQuery)) score += 5;
+
+  return score;
+}
+
 export default function Home() {
   const [language, setLanguage] = useState<Language>("it");
   const [email, setEmail] = useState("");
@@ -351,6 +467,8 @@ export default function Home() {
   const [authReady, setAuthReady] = useState(false);
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
   const [query, setQuery] = useState("");
+  const [aiResultIds, setAiResultIds] = useState<string[] | null>(null);
+  const [aiSearching, setAiSearching] = useState(false);
   const [activeCategory, setActiveCategory] =
     useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
@@ -564,29 +682,169 @@ export default function Home() {
     setPassword("");
   }
 
-  const expiringCount = useMemo(
-    () =>
-      documents.filter((doc) => isExpiringWithin30Days(doc)).length,
-    [documents],
-  );
+  const dashboard = useMemo(() => {
+    const toPay = documents.filter(
+      (document) => getDisplayedPaymentStatus(document) === "Da pagare",
+    );
+    const partial = documents.filter(
+      (document) => document.paymentStatus === "Parzialmente pagato",
+    );
+    const expiring = documents.filter((document) =>
+      isExpiringWithin30Days(document),
+    );
+    const paid = documents.filter(
+      (document) => document.paymentStatus === "Pagato",
+    );
+
+    const outstandingTotal = documents.reduce((total, document) => {
+      if (document.paymentStatus === "Pagato") return total;
+
+      const documentTotal = Number(document.totalAmount);
+      const alreadyPaid = Number(document.paidAmount) || 0;
+
+      if (!Number.isFinite(documentTotal) || documentTotal <= 0) {
+        return total;
+      }
+
+      return total + Math.max(0, documentTotal - alreadyPaid);
+    }, 0);
+
+    return {
+      toPayCount: toPay.length,
+      partialCount: partial.length,
+      expiringCount: expiring.length,
+      paidCount: paid.length,
+      outstandingTotal,
+    };
+  }, [documents]);
+
+  const expiringCount = dashboard.expiringCount;
+
+  async function runAiSearch() {
+    const cleanQuery = query.trim();
+
+    if (!cleanQuery || aiSearching) {
+      setAiResultIds(null);
+      return;
+    }
+
+    setAiSearching(true);
+    setActiveCategory("Tutti");
+
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: cleanQuery,
+          language,
+          documents: documents.map((document) => ({
+            id: document.id,
+            title: document.title,
+            fileName: document.fileName,
+            category: document.category,
+            summary: document.summary,
+            keywords: document.keywords,
+            expiryDate: document.expiryDate,
+            paymentStatus: document.paymentStatus,
+            totalAmount: document.totalAmount,
+            paidAmount: document.paidAmount,
+            attachments: (attachments[document.id] ?? []).map((item) => ({
+              title: item.title,
+              type: item.attachmentType,
+              fileName: item.fileName,
+              paymentMethod: item.paymentMethod,
+              notes: item.notes,
+            })),
+          })),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Search failed");
+      }
+
+      setAiResultIds(
+        Array.isArray(data.documentIds) ? data.documentIds : [],
+      );
+    } catch (error) {
+      console.error("AI search failed:", error);
+      setAiResultIds(null);
+    } finally {
+      setAiSearching(false);
+    }
+  }
 
   const filtered = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const hasQuery = query.trim().length > 0;
 
-    return documents.filter((doc) => {
-      const matchesCategory =
-        activeCategory === "Tutti" ||
-        (activeCategory === "In scadenza" &&
-          isExpiringWithin30Days(doc)) ||
-        doc.category === activeCategory;
+    const rankedDocuments = documents
+      .map((document) => {
+        const translatedCategory =
+          t.categories[document.category] ?? document.category;
 
-      const translatedCategory = t.categories[doc.category] ?? doc.category;
-      const haystack =
-        `${doc.title} ${doc.fileName} ${doc.summary} ${doc.keywords.join(" ")} ${doc.category} ${translatedCategory}`.toLowerCase();
+        return {
+          document,
+          score: hasQuery
+            ? getDocumentSearchScore(
+                document,
+                query,
+                translatedCategory,
+                attachments[document.id] ?? [],
+              )
+            : 1,
+        };
+      })
+      .filter(({ document, score }) => {
+        if (hasQuery) {
+          if (aiResultIds) {
+            return aiResultIds.includes(document.id);
+          }
 
-      return matchesCategory && haystack.includes(normalizedQuery);
-    });
-  }, [documents, query, activeCategory, t]);
+          return score > 0;
+        }
+
+        return (
+          activeCategory === "Tutti" ||
+          (activeCategory === "In scadenza" &&
+            isExpiringWithin30Days(document)) ||
+          (activeCategory === "Da pagare" &&
+            getDisplayedPaymentStatus(document) === "Da pagare") ||
+          (activeCategory === "Parzialmente pagato" &&
+            document.paymentStatus === "Parzialmente pagato") ||
+          (activeCategory === "Pagato" &&
+            document.paymentStatus === "Pagato") ||
+          document.category === activeCategory
+        );
+      });
+
+    if (hasQuery) {
+      if (aiResultIds) {
+        return rankedDocuments
+          .sort(
+            (a, b) =>
+              aiResultIds.indexOf(a.document.id) -
+              aiResultIds.indexOf(b.document.id),
+          )
+          .map(({ document }) => document);
+      }
+
+      return rankedDocuments
+        .sort((a, b) => b.score - a.score)
+        .map(({ document }) => document);
+    }
+
+    return rankedDocuments.map(({ document }) => document);
+  }, [
+    documents,
+    query,
+    activeCategory,
+    t,
+    attachments,
+    aiResultIds,
+  ]);
 
   async function deleteDocument(id: string) {
     const confirmed = window.confirm(t.deleteConfirm);
@@ -1172,9 +1430,132 @@ export default function Home() {
         <Search size={20} />
         <input
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setAiResultIds(null);
+            if (event.target.value.trim()) {
+              setActiveCategory("Tutti");
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void runAiSearch();
+            }
+          }}
           placeholder={t.searchPlaceholder}
         />
+        <button
+          type="button"
+          onClick={() => void runAiSearch()}
+          disabled={!query.trim() || aiSearching}
+          title={t.smartSearchHint}
+          style={{
+            border: 0,
+            background: "transparent",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {aiSearching ? "…" : "IA"}
+        </button>
+      </section>
+
+      {query.trim() && (
+        <div
+          style={{
+            maxWidth: 1400,
+            margin: "-10px auto 18px",
+            padding: "0 24px",
+            color: "#64748b",
+            fontSize: 13,
+          }}
+        >
+          {aiSearching ? t.searchingWithAi : t.smartSearchHint}
+        </div>
+      )}
+
+      <section
+        style={{
+          maxWidth: 1400,
+          margin: "0 auto 26px",
+          padding: "0 24px",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 14,
+        }}
+      >
+        {[
+          {
+            label: t.dashboardToPay,
+            value: dashboard.toPayCount,
+            filter: "Da pagare" as ActiveCategory,
+            icon: "🟠",
+          },
+          {
+            label: t.dashboardPartial,
+            value: dashboard.partialCount,
+            filter: "Parzialmente pagato" as ActiveCategory,
+            icon: "🟡",
+          },
+          {
+            label: t.dashboardExpiring,
+            value: dashboard.expiringCount,
+            filter: "In scadenza" as ActiveCategory,
+            icon: "🔴",
+          },
+          {
+            label: t.dashboardPaid,
+            value: dashboard.paidCount,
+            filter: "Pagato" as ActiveCategory,
+            icon: "🟢",
+          },
+        ].map((item) => (
+          <button
+            type="button"
+            key={item.label}
+            onClick={() => {
+              setQuery("");
+              setAiResultIds(null);
+              setActiveCategory(item.filter);
+            }}
+            style={{
+              textAlign: "left",
+              border: "1px solid #e2e8f0",
+              borderRadius: 18,
+              background: "#ffffff",
+              padding: 18,
+              boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+            }}
+          >
+            <div style={{ fontSize: 22 }}>{item.icon}</div>
+            <strong style={{ display: "block", marginTop: 8 }}>
+              {item.label}
+            </strong>
+            <span style={{ fontSize: 28, fontWeight: 800 }}>{item.value}</span>
+          </button>
+        ))}
+
+        <div
+          style={{
+            border: "1px solid #c7d2fe",
+            borderRadius: 18,
+            background: "linear-gradient(135deg, #eef2ff, #ffffff)",
+            padding: 18,
+            boxShadow: "0 10px 30px rgba(79, 70, 229, 0.08)",
+          }}
+        >
+          <div style={{ fontSize: 22 }}>💶</div>
+          <strong style={{ display: "block", marginTop: 8 }}>
+            {t.dashboardOutstanding}
+          </strong>
+          <span style={{ fontSize: 28, fontWeight: 800 }}>
+            {new Intl.NumberFormat(
+              language === "it" ? "it-IT" : "en-GB",
+              { style: "currency", currency: "EUR" },
+            ).format(dashboard.outstandingTotal)}
+          </span>
+        </div>
       </section>
 
       <section className="layout">
@@ -1234,7 +1615,13 @@ export default function Home() {
                   ? t.allDocuments
                   : activeCategory === "In scadenza"
                     ? t.expiring
-                    : t.categories[activeCategory]}
+                    : activeCategory === "Da pagare"
+                      ? t.dashboardToPay
+                      : activeCategory === "Parzialmente pagato"
+                        ? t.dashboardPartial
+                        : activeCategory === "Pagato"
+                          ? t.dashboardPaid
+                          : t.categories[activeCategory]}
               </h2>
               <p>
                 {filtered.length} {" "}
