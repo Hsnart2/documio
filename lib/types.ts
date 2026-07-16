@@ -11,6 +11,8 @@ export type DocumentCategory =
   | "Istruzione"
   | "Altro";
 
+export type PaymentStatus = "Da pagare" | "Pagato" | "Scaduto" | "Contestato";
+
 export type StoredDocument = {
   id: string;
   title: string;
@@ -22,6 +24,10 @@ export type StoredDocument = {
   expiryDate?: string | null;
   size?: number;
   storagePath?: string | null;
+  paymentStatus?: PaymentStatus;
+  paidAt?: string | null;
+  paidAmount?: number | null;
+  paymentMethod?: string | null;
 };
 
 

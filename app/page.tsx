@@ -20,7 +20,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { DocumentAttachment, DocumentCategory, StoredDocument } from "@/lib/types";
+import type { DocumentAttachment, DocumentCategory, PaymentStatus, StoredDocument } from "@/lib/types";
 import { getSupabaseClient } from "@/lib/supabase";
 
 type Language = "it" | "en";
@@ -66,6 +66,9 @@ type Translation = {
   saveAttachment: string;
   savingAttachment: string;
   deleteAttachmentConfirm: string;
+  paymentStatus: string;
+  statusUpdated: string;
+  statuses: Record<PaymentStatus, string>;
   expiresOn: string;
   noDocuments: string;
   noDocumentsHelp: string;
@@ -125,6 +128,14 @@ const translations: Record<Language, Translation> = {
     saveAttachment: "Salva allegato",
     savingAttachment: "Salvataggio…",
     deleteAttachmentConfirm: "Vuoi eliminare questo allegato?",
+    paymentStatus: "Stato",
+    statusUpdated: "Stato aggiornato",
+    statuses: {
+      "Da pagare": "Da pagare",
+      Pagato: "Pagato",
+      Scaduto: "Scaduto",
+      Contestato: "Contestato",
+    },
     expiresOn: "Scade il",
     noDocuments: "Nessun documento trovato",
     noDocumentsHelp: "Prova un’altra ricerca oppure carica un nuovo file.",
@@ -196,6 +207,14 @@ const translations: Record<Language, Translation> = {
     saveAttachment: "Save attachment",
     savingAttachment: "Saving…",
     deleteAttachmentConfirm: "Do you want to delete this attachment?",
+    paymentStatus: "Status",
+    statusUpdated: "Status updated",
+    statuses: {
+      "Da pagare": "To pay",
+      Pagato: "Paid",
+      Scaduto: "Overdue",
+      Contestato: "Disputed",
+    },
     expiresOn: "Expires on",
     noDocuments: "No documents found",
     noDocumentsHelp: "Try another search or upload a new file.",
@@ -249,6 +268,18 @@ function isExpiringWithin30Days(expiryDate?: string | null) {
   const thirtyDaysFromNow = now + 30 * 24 * 60 * 60 * 1000;
 
   return expiry >= now && expiry <= thirtyDaysFromNow;
+}
+
+function getDisplayedPaymentStatus(document: StoredDocument): PaymentStatus {
+  if (
+    document.paymentStatus === "Da pagare" &&
+    document.expiryDate &&
+    new Date(`${document.expiryDate}T23:59:59`).getTime() < Date.now()
+  ) {
+    return "Scaduto";
+  }
+
+  return document.paymentStatus ?? "Da pagare";
 }
 
 export default function Home() {
@@ -373,6 +404,10 @@ export default function Home() {
         expiryDate: item.expiry_date,
         size: item.size ?? undefined,
         storagePath: item.storage_path ?? null,
+        paymentStatus: (item.payment_status ?? "Da pagare") as PaymentStatus,
+        paidAt: item.paid_at ?? null,
+        paidAmount: item.paid_amount ?? null,
+        paymentMethod: item.payment_method ?? null,
       }));
 
       setDocuments(loadedDocuments);
@@ -540,6 +575,65 @@ export default function Home() {
     setDocuments((current) => current.filter((doc) => doc.id !== id));
   }
 
+  async function updatePaymentStatus(
+    document: StoredDocument,
+    paymentStatus: PaymentStatus,
+    paymentDetails?: {
+      paidAt?: string | null;
+      paidAmount?: number | null;
+      paymentMethod?: string | null;
+    },
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const updateData: {
+      payment_status: PaymentStatus;
+      paid_at?: string | null;
+      paid_amount?: number | null;
+      payment_method?: string | null;
+    } = {
+      payment_status: paymentStatus,
+    };
+
+    if (paymentStatus === "Pagato") {
+      updateData.paid_at =
+        paymentDetails?.paidAt ?? document.paidAt ?? new Date().toISOString().slice(0, 10);
+      updateData.paid_amount =
+        paymentDetails?.paidAmount ?? document.paidAmount ?? null;
+      updateData.payment_method =
+        paymentDetails?.paymentMethod ?? document.paymentMethod ?? null;
+    } else {
+      updateData.paid_at = null;
+      updateData.paid_amount = null;
+      updateData.payment_method = null;
+    }
+
+    const { error } = await supabase
+      .from("documents")
+      .update(updateData)
+      .eq("id", document.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setDocuments((current) =>
+      current.map((item) =>
+        item.id === document.id
+          ? {
+              ...item,
+              paymentStatus,
+              paidAt: updateData.paid_at ?? null,
+              paidAmount: updateData.paid_amount ?? null,
+              paymentMethod: updateData.payment_method ?? null,
+            }
+          : item,
+      ),
+    );
+  }
+
   async function openDocument(document: StoredDocument, download = false) {
     if (!document.storagePath) {
       alert(t.fileUnavailable);
@@ -696,6 +790,21 @@ export default function Home() {
       ...current,
       [document.id]: [savedAttachment, ...(current[document.id] ?? [])],
     }));
+
+    if (
+      ["Ricevuta", "Quietanza", "Pagamento"].includes(
+        savedAttachment.attachmentType,
+      )
+    ) {
+      await updatePaymentStatus(document, "Pagato", {
+        paidAt:
+          savedAttachment.paymentDate ??
+          new Date().toISOString().slice(0, 10),
+        paidAmount: savedAttachment.amount ?? null,
+        paymentMethod: savedAttachment.paymentMethod ?? null,
+      });
+    }
+
     setAttachmentDocument(null);
   }
 
@@ -750,6 +859,10 @@ export default function Home() {
         keywords: doc.keywords,
         size: doc.size ?? null,
         storage_path: storagePath,
+        payment_status: doc.paymentStatus ?? "Da pagare",
+        paid_at: doc.paidAt ?? null,
+        paid_amount: doc.paidAmount ?? null,
+        payment_method: doc.paymentMethod ?? null,
       })
       .select()
       .single();
@@ -771,6 +884,10 @@ export default function Home() {
       expiryDate: data.expiry_date,
       size: data.size ?? undefined,
       storagePath: data.storage_path ?? storagePath,
+      paymentStatus: (data.payment_status ?? "Da pagare") as PaymentStatus,
+      paidAt: data.paid_at ?? null,
+      paidAmount: data.paid_amount ?? null,
+      paymentMethod: data.payment_method ?? null,
     };
 
     setDocuments((previous) => [savedDocument, ...previous]);
@@ -994,6 +1111,47 @@ export default function Home() {
                     ).toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
                   </span>
                 )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    marginTop: 12,
+                  }}
+                >
+                  <strong>{t.paymentStatus}:</strong>
+                  <select
+                    value={getDisplayedPaymentStatus(doc)}
+                    onChange={(event) =>
+                      updatePaymentStatus(
+                        doc,
+                        event.target.value as PaymentStatus,
+                      )
+                    }
+                    aria-label={`${t.paymentStatus} ${doc.title}`}
+                  >
+                    <option value="Da pagare">
+                      {t.statuses["Da pagare"]}
+                    </option>
+                    <option value="Pagato">{t.statuses.Pagato}</option>
+                    <option value="Scaduto">{t.statuses.Scaduto}</option>
+                    <option value="Contestato">{t.statuses.Contestato}</option>
+                  </select>
+
+                  {doc.paymentStatus === "Pagato" && doc.paidAt && (
+                    <span style={{ fontSize: 13 }}>
+                      {new Date(`${doc.paidAt}T12:00:00`).toLocaleDateString(
+                        language === "it" ? "it-IT" : "en-GB",
+                      )}
+                      {doc.paidAmount != null
+                        ? ` · €${Number(doc.paidAmount).toFixed(2)}`
+                        : ""}
+                      {doc.paymentMethod ? ` · ${doc.paymentMethod}` : ""}
+                    </span>
+                  )}
+                </div>
 
                 {doc.storagePath && (
                   <div
@@ -1350,6 +1508,10 @@ function UploadModal({
         keywords: Array.isArray(data.keywords) ? data.keywords : [],
         size: file.size,
         storagePath: null,
+        paymentStatus: "Da pagare",
+        paidAt: null,
+        paidAmount: null,
+        paymentMethod: null,
       }, file);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : t.archiveError);
