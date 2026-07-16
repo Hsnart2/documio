@@ -98,16 +98,55 @@ async function signIn() {
   const [showUpload, setShowUpload] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("documio-documents");
-      setDocuments(saved ? JSON.parse(saved) : starterDocuments);
-    } catch {
-      setDocuments(starterDocuments);
-    } finally {
+useEffect(() => {
+  async function loadDocuments() {
+    const supabase = getSupabaseClient();
+
+    if (!supabase) {
       setIsLoaded(true);
+      return;
     }
-  }, []);
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setDocuments([]);
+      setIsLoaded(true);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("documents")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("uploaded_at", { ascending: false });
+
+    if (error) {
+      alert(error.message);
+      setIsLoaded(true);
+      return;
+    }
+
+    const loadedDocuments: StoredDocument[] = (data ?? []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      category: item.category as DocumentCategory,
+      fileName: item.file_name,
+      uploadedAt: item.uploaded_at,
+      summary: item.summary,
+      keywords: item.keywords ?? [],
+      expiryDate: item.expiry_date,
+      size: item.size ?? undefined,
+    }));
+
+    setDocuments(loadedDocuments);
+    setIsLoaded(true);
+  }
+
+  loadDocuments();
+}, []);
 
   useEffect(() => {
     if (!isLoaded) return;
