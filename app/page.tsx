@@ -351,10 +351,60 @@ if (!user) {
       {showUpload && (
         <UploadModal
           onClose={() => setShowUpload(false)}
-          onSaved={(doc) => {
-            setDocuments((previous) => [doc, ...previous]);
-            setShowUpload(false);
-          }}
+onSaved={async (doc) => {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    alert("Supabase non configurato");
+    return;
+  }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    alert("Sessione non valida. Accedi nuovamente.");
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("documents")
+    .insert({
+      user_id: user.id,
+      title: doc.title,
+      category: doc.category,
+      file_name: doc.fileName,
+      uploaded_at: doc.uploadedAt,
+      expiry_date: doc.expiryDate,
+      summary: doc.summary,
+      keywords: doc.keywords,
+      size: doc.size ?? null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  const savedDocument: StoredDocument = {
+    id: data.id,
+    title: data.title,
+    category: data.category as DocumentCategory,
+    fileName: data.file_name,
+    uploadedAt: data.uploaded_at,
+    summary: data.summary,
+    keywords: data.keywords ?? [],
+    expiryDate: data.expiry_date,
+    size: data.size ?? undefined,
+  };
+
+  setDocuments((previous) => [savedDocument, ...previous]);
+  setShowUpload(false);
+}}
         />
       )}
     </main>
