@@ -23,3 +23,26 @@ export type StoredDocument = {
   size?: number;
   storagePath?: string | null;
 };
+
+
+export type DocumentAttachmentType =
+  | "Ricevuta"
+  | "Quietanza"
+  | "Pagamento"
+  | "Sollecito"
+  | "Comunicazione"
+  | "Altro";
+
+export type DocumentAttachment = {
+  id: string;
+  documentId: string;
+  title: string;
+  attachmentType: DocumentAttachmentType;
+  fileName: string;
+  storagePath: string;
+  uploadedAt: string;
+  paymentDate?: string | null;
+  amount?: number | null;
+  paymentMethod?: string | null;
+  notes?: string | null;
+};

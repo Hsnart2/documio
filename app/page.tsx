@@ -20,7 +20,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { DocumentCategory, StoredDocument } from "@/lib/types";
+import type { DocumentAttachment, DocumentCategory, StoredDocument } from "@/lib/types";
 import { getSupabaseClient } from "@/lib/supabase";
 
 type Language = "it" | "en";
@@ -54,6 +54,18 @@ type Translation = {
   openDocument: string;
   downloadDocument: string;
   fileUnavailable: string;
+  attachments: string;
+  addAttachment: string;
+  noAttachments: string;
+  attachmentTitle: string;
+  attachmentType: string;
+  paymentDate: string;
+  amount: string;
+  paymentMethod: string;
+  notes: string;
+  saveAttachment: string;
+  savingAttachment: string;
+  deleteAttachmentConfirm: string;
   expiresOn: string;
   noDocuments: string;
   noDocumentsHelp: string;
@@ -101,6 +113,18 @@ const translations: Record<Language, Translation> = {
     openDocument: "Apri documento",
     downloadDocument: "Scarica",
     fileUnavailable: "Il file non è ancora disponibile nello Storage.",
+    attachments: "Allegati",
+    addAttachment: "Aggiungi ricevuta/allegato",
+    noAttachments: "Nessun allegato collegato.",
+    attachmentTitle: "Titolo allegato",
+    attachmentType: "Tipo allegato",
+    paymentDate: "Data pagamento",
+    amount: "Importo",
+    paymentMethod: "Metodo di pagamento",
+    notes: "Note",
+    saveAttachment: "Salva allegato",
+    savingAttachment: "Salvataggio…",
+    deleteAttachmentConfirm: "Vuoi eliminare questo allegato?",
     expiresOn: "Scade il",
     noDocuments: "Nessun documento trovato",
     noDocumentsHelp: "Prova un’altra ricerca oppure carica un nuovo file.",
@@ -160,6 +184,18 @@ const translations: Record<Language, Translation> = {
     openDocument: "Open document",
     downloadDocument: "Download",
     fileUnavailable: "The file is not available in Storage yet.",
+    attachments: "Attachments",
+    addAttachment: "Add receipt/attachment",
+    noAttachments: "No linked attachments.",
+    attachmentTitle: "Attachment title",
+    attachmentType: "Attachment type",
+    paymentDate: "Payment date",
+    amount: "Amount",
+    paymentMethod: "Payment method",
+    notes: "Notes",
+    saveAttachment: "Save attachment",
+    savingAttachment: "Saving…",
+    deleteAttachmentConfirm: "Do you want to delete this attachment?",
     expiresOn: "Expires on",
     noDocuments: "No documents found",
     noDocumentsHelp: "Try another search or upload a new file.",
@@ -227,6 +263,11 @@ export default function Home() {
   const [activeCategory, setActiveCategory] =
     useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
+  const [attachmentDocument, setAttachmentDocument] =
+    useState<StoredDocument | null>(null);
+  const [attachments, setAttachments] = useState<
+    Record<string, DocumentAttachment[]>
+  >({});
   const [isLoaded, setIsLoaded] = useState(false);
 
   const t = translations[language];
@@ -335,6 +376,44 @@ export default function Home() {
       }));
 
       setDocuments(loadedDocuments);
+
+      const { data: attachmentRows, error: attachmentError } = await supabase
+        .from("document_attachments")
+        .select("*")
+        .eq("user_id", userId)
+        .order("uploaded_at", { ascending: false });
+
+      if (attachmentError) {
+        alert(attachmentError.message);
+      } else {
+        const grouped = (attachmentRows ?? []).reduce<
+          Record<string, DocumentAttachment[]>
+        >((result, item) => {
+          const attachment: DocumentAttachment = {
+            id: item.id,
+            documentId: item.document_id,
+            title: item.title,
+            attachmentType: item.attachment_type,
+            fileName: item.file_name,
+            storagePath: item.storage_path,
+            uploadedAt: item.uploaded_at,
+            paymentDate: item.payment_date,
+            amount: item.amount,
+            paymentMethod: item.payment_method,
+            notes: item.notes,
+          };
+
+          result[attachment.documentId] = [
+            ...(result[attachment.documentId] ?? []),
+            attachment,
+          ];
+
+          return result;
+        }, {});
+
+        setAttachments(grouped);
+      }
+
       setIsLoaded(true);
     }
 
@@ -482,6 +561,142 @@ export default function Home() {
     }
 
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function openAttachment(
+    attachment: DocumentAttachment,
+    download = false,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const { data, error } = await supabase.storage
+      .from("documents")
+      .createSignedUrl(attachment.storagePath, 60, {
+        download: download ? attachment.fileName : false,
+      });
+
+    if (error || !data?.signedUrl) {
+      alert(error?.message || t.fileUnavailable);
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function deleteAttachment(attachment: DocumentAttachment) {
+    if (!window.confirm(t.deleteAttachmentConfirm)) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const { error: storageError } = await supabase.storage
+      .from("documents")
+      .remove([attachment.storagePath]);
+
+    if (storageError) {
+      alert(storageError.message);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("document_attachments")
+      .delete()
+      .eq("id", attachment.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setAttachments((current) => ({
+      ...current,
+      [attachment.documentId]: (current[attachment.documentId] ?? []).filter(
+        (item) => item.id !== attachment.id,
+      ),
+    }));
+  }
+
+  async function saveAttachment(
+    document: StoredDocument,
+    attachment: Omit<DocumentAttachment, "id" | "uploadedAt" | "storagePath">,
+    file: File,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      alert(t.invalidSession);
+      return;
+    }
+
+    const safeName = file.name
+      .normalize("NFKD")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/-+/g, "-");
+
+    const storagePath = `${user.id}/allegati/${document.id}/${crypto.randomUUID()}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("documents")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        contentType: file.type || undefined,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      alert(uploadError.message);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("document_attachments")
+      .insert({
+        document_id: document.id,
+        user_id: user.id,
+        title: attachment.title,
+        attachment_type: attachment.attachmentType,
+        file_name: file.name,
+        storage_path: storagePath,
+        payment_date: attachment.paymentDate || null,
+        amount: attachment.amount ?? null,
+        payment_method: attachment.paymentMethod || null,
+        notes: attachment.notes || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      await supabase.storage.from("documents").remove([storagePath]);
+      alert(error.message);
+      return;
+    }
+
+    const savedAttachment: DocumentAttachment = {
+      id: data.id,
+      documentId: data.document_id,
+      title: data.title,
+      attachmentType: data.attachment_type,
+      fileName: data.file_name,
+      storagePath: data.storage_path,
+      uploadedAt: data.uploaded_at,
+      paymentDate: data.payment_date,
+      amount: data.amount,
+      paymentMethod: data.payment_method,
+      notes: data.notes,
+    };
+
+    setAttachments((current) => ({
+      ...current,
+      [document.id]: [savedAttachment, ...(current[document.id] ?? [])],
+    }));
+    setAttachmentDocument(null);
   }
 
   async function saveDocument(doc: StoredDocument, file: File) {
@@ -798,6 +1013,86 @@ export default function Home() {
                   </div>
                 )}
 
+                <div style={{ marginTop: 16 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      alignItems: "center",
+                    }}
+                  >
+                    <strong>
+                      📎 {t.attachments} ({(attachments[doc.id] ?? []).length})
+                    </strong>
+                    <button
+                      type="button"
+                      onClick={() => setAttachmentDocument(doc)}
+                    >
+                      {t.addAttachment}
+                    </button>
+                  </div>
+
+                  {(attachments[doc.id] ?? []).length === 0 ? (
+                    <p style={{ marginTop: 8 }}>{t.noAttachments}</p>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                      {(attachments[doc.id] ?? []).map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          style={{
+                            border: "1px solid #e5e7eb",
+                            borderRadius: 12,
+                            padding: 10,
+                          }}
+                        >
+                          <strong>{attachment.title}</strong>
+                          <div style={{ fontSize: 13, marginTop: 4 }}>
+                            {attachment.attachmentType}
+                            {attachment.paymentDate
+                              ? ` · ${new Date(
+                                  `${attachment.paymentDate}T12:00:00`,
+                                ).toLocaleDateString(
+                                  language === "it" ? "it-IT" : "en-GB",
+                                )}`
+                              : ""}
+                            {attachment.amount != null
+                              ? ` · €${Number(attachment.amount).toFixed(2)}`
+                              : ""}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 8,
+                              flexWrap: "wrap",
+                              marginTop: 8,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openAttachment(attachment)}
+                            >
+                              {t.openDocument}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openAttachment(attachment, true)}
+                            >
+                              {t.downloadDocument}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteAttachment(attachment)}
+                            >
+                              {t.delete}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="keywords">
                   {doc.keywords.slice(0, 3).map((keyword) => (
                     <span key={keyword}>{keyword}</span>
@@ -826,6 +1121,15 @@ export default function Home() {
         </section>
       </section>
 
+      {attachmentDocument && (
+        <AttachmentModal
+          language={language}
+          document={attachmentDocument}
+          onClose={() => setAttachmentDocument(null)}
+          onSaved={saveAttachment}
+        />
+      )}
+
       {showUpload && (
         <UploadModal
           language={language}
@@ -834,6 +1138,157 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+function AttachmentModal({
+  language,
+  document,
+  onClose,
+  onSaved,
+}: {
+  language: Language;
+  document: StoredDocument;
+  onClose: () => void;
+  onSaved: (
+    document: StoredDocument,
+    attachment: Omit<
+      DocumentAttachment,
+      "id" | "uploadedAt" | "storagePath"
+    >,
+    file: File,
+  ) => void | Promise<void>;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState("");
+  const [attachmentType, setAttachmentType] =
+    useState<DocumentAttachment["attachmentType"]>("Ricevuta");
+  const [paymentDate, setPaymentDate] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [notes, setNotes] = useState("");
+  const [loading, setLoading] = useState(false);
+  const t = translations[language];
+
+  async function submit() {
+    if (!file || !title.trim() || loading) return;
+
+    setLoading(true);
+
+    try {
+      await onSaved(
+        document,
+        {
+          documentId: document.id,
+          title: title.trim(),
+          attachmentType,
+          fileName: file.name,
+          paymentDate: paymentDate || null,
+          amount: amount ? Number(amount.replace(",", ".")) : null,
+          paymentMethod: paymentMethod.trim() || null,
+          notes: notes.trim() || null,
+        },
+        file,
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="close" onClick={onClose}>
+          <X />
+        </button>
+
+        <h2>{t.addAttachment}</h2>
+        <p>{document.title}</p>
+
+        <label className="dropzone">
+          <input
+            type="file"
+            accept="application/pdf,image/*"
+            onChange={(event) => setFile(event.target.files?.[0] || null)}
+          />
+          <Upload size={28} />
+          <strong>{file ? file.name : t.chooseFile}</strong>
+          <span>{t.fileFormats}</span>
+        </label>
+
+        <label className="field">
+          {t.attachmentTitle}
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder={language === "it" ? "Es. Ricevuta PagoPA" : "E.g. PagoPA receipt"}
+          />
+        </label>
+
+        <label className="field">
+          {t.attachmentType}
+          <select
+            value={attachmentType}
+            onChange={(event) =>
+              setAttachmentType(
+                event.target.value as DocumentAttachment["attachmentType"],
+              )
+            }
+          >
+            <option>Ricevuta</option>
+            <option>Quietanza</option>
+            <option>Pagamento</option>
+            <option>Sollecito</option>
+            <option>Comunicazione</option>
+            <option>Altro</option>
+          </select>
+        </label>
+
+        <label className="field">
+          {t.paymentDate}
+          <input
+            type="date"
+            value={paymentDate}
+            onChange={(event) => setPaymentDate(event.target.value)}
+          />
+        </label>
+
+        <label className="field">
+          {t.amount}
+          <input
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            placeholder="0,00"
+          />
+        </label>
+
+        <label className="field">
+          {t.paymentMethod}
+          <input
+            value={paymentMethod}
+            onChange={(event) => setPaymentMethod(event.target.value)}
+            placeholder={language === "it" ? "Es. PagoPA, F24, bonifico" : "E.g. bank transfer"}
+          />
+        </label>
+
+        <label className="field">
+          {t.notes}
+          <textarea
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+          />
+        </label>
+
+        <button
+          className="primary full"
+          disabled={!file || !title.trim() || loading}
+          onClick={submit}
+        >
+          {loading ? t.savingAttachment : t.saveAttachment}
+        </button>
+      </div>
+    </div>
   );
 }
 
