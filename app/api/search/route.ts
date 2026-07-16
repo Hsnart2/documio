@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-type SearchDocument = {
+type AssistantDocument = {
   id: string;
   title?: string;
   fileName?: string;
@@ -14,10 +14,14 @@ type SearchDocument = {
   paymentStatus?: string | null;
   totalAmount?: number | null;
   paidAmount?: number | null;
+  remainingAmount?: number | null;
+  paymentMethod?: string | null;
   attachments?: Array<{
     title?: string;
     type?: string;
     fileName?: string;
+    paymentDate?: string | null;
+    amount?: number | null;
     paymentMethod?: string | null;
     notes?: string | null;
   }>;
@@ -45,51 +49,66 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as {
-      query?: string;
+      question?: string;
       language?: "it" | "en";
-      documents?: SearchDocument[];
+      documents?: AssistantDocument[];
     };
 
-    const query = String(body.query || "").trim();
+    const question = String(body.question || "").trim();
     const language = body.language === "en" ? "en" : "it";
     const documents = Array.isArray(body.documents)
       ? body.documents.slice(0, 100)
       : [];
 
-    if (!query) {
-      return NextResponse.json({ documentIds: [] });
-    }
-
-    if (!documents.length) {
-      return NextResponse.json({ documentIds: [] });
+    if (!question) {
+      return NextResponse.json(
+        {
+          error:
+            language === "it" ? "Domanda mancante." : "Missing question.",
+        },
+        { status: 400 },
+      );
     }
 
     const instructions =
       language === "it"
-        ? `Sei il motore di ricerca semantica di DocuMio.
-L'utente cerca: "${query}"
+        ? `Sei DocuMio Assistant, un assistente amministrativo personale.
+Rispondi esclusivamente usando i dati strutturati dell'archivio fornito.
 
-Ordina i documenti dal più pertinente al meno pertinente.
-Comprendi sinonimi, intenzione, domande naturali e riferimenti indiretti.
-Esempi: pannelli solari = fotovoltaico; contatto = telefono/email/referente;
-macchina = auto/veicolo; assicurazione = polizza; pagamento = ricevuta/quietanza.
+Regole:
+- Sii breve, concreto e prudente.
+- Non inventare informazioni assenti.
+- Se un dato non è disponibile, dillo chiaramente.
+- Per importi, usa euro con due decimali.
+- Per le scadenze, considera la data odierna.
+- Cita nel testo i titoli dei documenti usati.
+- Restituisci negli ID soltanto i documenti davvero utili alla risposta.
+- Non dare consulenza legale, medica o finanziaria definitiva.
+- Non chiedere di ricaricare i PDF: in questa versione usi i dati già estratti.
 
-Usa titolo, nome file, categoria, riassunto, parole chiave, stato,
-importi e allegati. Restituisci solo documenti realmente pertinenti.
-Non inventare ID e non inserire documenti irrilevanti.
+Domanda:
+${question}
 
-Documenti:
+Archivio:
 ${JSON.stringify(documents)}`
-        : `You are DocuMio's semantic search engine.
-The user searches for: "${query}"
+        : `You are DocuMio Assistant, a personal administrative assistant.
+Answer only from the structured archive data provided.
 
-Rank documents from most to least relevant.
-Understand synonyms, natural-language intent, and indirect references.
-Use title, filename, category, summary, keywords, status, amounts,
-and attachments. Return only genuinely relevant documents.
-Never invent IDs and do not include irrelevant documents.
+Rules:
+- Be brief, concrete, and careful.
+- Never invent missing information.
+- Clearly say when data is unavailable.
+- Format euro amounts with two decimals.
+- Consider today's date for expiry questions.
+- Mention the titles of documents used.
+- Return only genuinely useful document IDs.
+- Do not provide definitive legal, medical, or financial advice.
+- Do not ask to re-upload PDFs; this version uses already extracted data.
 
-Documents:
+Question:
+${question}
+
+Archive:
 ${JSON.stringify(documents)}`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -104,19 +123,20 @@ ${JSON.stringify(documents)}`;
         text: {
           format: {
             type: "json_schema",
-            name: "documio_semantic_search",
+            name: "documio_assistant_answer",
             strict: true,
             schema: {
               type: "object",
               additionalProperties: false,
               properties: {
+                answer: { type: "string" },
                 documentIds: {
                   type: "array",
                   items: { type: "string" },
-                  maxItems: 30,
+                  maxItems: 10,
                 },
               },
-              required: ["documentIds"],
+              required: ["answer", "documentIds"],
             },
           },
         },
@@ -131,8 +151,8 @@ ${JSON.stringify(documents)}`;
           error:
             result.error?.message ||
             (language === "it"
-              ? "Ricerca IA non disponibile."
-              : "AI search unavailable."),
+              ? "Assistente IA non disponibile."
+              : "AI assistant unavailable."),
         },
         { status: response.status },
       );
@@ -143,24 +163,37 @@ ${JSON.stringify(documents)}`;
       .find((part) => part.type === "output_text")?.text;
 
     if (!outputText) {
-      return NextResponse.json({ documentIds: [] });
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "La risposta dell'assistente non era leggibile."
+              : "The assistant response could not be read.",
+        },
+        { status: 502 },
+      );
     }
 
-    const parsed = JSON.parse(outputText) as { documentIds?: string[] };
+    const parsed = JSON.parse(outputText) as {
+      answer?: string;
+      documentIds?: string[];
+    };
+
     const validIds = new Set(documents.map((document) => document.id));
 
     return NextResponse.json({
+      answer: parsed.answer || "",
       documentIds: (parsed.documentIds ?? []).filter((id) => validIds.has(id)),
     });
   } catch (error) {
-    console.error("Search route error:", error);
+    console.error("Assistant route error:", error);
 
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Errore imprevisto durante la ricerca.",
+            : "Errore imprevisto dell'assistente.",
       },
       { status: 500 },
     );

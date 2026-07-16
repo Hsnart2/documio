@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
+  Bot,
   Building2,
   CalendarDays,
   Car,
@@ -14,6 +15,7 @@ import {
   Plus,
   ReceiptText,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
   Stethoscope,
@@ -106,6 +108,13 @@ type Translation = {
   dashboardOutstanding: string;
   smartSearchHint: string;
   searchingWithAi: string;
+  assistantTitle: string;
+  assistantWelcome: string;
+  assistantPlaceholder: string;
+  assistantSend: string;
+  assistantThinking: string;
+  assistantOpenDocument: string;
+  assistantError: string;
   close: string;
   categories: Record<DocumentCategory, string>;
 };
@@ -194,6 +203,14 @@ const translations: Record<Language, Translation> = {
     dashboardOutstanding: "Totale ancora da pagare",
     smartSearchHint: "Scrivi una frase e premi Invio per la ricerca IA",
     searchingWithAi: "Ricerca IA in corso…",
+    assistantTitle: "DocuMio Assistant",
+    assistantWelcome:
+      "Ciao! Posso rispondere usando i dati già estratti dai tuoi documenti.",
+    assistantPlaceholder: "Chiedi qualcosa al tuo archivio…",
+    assistantSend: "Invia",
+    assistantThinking: "Sto controllando i documenti…",
+    assistantOpenDocument: "Apri documento",
+    assistantError: "Non sono riuscito a rispondere. Riprova.",
     close: "Chiudi",
     categories: {
       Casa: "Casa",
@@ -292,6 +309,14 @@ const translations: Record<Language, Translation> = {
     dashboardOutstanding: "Total still to pay",
     smartSearchHint: "Type a sentence and press Enter for AI search",
     searchingWithAi: "AI search in progress…",
+    assistantTitle: "DocuMio Assistant",
+    assistantWelcome:
+      "Hi! I can answer using the information already extracted from your documents.",
+    assistantPlaceholder: "Ask your archive something…",
+    assistantSend: "Send",
+    assistantThinking: "Checking your documents…",
+    assistantOpenDocument: "Open document",
+    assistantError: "I couldn’t answer. Please try again.",
     close: "Close",
     categories: {
       Casa: "Home",
@@ -458,6 +483,13 @@ function getDocumentSearchScore(
   return score;
 }
 
+type AssistantMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  documentIds?: string[];
+};
+
 export default function Home() {
   const [language, setLanguage] = useState<Language>("it");
   const [email, setEmail] = useState("");
@@ -472,6 +504,12 @@ export default function Home() {
   const [activeCategory, setActiveCategory] =
     useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
+  const [showAssistant, setShowAssistant] = useState(false);
+  const [assistantInput, setAssistantInput] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessages, setAssistantMessages] = useState<
+    AssistantMessage[]
+  >([]);
   const [attachmentDocument, setAttachmentDocument] =
     useState<StoredDocument | null>(null);
   const [attachments, setAttachments] = useState<
@@ -774,6 +812,93 @@ export default function Home() {
       setAiResultIds(null);
     } finally {
       setAiSearching(false);
+    }
+  }
+
+  async function askAssistant(question?: string) {
+    const cleanQuestion = (question ?? assistantInput).trim();
+
+    if (!cleanQuestion || assistantLoading) return;
+
+    const userMessage: AssistantMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      text: cleanQuestion,
+    };
+
+    setAssistantMessages((current) => [...current, userMessage]);
+    setAssistantInput("");
+    setAssistantLoading(true);
+
+    try {
+      const response = await fetch("/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: cleanQuestion,
+          language,
+          documents: documents.map((document) => ({
+            id: document.id,
+            title: document.title,
+            fileName: document.fileName,
+            category: document.category,
+            summary: document.summary,
+            keywords: document.keywords,
+            expiryDate: document.expiryDate,
+            paymentStatus: getDisplayedPaymentStatus(document),
+            totalAmount: document.totalAmount,
+            paidAmount: document.paidAmount,
+            paymentMethod: document.paymentMethod,
+            remainingAmount:
+              document.totalAmount != null
+                ? Math.max(
+                    0,
+                    Number(document.totalAmount) -
+                      (Number(document.paidAmount) || 0),
+                  )
+                : null,
+            attachments: (attachments[document.id] ?? []).map((item) => ({
+              title: item.title,
+              type: item.attachmentType,
+              fileName: item.fileName,
+              paymentDate: item.paymentDate,
+              amount: item.amount,
+              paymentMethod: item.paymentMethod,
+              notes: item.notes,
+            })),
+          })),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Assistant failed");
+      }
+
+      setAssistantMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          text: data.answer || t.assistantError,
+          documentIds: Array.isArray(data.documentIds)
+            ? data.documentIds
+            : [],
+        },
+      ]);
+    } catch (error) {
+      console.error("Assistant error:", error);
+      setAssistantMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          text: t.assistantError,
+        },
+      ]);
+    } finally {
+      setAssistantLoading(false);
     }
   }
 
@@ -1403,7 +1528,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="hero">
+      <section className="hero" style={{ position: "relative" }}>
         <div>
           <span className="eyebrow">
             <Sparkles size={16} />
@@ -1424,6 +1549,30 @@ export default function Home() {
           <strong>{t.askArchive}</strong>
           <span>{t.askExample}</span>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowAssistant(true)}
+          aria-label={t.assistantTitle}
+          title={t.assistantTitle}
+          style={{
+            position: "absolute",
+            top: 18,
+            right: 18,
+            width: 54,
+            height: 54,
+            borderRadius: "50%",
+            border: "1px solid rgba(255,255,255,0.65)",
+            background: "rgba(255,255,255,0.96)",
+            color: "#4338ca",
+            display: "grid",
+            placeItems: "center",
+            boxShadow: "0 12px 30px rgba(30, 41, 59, 0.22)",
+            zIndex: 2,
+          }}
+        >
+          <Bot size={28} />
+        </button>
       </section>
 
       <section className="search-wrap">
@@ -1838,6 +1987,244 @@ export default function Home() {
           </div>
         </section>
       </section>
+
+      {showAssistant && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => setShowAssistant(false)}
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "stretch",
+          }}
+        >
+          <section
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{
+              width: "min(440px, 100vw)",
+              height: "100%",
+              background: "#ffffff",
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "-20px 0 50px rgba(15, 23, 42, 0.18)",
+            }}
+          >
+            <header
+              style={{
+                padding: 18,
+                borderBottom: "1px solid #e2e8f0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 14,
+                    display: "grid",
+                    placeItems: "center",
+                    background: "#eef2ff",
+                    color: "#4338ca",
+                  }}
+                >
+                  <Bot size={24} />
+                </div>
+                <div>
+                  <strong>{t.assistantTitle}</strong>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    {language === "it"
+                      ? "Risposte basate sul tuo archivio"
+                      : "Answers based on your archive"}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAssistant(false)}
+                aria-label={t.close}
+                style={{ border: 0, background: "transparent" }}
+              >
+                <X />
+              </button>
+            </header>
+
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: 18,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+                background: "#f8fafc",
+              }}
+            >
+              {assistantMessages.length === 0 && (
+                <>
+                  <div
+                    style={{
+                      alignSelf: "flex-start",
+                      maxWidth: "88%",
+                      background: "#ffffff",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 16,
+                      padding: 14,
+                    }}
+                  >
+                    {t.assistantWelcome}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {[
+                      language === "it"
+                        ? "Quanto devo ancora pagare?"
+                        : "How much do I still have to pay?",
+                      language === "it"
+                        ? "Cosa scade nei prossimi 30 giorni?"
+                        : "What expires in the next 30 days?",
+                      language === "it"
+                        ? "Dov’è il contratto del fotovoltaico?"
+                        : "Where is the solar contract?",
+                      language === "it"
+                        ? "Quali documenti risultano pagati?"
+                        : "Which documents are paid?",
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => void askAssistant(suggestion)}
+                        style={{
+                          textAlign: "left",
+                          border: "1px solid #c7d2fe",
+                          borderRadius: 14,
+                          padding: 12,
+                          background: "#ffffff",
+                          color: "#3730a3",
+                        }}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {assistantMessages.map((message) => (
+                <div
+                  key={message.id}
+                  style={{
+                    alignSelf:
+                      message.role === "user" ? "flex-end" : "flex-start",
+                    maxWidth: "90%",
+                    background:
+                      message.role === "user" ? "#4338ca" : "#ffffff",
+                    color: message.role === "user" ? "#ffffff" : "#0f172a",
+                    border:
+                      message.role === "user"
+                        ? "1px solid #4338ca"
+                        : "1px solid #e2e8f0",
+                    borderRadius: 16,
+                    padding: 13,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  <div>{message.text}</div>
+
+                  {message.role === "assistant" &&
+                    (message.documentIds ?? []).map((documentId) => {
+                      const linkedDocument = documents.find(
+                        (document) => document.id === documentId,
+                      );
+
+                      if (!linkedDocument) return null;
+
+                      return (
+                        <button
+                          key={documentId}
+                          type="button"
+                          onClick={() => void openDocument(linkedDocument)}
+                          style={{
+                            width: "100%",
+                            textAlign: "left",
+                            marginTop: 10,
+                            border: "1px solid #c7d2fe",
+                            borderRadius: 12,
+                            padding: 10,
+                            background: "#eef2ff",
+                            color: "#312e81",
+                          }}
+                        >
+                          📄 {linkedDocument.title}
+                          <div style={{ fontSize: 12, marginTop: 3 }}>
+                            {t.assistantOpenDocument}
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+              ))}
+
+              {assistantLoading && (
+                <div
+                  style={{
+                    alignSelf: "flex-start",
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 16,
+                    padding: 13,
+                    color: "#64748b",
+                  }}
+                >
+                  {t.assistantThinking}
+                </div>
+              )}
+            </div>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void askAssistant();
+              }}
+              style={{
+                padding: 14,
+                borderTop: "1px solid #e2e8f0",
+                display: "flex",
+                gap: 8,
+                background: "#ffffff",
+              }}
+            >
+              <input
+                value={assistantInput}
+                onChange={(event) => setAssistantInput(event.target.value)}
+                placeholder={t.assistantPlaceholder}
+                disabled={assistantLoading}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 14,
+                  padding: "12px 14px",
+                }}
+              />
+              <button
+                type="submit"
+                className="primary"
+                disabled={!assistantInput.trim() || assistantLoading}
+                aria-label={t.assistantSend}
+                title={t.assistantSend}
+                style={{ minWidth: 48, justifyContent: "center" }}
+              >
+                <Send size={19} />
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
 
       {attachmentDocument && (
         <AttachmentModal
