@@ -20,7 +20,13 @@ const allowedCategories = [
 type AllowedCategory = (typeof allowedCategories)[number];
 
 type OpenAIResponse = {
-  output_text?: string;
+  output?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
+  }>;
   error?: { message?: string };
 };
 
@@ -159,19 +165,25 @@ User note: ${userNote || "none"}`;
       );
     }
 
-    if (!result.output_text) {
+    const outputText = result.output
+      ?.flatMap((item) => item.content ?? [])
+      .find((part) => part.type === "output_text")?.text;
+
+    if (!outputText) {
+      console.error("OpenAI response without output text:", result);
+
       return NextResponse.json(
         {
           error:
             language === "it"
-              ? "L'IA non ha restituito un risultato."
-              : "The AI returned no result.",
+              ? "L'IA ha risposto, ma il risultato non era leggibile."
+              : "The AI responded, but the result could not be read.",
         },
         { status: 502 },
       );
     }
 
-    const analysis = JSON.parse(result.output_text) as AnalysisResult;
+    const analysis = JSON.parse(outputText) as AnalysisResult;
 
     if (!allowedCategories.includes(analysis.category)) {
       analysis.category = "Altro";
