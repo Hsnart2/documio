@@ -21,4 +21,5 @@ export type StoredDocument = {
   keywords: string[];
   expiryDate?: string | null;
   size?: number;
+  storagePath?: string | null;
 };

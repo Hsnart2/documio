@@ -51,6 +51,9 @@ type Translation = {
   delete: string;
   deleteConfirm: string;
   deleteFailed: string;
+  openDocument: string;
+  downloadDocument: string;
+  fileUnavailable: string;
   expiresOn: string;
   noDocuments: string;
   noDocumentsHelp: string;
@@ -95,12 +98,15 @@ const translations: Record<Language, Translation> = {
     delete: "Elimina",
     deleteConfirm: "Vuoi eliminare questo documento?",
     deleteFailed: "Nessun documento eliminato. Ricarica la pagina e riprova.",
+    openDocument: "Apri documento",
+    downloadDocument: "Scarica",
+    fileUnavailable: "Il file non è ancora disponibile nello Storage.",
     expiresOn: "Scade il",
     noDocuments: "Nessun documento trovato",
     noDocumentsHelp: "Prova un’altra ricerca oppure carica un nuovo file.",
     uploadTitle: "Carica un documento",
     uploadDescription:
-      "Per questa prima versione salviamo la scheda del documento nel tuo archivio DocuMio.",
+      "Il documento viene analizzato dall’IA e salvato in modo privato nel tuo archivio DocuMio.",
     chooseFile: "Scegli PDF o fotografia",
     fileFormats: "PDF, JPG o PNG",
     optionalNote: "Nota facoltativa",
@@ -151,12 +157,15 @@ const translations: Record<Language, Translation> = {
     delete: "Delete",
     deleteConfirm: "Do you want to delete this document?",
     deleteFailed: "No document was deleted. Refresh the page and try again.",
+    openDocument: "Open document",
+    downloadDocument: "Download",
+    fileUnavailable: "The file is not available in Storage yet.",
     expiresOn: "Expires on",
     noDocuments: "No documents found",
     noDocumentsHelp: "Try another search or upload a new file.",
     uploadTitle: "Upload a document",
     uploadDescription:
-      "In this first version, we save the document record in your DocuMio archive.",
+      "The document is analyzed by AI and saved privately in your DocuMio archive.",
     chooseFile: "Choose a PDF or photo",
     fileFormats: "PDF, JPG or PNG",
     optionalNote: "Optional note",
@@ -322,6 +331,7 @@ export default function Home() {
         keywords: item.keywords ?? [],
         expiryDate: item.expiry_date,
         size: item.size ?? undefined,
+        storagePath: item.storage_path ?? null,
       }));
 
       setDocuments(loadedDocuments);
@@ -406,11 +416,7 @@ export default function Home() {
     if (!confirmed) return;
 
     const supabase = getSupabaseClient();
-
-    if (!supabase) {
-      alert(t.notConfigured);
-      return;
-    }
+    if (!supabase) return alert(t.notConfigured);
 
     const {
       data: { user: currentUser },
@@ -420,6 +426,19 @@ export default function Home() {
     if (userError || !currentUser) {
       alert(t.invalidSession);
       return;
+    }
+
+    const documentToDelete = documents.find((document) => document.id === id);
+
+    if (documentToDelete?.storagePath) {
+      const { error: storageError } = await supabase.storage
+        .from("documents")
+        .remove([documentToDelete.storagePath]);
+
+      if (storageError) {
+        alert(storageError.message);
+        return;
+      }
     }
 
     const { data: deletedRows, error } = await supabase
@@ -442,7 +461,30 @@ export default function Home() {
     setDocuments((current) => current.filter((doc) => doc.id !== id));
   }
 
-  async function saveDocument(doc: StoredDocument) {
+  async function openDocument(document: StoredDocument, download = false) {
+    if (!document.storagePath) {
+      alert(t.fileUnavailable);
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const { data, error } = await supabase.storage
+      .from("documents")
+      .createSignedUrl(document.storagePath, 60, {
+        download: download ? document.fileName : false,
+      });
+
+    if (error || !data?.signedUrl) {
+      alert(error?.message || t.fileUnavailable);
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function saveDocument(doc: StoredDocument, file: File) {
     const supabase = getSupabaseClient();
 
     if (!supabase) {
@@ -460,6 +502,26 @@ export default function Home() {
       return;
     }
 
+    const safeName = file.name
+      .normalize("NFKD")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/-+/g, "-");
+
+    const storagePath = `${user.id}/${crypto.randomUUID()}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("documents")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        contentType: file.type || undefined,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      alert(uploadError.message);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("documents")
       .insert({
@@ -472,11 +534,13 @@ export default function Home() {
         summary: doc.summary,
         keywords: doc.keywords,
         size: doc.size ?? null,
+        storage_path: storagePath,
       })
       .select()
       .single();
 
     if (error) {
+      await supabase.storage.from("documents").remove([storagePath]);
       alert(error.message);
       return;
     }
@@ -491,6 +555,7 @@ export default function Home() {
       keywords: data.keywords ?? [],
       expiryDate: data.expiry_date,
       size: data.size ?? undefined,
+      storagePath: data.storage_path ?? storagePath,
     };
 
     setDocuments((previous) => [savedDocument, ...previous]);
@@ -715,6 +780,24 @@ export default function Home() {
                   </span>
                 )}
 
+                {doc.storagePath && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      marginTop: 12,
+                    }}
+                  >
+                    <button type="button" onClick={() => openDocument(doc)}>
+                      {t.openDocument}
+                    </button>
+                    <button type="button" onClick={() => openDocument(doc, true)}>
+                      {t.downloadDocument}
+                    </button>
+                  </div>
+                )}
+
                 <div className="keywords">
                   {doc.keywords.slice(0, 3).map((keyword) => (
                     <span key={keyword}>{keyword}</span>
@@ -761,7 +844,7 @@ function UploadModal({
 }: {
   language: Language;
   onClose: () => void;
-  onSaved: (doc: StoredDocument) => void | Promise<void>;
+  onSaved: (doc: StoredDocument, file: File) => void | Promise<void>;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
@@ -811,7 +894,8 @@ function UploadModal({
           (language === "it" ? "Documento caricato." : "Document uploaded."),
         keywords: Array.isArray(data.keywords) ? data.keywords : [],
         size: file.size,
-      });
+        storagePath: null,
+      }, file);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : t.archiveError);
     } finally {
