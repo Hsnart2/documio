@@ -1,4 +1,15 @@
-export type DocumentCategory = "Casa" | "Veicoli" | "Assicurazioni" | "Banca" | "Lavoro" | "Famiglia" | "Altro";
+export type DocumentCategory =
+  | "Casa"
+  | "Veicoli"
+  | "Assicurazioni"
+  | "Banca"
+  | "Lavoro"
+  | "Famiglia"
+  | "Visite mediche"
+  | "Appuntamenti"
+  | "Bollette"
+  | "Istruzione"
+  | "Altro";
 
 export type StoredDocument = {
   id: string;
