@@ -793,11 +793,11 @@ function UploadModal({
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error("Analysis failed");
-      }
-
       const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Analysis failed");
+      }
 
       await onSaved({
         id: crypto.randomUUID(),
