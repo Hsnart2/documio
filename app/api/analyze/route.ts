@@ -192,11 +192,20 @@ User note: ${userNote || "none"}`;
             role: "user",
             content: [
               { type: "input_text", text: instructions },
-              {
-                type: "input_file",
-                filename: file.name,
-                file_data: fileData,
-              },
+              ...(mimeType.startsWith("image/")
+                ? [
+                    {
+                      type: "input_image",
+                      image_url: fileData,
+                    },
+                  ]
+                : [
+                    {
+                      type: "input_file",
+                      filename: file.name,
+                      file_data: fileData,
+                    },
+                  ]),
             ],
           },
         ],

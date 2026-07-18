@@ -36,6 +36,10 @@ export type StoredDocument = {
   totalAmount?: number | null;
   installmentCount?: number | null;
   isSinglePaymentOption?: boolean;
+  paidInstallments?: number | null;
+  remainingAmount?: number | null;
+  lastPaymentDate?: string | null;
+  paymentProgressConfirmed?: boolean;
 };
 
 export type DocumentAttachmentType =

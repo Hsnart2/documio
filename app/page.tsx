@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
+  Bell,
   Bot,
+  Settings,
+  Trash2,
   Building2,
   CalendarDays,
   Car,
@@ -20,6 +23,8 @@ import {
   Sparkles,
   Stethoscope,
   Upload,
+  CheckCheck,
+  Mail,
   X,
 } from "lucide-react";
 import type { DocumentAttachment, DocumentCategory, PaymentStatus, StoredDocument } from "@/lib/types";
@@ -347,9 +352,101 @@ const categories: { name: DocumentCategory; icon: React.ReactNode }[] = [
   { name: "Istruzione", icon: <GraduationCap size={20} /> },
 ];
 
-function isExpiringWithin30Days(document: StoredDocument) {
+type PaymentSnapshot = {
+  status: PaymentStatus;
+  totalAmount: number | null;
+  paidAmount: number;
+  remainingAmount: number | null;
+  paidInstallments: number;
+  lastPaymentDate: string | null;
+};
+
+function getPaidTotal(items: DocumentAttachment[]) {
+  return items
+    .filter((item) =>
+      ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
+    )
+    .reduce((total, item) => total + (Number(item.amount) || 0), 0);
+}
+
+function getPaymentSnapshot(
+  document: StoredDocument,
+  documentAttachments: DocumentAttachment[] = [],
+): PaymentSnapshot {
+  const paymentAttachments = documentAttachments.filter((item) =>
+    ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
+  );
+  const attachmentPaidAmount = getPaidTotal(paymentAttachments);
+  const storedPaidAmount = Math.max(0, Number(document.paidAmount) || 0);
+  const paidAmount = document.paymentProgressConfirmed
+    ? attachmentPaidAmount
+    : Math.max(storedPaidAmount, attachmentPaidAmount);
+  const parsedTotalAmount = Number(document.totalAmount);
+  const totalAmount =
+    Number.isFinite(parsedTotalAmount) && parsedTotalAmount > 0
+      ? parsedTotalAmount
+      : null;
+  const remainingAmount =
+    totalAmount != null ? Math.max(0, totalAmount - paidAmount) : null;
+  const attachmentInstallments = paymentAttachments.filter(
+    (item) => (Number(item.amount) || 0) > 0,
+  ).length;
+  const paidInstallments = document.paymentProgressConfirmed
+    ? attachmentInstallments
+    : Math.max(
+        Number(document.paidInstallments) || 0,
+        attachmentInstallments,
+      );
+  const latestPayment = [...paymentAttachments].sort((a, b) =>
+    String(b.paymentDate ?? b.uploadedAt).localeCompare(
+      String(a.paymentDate ?? a.uploadedAt),
+    ),
+  )[0];
+  const lastPaymentDate = document.paymentProgressConfirmed
+    ? latestPayment?.paymentDate ??
+      latestPayment?.uploadedAt?.slice(0, 10) ??
+      null
+    : document.lastPaymentDate ??
+      latestPayment?.paymentDate ??
+      latestPayment?.uploadedAt?.slice(0, 10) ??
+      document.paidAt ??
+      null;
+  const isOverdue =
+    Boolean(document.expiryDate) &&
+    new Date(`${document.expiryDate}T23:59:59`).getTime() < Date.now();
+
+  let status: PaymentStatus;
+
+  if (document.paymentStatus === "Contestato") {
+    status = "Contestato";
+  } else if (totalAmount != null && remainingAmount != null && remainingAmount <= 0.01) {
+    status = "Pagato";
+  } else if (isOverdue) {
+    status = "Scaduto";
+  } else if (paidAmount > 0) {
+    status = "Parzialmente pagato";
+  } else {
+    status = "Da pagare";
+  }
+
+  return {
+    status,
+    totalAmount,
+    paidAmount,
+    remainingAmount,
+    paidInstallments,
+    lastPaymentDate,
+  };
+}
+
+function isExpiringWithin30Days(
+  document: StoredDocument,
+  documentAttachments: DocumentAttachment[] = [],
+) {
   if (!document.expiryDate) return false;
-  if (document.paymentStatus === "Pagato") return false;
+
+  const status = getPaymentSnapshot(document, documentAttachments).status;
+  if (status === "Pagato" || status === "Contestato") return false;
 
   const expiry = new Date(`${document.expiryDate}T23:59:59`).getTime();
   const now = Date.now();
@@ -358,12 +455,27 @@ function isExpiringWithin30Days(document: StoredDocument) {
   return expiry >= now && expiry <= thirtyDaysFromNow;
 }
 
-function getPaidTotal(items: DocumentAttachment[]) {
-  return items
-    .filter((item) =>
-      ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
-    )
-    .reduce((total, item) => total + (Number(item.amount) || 0), 0);
+function hasPaymentTracking(
+  document: StoredDocument,
+  documentAttachments: DocumentAttachment[] = [],
+) {
+  const snapshot = getPaymentSnapshot(document, documentAttachments);
+  const hasKnownAmount =
+    snapshot.totalAmount != null ||
+    snapshot.paidAmount > 0 ||
+    document.remainingAmount != null;
+
+  const hasPaymentDetails = Boolean(
+    document.paidAt ||
+      document.lastPaymentDate ||
+      document.paymentMethod ||
+      document.installmentCount,
+  );
+  const hasPaymentAttachment = documentAttachments.some((item) =>
+    ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
+  );
+
+  return hasKnownAmount || hasPaymentDetails || hasPaymentAttachment;
 }
 
 function getMatchLabel(confidence: number, language: Language) {
@@ -382,16 +494,11 @@ function getMatchLabel(confidence: number, language: Language) {
     : "Possible match";
 }
 
-function getDisplayedPaymentStatus(document: StoredDocument): PaymentStatus {
-  if (
-    document.paymentStatus === "Da pagare" &&
-    document.expiryDate &&
-    new Date(`${document.expiryDate}T23:59:59`).getTime() < Date.now()
-  ) {
-    return "Scaduto";
-  }
-
-  return document.paymentStatus ?? "Da pagare";
+function getDisplayedPaymentStatus(
+  document: StoredDocument,
+  documentAttachments: DocumentAttachment[] = [],
+): PaymentStatus {
+  return getPaymentSnapshot(document, documentAttachments).status;
 }
 
 
@@ -483,6 +590,62 @@ function getDocumentSearchScore(
   return score;
 }
 
+
+async function getApiAuthHeaders(contentType?: string) {
+  const supabase = getSupabaseClient();
+  const { data } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+  const token = data.session?.access_token;
+  return {
+    ...(contentType ? { "Content-Type": contentType } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function compressImageForUpload(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.size < 900_000) return file;
+
+  const bitmap = await createImageBitmap(file);
+  const maxSide = 1800;
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return file;
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/jpeg", 0.78),
+  );
+  if (!blob || blob.size >= file.size) return file;
+  const baseName = file.name.replace(/\.[^.]+$/, "");
+  return new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+}
+
+function rankDocumentsForQuestion(question: string, documents: StoredDocument[], attachments: Record<string, DocumentAttachment[]>) {
+  const terms = normalizeSearchText(question).split(/\s+/).filter((term) => term.length > 1);
+  return [...documents]
+    .map((document) => {
+      const attachmentText = (attachments[document.id] ?? []).map((item) => `${item.title} ${item.fileName} ${item.notes ?? ""}`).join(" ");
+      const text = normalizeSearchText(`${document.title} ${document.category} ${document.summary} ${document.keywords.join(" ")} ${attachmentText}`);
+      const score = terms.reduce((total, term) => total + (text.includes(term) ? 1 : 0), 0);
+      return { document, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 15)
+    .map((item) => item.document);
+}
+
+type NotificationItem = {
+  id: string;
+  documentId: string;
+  title: string;
+  message: string;
+  severity: "info" | "warning" | "urgent";
+  dueDate?: string | null;
+};
+
 type AssistantMessage = {
   id: string;
   role: "user" | "assistant";
@@ -494,6 +657,7 @@ export default function Home() {
   const [language, setLanguage] = useState<Language>("it");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -505,6 +669,14 @@ export default function Home() {
     useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [browserNotificationsEnabled, setBrowserNotificationsEnabled] = useState(false);
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(true);
+  const [weeklyDigestEnabled, setWeeklyDigestEnabled] = useState(true);
   const [assistantInput, setAssistantInput] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState<
@@ -526,6 +698,17 @@ export default function Home() {
     if (rememberedEmail) setEmail(rememberedEmail);
     if (rememberedLanguage === "it" || rememberedLanguage === "en") {
       setLanguage(rememberedLanguage);
+    }
+
+    try {
+      const savedRead = JSON.parse(localStorage.getItem("documio-read-notifications") ?? "[]");
+      if (Array.isArray(savedRead)) setReadNotificationIds(savedRead);
+    } catch {
+      setReadNotificationIds([]);
+    }
+
+    if (typeof Notification !== "undefined") {
+      setBrowserNotificationsEnabled(Notification.permission === "granted");
     }
   }, []);
 
@@ -627,6 +810,11 @@ export default function Home() {
         totalAmount: item.total_amount ?? null,
         installmentCount: item.installment_count ?? null,
         isSinglePaymentOption: item.is_single_payment_option ?? false,
+        paidInstallments: item.paid_installments ?? null,
+        remainingAmount: item.remaining_amount ?? null,
+        lastPaymentDate: item.last_payment_date ?? null,
+        paymentProgressConfirmed:
+          item.payment_progress_confirmed ?? false,
       }));
 
       setDocuments(loadedDocuments);
@@ -668,6 +856,22 @@ export default function Home() {
         setAttachments(grouped);
       }
 
+      const { data: preference } = await supabase
+        .from("notification_preferences")
+        .select("email_enabled, weekly_digest_enabled, browser_enabled")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (preference) {
+        setEmailNotificationsEnabled(preference.email_enabled ?? true);
+        setWeeklyDigestEnabled(preference.weekly_digest_enabled ?? true);
+        setBrowserNotificationsEnabled(
+          Boolean(preference.browser_enabled) &&
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted",
+        );
+      }
+
       setIsLoaded(true);
     }
 
@@ -675,6 +879,11 @@ export default function Home() {
   }, [authReady, userId]);
 
   async function signUp() {
+    if (!privacyAccepted) {
+      alert(language === "it" ? "Per registrarti devi accettare Privacy Policy e Termini beta." : "You must accept the Privacy Policy and beta Terms to register.");
+      return;
+    }
+
     const supabase = getSupabaseClient();
     if (!supabase) return alert(t.notConfigured);
 
@@ -720,31 +929,91 @@ export default function Home() {
     setPassword("");
   }
 
+  async function deleteAccount() {
+    if (!deletePassword.trim() || deletingAccount) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !userEmail) return alert(t.notConfigured);
+
+    setDeletingAccount(true);
+
+    try {
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password: deletePassword,
+      });
+
+      if (authError) {
+        alert(language === "it" ? "Password non corretta." : "Incorrect password.");
+        return;
+      }
+
+      const response = await fetch("/api/delete-account", {
+        method: "POST",
+        headers: await getApiAuthHeaders("application/json"),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || (language === "it" ? "Cancellazione non riuscita." : "Account deletion failed."));
+      }
+
+      await supabase.auth.signOut();
+      localStorage.removeItem("documio-read-notifications");
+      setDocuments([]);
+      setAttachments({});
+      setDeletePassword("");
+      setShowDeleteAccount(false);
+      setShowNotifications(false);
+      alert(language === "it" ? "Account cancellato definitivamente." : "Account permanently deleted.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : (language === "it" ? "Cancellazione non riuscita." : "Account deletion failed."));
+    } finally {
+      setDeletingAccount(false);
+    }
+  }
+
   const dashboard = useMemo(() => {
-    const toPay = documents.filter(
-      (document) => getDisplayedPaymentStatus(document) === "Da pagare",
-    );
-    const partial = documents.filter(
-      (document) => document.paymentStatus === "Parzialmente pagato",
-    );
+    const toPay = documents.filter((document) => {
+      const documentAttachments = attachments[document.id] ?? [];
+      return (
+        hasPaymentTracking(document, documentAttachments) &&
+        getPaymentSnapshot(document, documentAttachments).status === "Da pagare"
+      );
+    });
+    const partial = documents.filter((document) => {
+      const documentAttachments = attachments[document.id] ?? [];
+      return (
+        hasPaymentTracking(document, documentAttachments) &&
+        getPaymentSnapshot(document, documentAttachments).status ===
+          "Parzialmente pagato"
+      );
+    });
     const expiring = documents.filter((document) =>
-      isExpiringWithin30Days(document),
+      isExpiringWithin30Days(document, attachments[document.id] ?? []),
     );
-    const paid = documents.filter(
-      (document) => document.paymentStatus === "Pagato",
-    );
+    const paid = documents.filter((document) => {
+      const documentAttachments = attachments[document.id] ?? [];
+      return (
+        hasPaymentTracking(document, documentAttachments) &&
+        getPaymentSnapshot(document, documentAttachments).status === "Pagato"
+      );
+    });
 
     const outstandingTotal = documents.reduce((total, document) => {
-      if (document.paymentStatus === "Pagato") return total;
+      const documentAttachments = attachments[document.id] ?? [];
+      if (!hasPaymentTracking(document, documentAttachments)) return total;
 
-      const documentTotal = Number(document.totalAmount);
-      const alreadyPaid = Number(document.paidAmount) || 0;
-
-      if (!Number.isFinite(documentTotal) || documentTotal <= 0) {
+      const snapshot = getPaymentSnapshot(document, documentAttachments);
+      if (
+        snapshot.status === "Pagato" ||
+        snapshot.status === "Contestato" ||
+        snapshot.remainingAmount == null
+      ) {
         return total;
       }
 
-      return total + Math.max(0, documentTotal - alreadyPaid);
+      return total + snapshot.remainingAmount;
     }, 0);
 
     return {
@@ -754,7 +1023,117 @@ export default function Home() {
       paidCount: paid.length,
       outstandingTotal,
     };
-  }, [documents]);
+  }, [documents, attachments]);
+
+  const notificationItems = useMemo<NotificationItem[]>(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    return documents
+      .flatMap((document) => {
+        if (!document.expiryDate) return [];
+
+        const due = new Date(`${document.expiryDate}T12:00:00`).getTime();
+        const days = Math.ceil((due - today) / dayMs);
+        const payment = hasPaymentTracking(document, attachments[document.id] ?? []);
+        const paid = getPaymentSnapshot(document, attachments[document.id] ?? []).status === "Pagato";
+
+        if (payment && paid) return [];
+        if (days > 30) return [];
+
+        const severity: NotificationItem["severity"] =
+          days < 0 || days <= 1 ? "urgent" : days <= 7 ? "warning" : "info";
+        const kind = payment
+          ? language === "it" ? "Pagamento" : "Payment"
+          : language === "it" ? "Documento" : "Document";
+        const timing = days < 0
+          ? language === "it" ? `scaduto da ${Math.abs(days)} giorni` : `overdue by ${Math.abs(days)} days`
+          : days === 0
+            ? language === "it" ? "scade oggi" : "is due today"
+            : days === 1
+              ? language === "it" ? "scade domani" : "is due tomorrow"
+              : language === "it" ? `scade tra ${days} giorni` : `is due in ${days} days`;
+
+        return [{
+          id: `${document.id}:${document.expiryDate}:${payment ? "payment" : "document"}`,
+          documentId: document.id,
+          title: `${kind}: ${document.title}`,
+          message: `${document.title} ${timing}.`,
+          severity,
+          dueDate: document.expiryDate,
+        }];
+      })
+      .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
+  }, [documents, attachments, language]);
+
+  const unreadNotificationCount = notificationItems.filter(
+    (item) => !readNotificationIds.includes(item.id),
+  ).length;
+
+  function markAllNotificationsRead() {
+    const ids = notificationItems.map((item) => item.id);
+    setReadNotificationIds(ids);
+    localStorage.setItem("documio-read-notifications", JSON.stringify(ids));
+  }
+
+  async function saveNotificationPreferences(values: {
+    emailEnabled?: boolean;
+    weeklyDigestEnabled?: boolean;
+    browserEnabled?: boolean;
+  }) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !userId) return;
+
+    const nextEmail = values.emailEnabled ?? emailNotificationsEnabled;
+    const nextWeekly = values.weeklyDigestEnabled ?? weeklyDigestEnabled;
+    const nextBrowser = values.browserEnabled ?? browserNotificationsEnabled;
+
+    const { error } = await supabase.from("notification_preferences").upsert({
+      user_id: userId,
+      email_enabled: nextEmail,
+      weekly_digest_enabled: nextWeekly,
+      browser_enabled: nextBrowser,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+
+    if (error) console.error("Notification preferences:", error.message);
+  }
+
+  async function enableBrowserNotifications() {
+    if (typeof Notification === "undefined") {
+      alert(language === "it" ? "Questo browser non supporta le notifiche." : "This browser does not support notifications.");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    const enabled = permission === "granted";
+    setBrowserNotificationsEnabled(enabled);
+    await saveNotificationPreferences({ browserEnabled: enabled });
+
+    if (enabled) {
+      new Notification("DocuMio", {
+        body: language === "it" ? "Notifiche del browser attivate." : "Browser notifications enabled.",
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!browserNotificationsEnabled || !notificationItems.length) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const storageKey = `documio-browser-notified-${todayKey}`;
+    if (localStorage.getItem(storageKey)) return;
+
+    const urgent = notificationItems.filter((item) => item.severity !== "info").slice(0, 3);
+    if (!urgent.length) return;
+
+    new Notification(language === "it" ? "DocuMio: scadenze importanti" : "DocuMio: important deadlines", {
+      body: urgent.map((item) => item.message).join(" "),
+    });
+    localStorage.setItem(storageKey, "1");
+  }, [browserNotificationsEnabled, notificationItems, language]);
 
   const expiringCount = dashboard.expiringCount;
 
@@ -772,7 +1151,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/search", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getApiAuthHeaders("application/json"),
         body: JSON.stringify({
           query: cleanQuery,
           language,
@@ -784,7 +1163,7 @@ export default function Home() {
             summary: document.summary,
             keywords: document.keywords,
             expiryDate: document.expiryDate,
-            paymentStatus: document.paymentStatus,
+            paymentStatus: getPaymentSnapshot(document, attachments[document.id] ?? []).status,
             totalAmount: document.totalAmount,
             paidAmount: document.paidAmount,
             attachments: (attachments[document.id] ?? []).map((item) => ({
@@ -831,13 +1210,14 @@ export default function Home() {
     setAssistantLoading(true);
 
     try {
+      const relevantDocuments = rankDocumentsForQuestion(cleanQuestion, documents, attachments);
       const response = await fetch("/api/assistant", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await getApiAuthHeaders("application/json"),
         body: JSON.stringify({
           question: cleanQuestion,
           language,
-          documents: documents.map((document) => ({
+          documents: relevantDocuments.map((document) => ({
             id: document.id,
             title: document.title,
             fileName: document.fileName,
@@ -845,18 +1225,23 @@ export default function Home() {
             summary: document.summary,
             keywords: document.keywords,
             expiryDate: document.expiryDate,
-            paymentStatus: getDisplayedPaymentStatus(document),
-            totalAmount: document.totalAmount,
-            paidAmount: document.paidAmount,
+            paymentStatus: getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).status,
+            totalAmount: getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).totalAmount,
+            paidAmount: getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).paidAmount,
             paymentMethod: document.paymentMethod,
-            remainingAmount:
-              document.totalAmount != null
-                ? Math.max(
-                    0,
-                    Number(document.totalAmount) -
-                      (Number(document.paidAmount) || 0),
-                  )
-                : null,
+            remainingAmount: getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).remainingAmount,
             attachments: (attachments[document.id] ?? []).map((item) => ({
               title: item.title,
               type: item.attachmentType,
@@ -934,13 +1319,28 @@ export default function Home() {
         return (
           activeCategory === "Tutti" ||
           (activeCategory === "In scadenza" &&
-            isExpiringWithin30Days(document)) ||
+            isExpiringWithin30Days(
+              document,
+              attachments[document.id] ?? [],
+            )) ||
           (activeCategory === "Da pagare" &&
-            getDisplayedPaymentStatus(document) === "Da pagare") ||
+            hasPaymentTracking(document, attachments[document.id] ?? []) &&
+            getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).status === "Da pagare") ||
           (activeCategory === "Parzialmente pagato" &&
-            document.paymentStatus === "Parzialmente pagato") ||
+            hasPaymentTracking(document, attachments[document.id] ?? []) &&
+            getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).status === "Parzialmente pagato") ||
           (activeCategory === "Pagato" &&
-            document.paymentStatus === "Pagato") ||
+            hasPaymentTracking(document, attachments[document.id] ?? []) &&
+            getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).status === "Pagato") ||
           document.category === activeCategory
         );
       });
@@ -1021,46 +1421,24 @@ export default function Home() {
     setDocuments((current) => current.filter((doc) => doc.id !== id));
   }
 
-  async function updatePaymentStatus(
+  async function updatePaymentStatusOverride(
     document: StoredDocument,
-    paymentStatus: PaymentStatus,
-    paymentDetails?: {
-      paidAt?: string | null;
-      paidAmount?: number | null;
-      paymentMethod?: string | null;
-    },
+    disputed: boolean,
   ) {
     const supabase = getSupabaseClient();
     if (!supabase) return alert(t.notConfigured);
 
-    const updateData: {
-      payment_status: PaymentStatus;
-      paid_at?: string | null;
-      paid_amount?: number | null;
-      payment_method?: string | null;
-    } = {
-      payment_status: paymentStatus,
-    };
-
-    if (
-      paymentStatus === "Pagato" ||
-      paymentStatus === "Parzialmente pagato"
-    ) {
-      updateData.paid_at =
-        paymentDetails?.paidAt ?? document.paidAt ?? new Date().toISOString().slice(0, 10);
-      updateData.paid_amount =
-        paymentDetails?.paidAmount ?? document.paidAmount ?? null;
-      updateData.payment_method =
-        paymentDetails?.paymentMethod ?? document.paymentMethod ?? null;
-    } else {
-      updateData.paid_at = null;
-      updateData.paid_amount = null;
-      updateData.payment_method = null;
-    }
+    const automaticStatus = getPaymentSnapshot(
+      { ...document, paymentStatus: "Da pagare" },
+      attachments[document.id] ?? [],
+    ).status;
+    const paymentStatus: PaymentStatus = disputed
+      ? "Contestato"
+      : automaticStatus;
 
     const { error } = await supabase
       .from("documents")
-      .update(updateData)
+      .update({ payment_status: paymentStatus })
       .eq("id", document.id);
 
     if (error) {
@@ -1074,9 +1452,6 @@ export default function Home() {
           ? {
               ...item,
               paymentStatus,
-              paidAt: updateData.paid_at ?? null,
-              paidAmount: updateData.paid_amount ?? null,
-              paymentMethod: updateData.payment_method ?? null,
             }
           : item,
       ),
@@ -1133,6 +1508,13 @@ export default function Home() {
     const supabase = getSupabaseClient();
     if (!supabase) return alert(t.notConfigured);
 
+    const document = documents.find(
+      (item) => item.id === attachment.documentId,
+    );
+    const remainingAttachments = (
+      attachments[attachment.documentId] ?? []
+    ).filter((item) => item.id !== attachment.id);
+
     const { error: storageError } = await supabase.storage
       .from("documents")
       .remove([attachment.storagePath]);
@@ -1154,10 +1536,25 @@ export default function Home() {
 
     setAttachments((current) => ({
       ...current,
-      [attachment.documentId]: (current[attachment.documentId] ?? []).filter(
-        (item) => item.id !== attachment.id,
-      ),
+      [attachment.documentId]: remainingAttachments,
     }));
+
+    const isPaymentAttachment = [
+      "Ricevuta",
+      "Quietanza",
+      "Pagamento",
+    ].includes(attachment.attachmentType);
+
+    if (document && isPaymentAttachment) {
+      await recalculateDocumentPaymentStatus(
+        document,
+        remainingAttachments,
+        document.totalAmount,
+        document.installmentCount,
+        document.isSinglePaymentOption,
+        false,
+      );
+    }
   }
 
   async function recalculateDocumentPaymentStatus(
@@ -1166,11 +1563,15 @@ export default function Home() {
     inferredTotalAmount?: number | null,
     inferredInstallmentCount?: number | null,
     inferredSinglePaymentOption?: boolean,
+    requireConfirmation = true,
   ) {
     const supabase = getSupabaseClient();
     if (!supabase) return;
 
-    const paidTotal = getPaidTotal(allAttachments);
+    const paymentAttachments = allAttachments.filter((item) =>
+      ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
+    );
+    const paidTotal = getPaidTotal(paymentAttachments);
     const totalAmount =
       Number(document.totalAmount) > 0
         ? Number(document.totalAmount)
@@ -1194,30 +1595,70 @@ export default function Home() {
       paymentStatus = "Parzialmente pagato";
     }
 
-    const latestPayment = [...allAttachments]
-      .filter((item) =>
-        ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
-      )
-      .sort((a, b) =>
-        String(b.paymentDate ?? b.uploadedAt).localeCompare(
-          String(a.paymentDate ?? a.uploadedAt),
-        ),
-      )[0];
+    const latestPayment = [...paymentAttachments].sort((a, b) =>
+      String(b.paymentDate ?? b.uploadedAt).localeCompare(
+        String(a.paymentDate ?? a.uploadedAt),
+      ),
+    )[0];
+
+    const remainingAmount =
+      totalAmount != null ? Math.max(0, totalAmount - paidTotal) : null;
+    const paidInstallments = paymentAttachments.filter(
+      (item) => (Number(item.amount) || 0) > 0,
+    ).length;
+    const lastPaymentDate =
+      latestPayment?.paymentDate ?? latestPayment?.uploadedAt?.slice(0, 10) ?? null;
+    const installmentCount =
+      document.installmentCount ?? inferredInstallmentCount ?? null;
+    const isSinglePaymentOption =
+      document.isSinglePaymentOption ??
+      inferredSinglePaymentOption ??
+      false;
+
+    const currency = new Intl.NumberFormat(
+      language === "it" ? "it-IT" : "en-US",
+      { style: "currency", currency: "EUR" },
+    );
+    const proposalLines = [
+      language === "it"
+        ? `DocuMio propone di aggiornare il pagamento di “${document.title}”:`
+        : `DocuMio proposes updating the payment for “${document.title}”:`,
+      `${t.paymentStatus}: ${t.statuses[paymentStatus]}`,
+      `${t.paidProgress}: ${currency.format(paidTotal)}`,
+      totalAmount != null
+        ? `${language === "it" ? "Totale" : "Total"}: ${currency.format(totalAmount)}`
+        : null,
+      remainingAmount != null
+        ? `${language === "it" ? "Residuo" : "Remaining"}: ${currency.format(remainingAmount)}`
+        : null,
+      installmentCount != null
+        ? `${language === "it" ? "Rate pagate" : "Paid installments"}: ${paidInstallments}/${installmentCount}`
+        : `${language === "it" ? "Pagamenti registrati" : "Recorded payments"}: ${paidInstallments}`,
+      "",
+      language === "it"
+        ? "Confermi questo aggiornamento?"
+        : "Do you confirm this update?",
+    ].filter((line): line is string => line !== null);
+
+    if (
+      requireConfirmation &&
+      !window.confirm(proposalLines.join("\n"))
+    ) {
+      return;
+    }
 
     const updateData = {
       payment_status: paymentStatus,
-      paid_at: latestPayment?.paymentDate ?? null,
+      paid_at: lastPaymentDate,
       paid_amount: paidTotal || null,
       payment_method: latestPayment?.paymentMethod ?? null,
       total_amount: totalAmount,
-      installment_count:
-        document.installmentCount ??
-        inferredInstallmentCount ??
-        null,
-      is_single_payment_option:
-        document.isSinglePaymentOption ??
-        inferredSinglePaymentOption ??
-        false,
+      installment_count: installmentCount,
+      is_single_payment_option: isSinglePaymentOption,
+      paid_installments: paidInstallments || null,
+      remaining_amount: remainingAmount,
+      last_payment_date: lastPaymentDate,
+      payment_progress_confirmed: true,
     };
 
     const { error } = await supabase
@@ -1242,6 +1683,11 @@ export default function Home() {
               totalAmount,
               installmentCount: updateData.installment_count,
               isSinglePaymentOption: updateData.is_single_payment_option,
+              paidInstallments: updateData.paid_installments,
+              remainingAmount: updateData.remaining_amount,
+              lastPaymentDate: updateData.last_payment_date,
+              paymentProgressConfirmed:
+                updateData.payment_progress_confirmed,
             }
           : item,
       ),
@@ -1408,6 +1854,11 @@ export default function Home() {
         total_amount: doc.totalAmount ?? null,
         installment_count: doc.installmentCount ?? null,
         is_single_payment_option: doc.isSinglePaymentOption ?? false,
+        paid_installments: doc.paidInstallments ?? null,
+        remaining_amount: doc.remainingAmount ?? null,
+        last_payment_date: doc.lastPaymentDate ?? null,
+        payment_progress_confirmed:
+          doc.paymentProgressConfirmed ?? false,
       })
       .select()
       .single();
@@ -1436,6 +1887,11 @@ export default function Home() {
       totalAmount: data.total_amount ?? null,
       installmentCount: data.installment_count ?? null,
       isSinglePaymentOption: data.is_single_payment_option ?? false,
+      paidInstallments: data.paid_installments ?? null,
+      remainingAmount: data.remaining_amount ?? null,
+      lastPaymentDate: data.last_payment_date ?? null,
+      paymentProgressConfirmed:
+        data.payment_progress_confirmed ?? false,
     };
 
     setDocuments((previous) => [savedDocument, ...previous]);
@@ -1483,12 +1939,28 @@ export default function Home() {
           style={{ width: "100%", padding: 12, marginBottom: 12 }}
         />
 
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 9, margin: "4px 0 14px", fontSize: 14, lineHeight: 1.45 }}>
+          <input
+            type="checkbox"
+            checked={privacyAccepted}
+            onChange={(event) => setPrivacyAccepted(event.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            {language === "it" ? "Ho letto e accetto " : "I have read and accept the "}
+            <a href="/privacy" target="_blank">Privacy Policy</a>
+            {language === "it" ? " e i " : " and "}
+            <a href="/terms" target="_blank">{language === "it" ? "Termini beta" : "beta Terms"}</a>.
+          </span>
+        </label>
+
         <button onClick={signIn} style={{ width: "100%", padding: 12 }}>
           {t.signIn}
         </button>
 
         <button
           onClick={signUp}
+          disabled={!privacyAccepted}
           style={{ width: "100%", padding: 12, marginTop: 10 }}
         >
           {t.signUp}
@@ -1507,23 +1979,35 @@ export default function Home() {
           <span>DocuMio</span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="topbar-actions">
           <button
             type="button"
-            onClick={() => setLanguage(language === "it" ? "en" : "it")}
-            aria-label="Change language"
+            className="topbar-icon-button"
+            onClick={() => setShowNotifications(true)}
+            aria-label={language === "it" ? "Impostazioni" : "Settings"}
+            title={language === "it" ? "Impostazioni" : "Settings"}
+            style={{ position: "relative" }}
           >
-            {language === "it" ? "EN" : "IT"}
+            <Settings size={19} />
+            {unreadNotificationCount > 0 && (
+              <span style={{
+                position: "absolute", top: -7, right: -7, minWidth: 20, height: 20,
+                borderRadius: 999, padding: "0 5px", display: "grid", placeItems: "center",
+                background: "#dc2626", color: "white", fontSize: 11, fontWeight: 800,
+              }}>
+                {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+              </span>
+            )}
           </button>
 
-          <button className="primary" onClick={() => setShowUpload(true)}>
+          <button className="primary topbar-upload" onClick={() => setShowUpload(true)}>
             <Plus size={18} />
-            {t.uploadDocument}
+            <span>{language === "it" ? "Carica" : "Upload"}</span>
           </button>
 
-          <button type="button" onClick={signOut} title={userEmail ?? undefined}>
+          <button className="topbar-logout" type="button" onClick={signOut} title={userEmail ?? undefined}>
             <LogOut size={18} />
-            {t.logout}
+            <span>{t.logout}</span>
           </button>
         </div>
       </header>
@@ -1783,7 +2267,7 @@ export default function Home() {
 
           <div className="grid">
             {filtered.map((doc) => (
-              <article className="doc-card" key={doc.id}>
+              <article className="doc-card" key={doc.id} data-document-id={doc.id}>
                 <div className="doc-card-actions">
                   <button
                     type="button"
@@ -1804,7 +2288,12 @@ export default function Home() {
                 <h3>{doc.title}</h3>
                 <p>{doc.summary}</p>
 
-                {doc.expiryDate && doc.paymentStatus !== "Pagato" && (
+                {doc.expiryDate &&
+                  (!hasPaymentTracking(doc, attachments[doc.id] ?? []) ||
+                    getPaymentSnapshot(
+                      doc,
+                      attachments[doc.id] ?? [],
+                    ).status !== "Pagato") && (
                   <span className="expiry-date">
                     {t.expiresOn} {" "}
                     {new Date(
@@ -1813,46 +2302,78 @@ export default function Home() {
                   </span>
                 )}
 
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                    marginTop: 12,
-                  }}
-                >
-                  <strong>{t.paymentStatus}:</strong>
+                {hasPaymentTracking(doc, attachments[doc.id] ?? []) && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      marginTop: 12,
+                    }}
+                  >
+                    <strong>{t.paymentStatus}:</strong>
                   <select
-                    value={getDisplayedPaymentStatus(doc)}
-                    onChange={(event) =>
-                      updatePaymentStatus(
+                    value={
+                      getPaymentSnapshot(
                         doc,
-                        event.target.value as PaymentStatus,
+                        attachments[doc.id] ?? [],
+                      ).status === "Contestato"
+                        ? "Contestato"
+                        : "Automatico"
+                    }
+                    onChange={(event) =>
+                      updatePaymentStatusOverride(
+                        doc,
+                        event.target.value === "Contestato",
                       )
                     }
                     aria-label={`${t.paymentStatus} ${doc.title}`}
                   >
-                    <option value="Da pagare">
-                      {t.statuses["Da pagare"]}
+                    <option value="Automatico">
+                      {language === "it"
+                        ? `Automatico · ${
+                            t.statuses[
+                              getPaymentSnapshot(
+                                { ...doc, paymentStatus: "Da pagare" },
+                                attachments[doc.id] ?? [],
+                              ).status
+                            ]
+                          }`
+                        : `Automatic · ${
+                            t.statuses[
+                              getPaymentSnapshot(
+                                { ...doc, paymentStatus: "Da pagare" },
+                                attachments[doc.id] ?? [],
+                              ).status
+                            ]
+                          }`
+                      }
                     </option>
-                    <option value="Parzialmente pagato">
-                      {t.statuses["Parzialmente pagato"]}
-                    </option>
-                    <option value="Pagato">{t.statuses.Pagato}</option>
-                    <option value="Scaduto">{t.statuses.Scaduto}</option>
                     <option value="Contestato">{t.statuses.Contestato}</option>
                   </select>
 
                   {["Pagato", "Parzialmente pagato"].includes(
-                    doc.paymentStatus ?? "",
-                  ) && doc.paidAt && (
+                    getPaymentSnapshot(
+                      doc,
+                      attachments[doc.id] ?? [],
+                    ).status,
+                  ) && getPaymentSnapshot(
+                    doc,
+                    attachments[doc.id] ?? [],
+                  ).lastPaymentDate && (
                     <span style={{ fontSize: 13 }}>
-                      {new Date(`${doc.paidAt}T12:00:00`).toLocaleDateString(
+                      {new Date(`${getPaymentSnapshot(doc, attachments[doc.id] ?? []).lastPaymentDate}T12:00:00`).toLocaleDateString(
                         language === "it" ? "it-IT" : "en-GB",
                       )}
-                      {doc.paidAmount != null
-                        ? ` · €${Number(doc.paidAmount).toFixed(2)}`
+                      {getPaymentSnapshot(
+                        doc,
+                        attachments[doc.id] ?? [],
+                      ).paidAmount > 0
+                        ? ` · €${getPaymentSnapshot(
+                            doc,
+                            attachments[doc.id] ?? [],
+                          ).paidAmount.toFixed(2)}`
                         : ""}
                       {doc.totalAmount != null
                         ? ` su €${Number(doc.totalAmount).toFixed(2)}`
@@ -1860,7 +2381,8 @@ export default function Home() {
                       {doc.paymentMethod ? ` · ${doc.paymentMethod}` : ""}
                     </span>
                   )}
-                </div>
+                  </div>
+                )}
 
                 {doc.storagePath && (
                   <div
@@ -1987,6 +2509,107 @@ export default function Home() {
           </div>
         </section>
       </section>
+
+      <footer className="legal-footer">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Termini beta</a>
+        <span>© {new Date().getFullYear()} DocuMio</span>
+      </footer>
+
+      {showNotifications && (
+        <div className="modal-backdrop" onMouseDown={() => setShowNotifications(false)}>
+          <section
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{ width: "min(620px, calc(100vw - 24px))", maxHeight: "88vh", overflow: "auto", background: "white", borderRadius: 22, padding: 20 }}
+          >
+            <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <div>
+                <h2 style={{ margin: 0 }}>{language === "it" ? "Impostazioni" : "Settings"}</h2>
+                <p style={{ margin: "4px 0 0", color: "#64748b" }}>
+                  {language === "it" ? `${unreadNotificationCount} avvisi non letti` : `${unreadNotificationCount} unread alerts`}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={markAllNotificationsRead} title={language === "it" ? "Segna tutte come lette" : "Mark all as read"}>
+                  <CheckCheck size={18} />
+                </button>
+                <button type="button" onClick={() => setShowNotifications(false)}><X size={18} /></button>
+              </div>
+            </header>
+
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 14, marginBottom: 16 }}>
+              <strong>{language === "it" ? "Lingua" : "Language"}</strong>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button type="button" className={language === "it" ? "primary" : ""} onClick={() => setLanguage("it")}>Italiano</button>
+                <button type="button" className={language === "en" ? "primary" : ""} onClick={() => setLanguage("en")}>English</button>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 14, marginBottom: 16 }}>
+              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Bell size={17} /> {language === "it" ? "Avvisi" : "Alerts"}</strong>
+              <div style={{ marginTop: 8, color: "#64748b", fontSize: 14 }}>
+                {language === "it" ? `${unreadNotificationCount} avvisi non letti` : `${unreadNotificationCount} unread alerts`}
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 14, marginBottom: 16 }}>
+              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Mail size={17} /> {language === "it" ? "Canali di avviso" : "Alert channels"}</strong>
+              <label style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
+                <span>{language === "it" ? "Email per scadenze importanti" : "Email for important deadlines"}</span>
+                <input type="checkbox" checked={emailNotificationsEnabled} onChange={(event) => { setEmailNotificationsEnabled(event.target.checked); void saveNotificationPreferences({ emailEnabled: event.target.checked }); }} />
+              </label>
+              <label style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 10 }}>
+                <span>{language === "it" ? "Riepilogo settimanale" : "Weekly digest"}</span>
+                <input type="checkbox" checked={weeklyDigestEnabled} onChange={(event) => { setWeeklyDigestEnabled(event.target.checked); void saveNotificationPreferences({ weeklyDigestEnabled: event.target.checked }); }} />
+              </label>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginTop: 10 }}>
+                <span>{language === "it" ? "Notifiche del browser" : "Browser notifications"}</span>
+                <button type="button" onClick={() => void enableBrowserNotifications()}>
+                  {browserNotificationsEnabled ? (language === "it" ? "Attive" : "Enabled") : (language === "it" ? "Attiva" : "Enable")}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowDeleteAccount(true)}
+              style={{ width: "100%", marginBottom: 16, borderColor: "#fecaca", color: "#b91c1c", background: "#fff7f7", justifyContent: "center" }}
+            >
+              <Trash2 size={18} />
+              {language === "it" ? "Cancella account" : "Delete account"}
+            </button>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              {notificationItems.length === 0 ? (
+                <div className="empty" style={{ padding: 26 }}>
+                  <Bell size={34} />
+                  <h3>{language === "it" ? "Nessuna scadenza urgente" : "No urgent deadlines"}</h3>
+                </div>
+              ) : notificationItems.map((item) => {
+                const isRead = readNotificationIds.includes(item.id);
+                return (
+                  <button
+                    type="button"
+                    key={item.id}
+                    onClick={() => {
+                      const next = Array.from(new Set([...readNotificationIds, item.id]));
+                      setReadNotificationIds(next);
+                      localStorage.setItem("documio-read-notifications", JSON.stringify(next));
+                      setShowNotifications(false);
+                      const target = document.querySelector(`[data-document-id="${item.documentId}"]`);
+                      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                    style={{ textAlign: "left", padding: 14, borderRadius: 14, border: `1px solid ${item.severity === "urgent" ? "#fecaca" : item.severity === "warning" ? "#fde68a" : "#c7d2fe"}`, background: isRead ? "#ffffff" : item.severity === "urgent" ? "#fef2f2" : item.severity === "warning" ? "#fffbeb" : "#eef2ff" }}
+                  >
+                    <strong>{item.title}</strong>
+                    <span style={{ display: "block", marginTop: 5, color: "#475569" }}>{item.message}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
 
       {showAssistant && (
         <div
@@ -2226,6 +2849,87 @@ export default function Home() {
         </div>
       )}
 
+      {showDeleteAccount && (
+        <div className="modal-backdrop" onMouseDown={() => !deletingAccount && setShowDeleteAccount(false)}>
+          <section
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{ width: "min(520px, calc(100vw - 24px))", background: "white", borderRadius: 22, padding: 22 }}
+          >
+            <h2 style={{ marginTop: 0 }}>{language === "it" ? "Cancella definitivamente l’account" : "Permanently delete account"}</h2>
+            <p style={{ color: "#475569", lineHeight: 1.6 }}>
+              {language === "it"
+                ? `Questa operazione eliminerà l’account e tutti i ${documents.length} documenti presenti nell’archivio. Non può essere annullata.`
+                : `This will delete your account and all ${documents.length} documents in your archive. It cannot be undone.`}
+            </p>
+            <label className="field">
+              {language === "it" ? "Reinserisci la password" : "Enter your password again"}
+              <input
+                type="password"
+                value={deletePassword}
+                onChange={(event) => setDeletePassword(event.target.value)}
+                autoComplete="current-password"
+              />
+            </label>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 16 }}>
+              <button type="button" disabled={deletingAccount} onClick={() => { setDeletePassword(""); setShowDeleteAccount(false); }}>
+                {language === "it" ? "Annulla" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                disabled={!deletePassword.trim() || deletingAccount}
+                onClick={() => void deleteAccount()}
+                style={{ background: "#b91c1c", color: "white", borderColor: "#b91c1c" }}
+              >
+                <Trash2 size={18} />
+                {deletingAccount ? (language === "it" ? "Cancellazione…" : "Deleting…") : (language === "it" ? "Conferma cancellazione" : "Confirm deletion")}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      <style jsx global>{`
+        .topbar {
+          min-width: 0;
+          gap: 12px;
+        }
+        .topbar-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+          min-width: 0;
+        }
+        .topbar-icon-button, .topbar-upload, .topbar-logout {
+          flex: 0 0 auto;
+          white-space: nowrap;
+        }
+        @media (max-width: 640px) {
+          .topbar {
+            padding-left: 12px !important;
+            padding-right: 12px !important;
+          }
+          .topbar .brand .logo {
+            display: none;
+          }
+          .topbar .brand span {
+            font-size: 24px;
+          }
+          .topbar-actions {
+            gap: 6px;
+          }
+          .topbar-actions button {
+            min-width: 42px;
+            min-height: 42px;
+            padding: 9px 10px !important;
+            justify-content: center;
+          }
+          .topbar-upload span, .topbar-logout span {
+            display: none;
+          }
+        }
+      `}</style>
+
       {attachmentDocument && (
         <AttachmentModal
           language={language}
@@ -2264,6 +2968,11 @@ function AttachmentModal({
       "id" | "uploadedAt" | "storagePath"
     >,
     file: File,
+    analysisMeta?: {
+      documentTotalAmount?: number | null;
+      installmentCount?: number | null;
+      isSinglePaymentOption?: boolean;
+    },
   ) => void | Promise<void>;
 }) {
   const [file, setFile] = useState<File | null>(null);
@@ -2274,6 +2983,11 @@ function AttachmentModal({
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [notes, setNotes] = useState("");
+  const [analysisMeta, setAnalysisMeta] = useState<{
+    documentTotalAmount?: number | null;
+    installmentCount?: number | null;
+    isSinglePaymentOption?: boolean;
+  }>({});
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const t = translations[language];
@@ -2298,12 +3012,19 @@ function AttachmentModal({
             expiryDate: document.expiryDate,
             paymentStatus: document.paymentStatus,
             paidAmount: document.paidAmount,
+            totalAmount: document.totalAmount,
+            installmentCount: document.installmentCount,
+            isSinglePaymentOption: document.isSinglePaymentOption,
+            paidInstallments: document.paidInstallments,
+            remainingAmount: document.remainingAmount,
+            lastPaymentDate: document.lastPaymentDate,
           },
         ]),
       );
 
       const response = await fetch("/api/analyze", {
         method: "POST",
+        headers: await getApiAuthHeaders(),
         body: formData,
       });
 
@@ -2319,6 +3040,11 @@ function AttachmentModal({
       setAmount(data.amount != null ? String(data.amount) : "");
       setPaymentMethod(data.paymentMethod || "");
       setNotes(data.notes || data.summary || "");
+      setAnalysisMeta({
+        documentTotalAmount: data.documentTotalAmount ?? null,
+        installmentCount: data.installmentCount ?? null,
+        isSinglePaymentOption: data.isSinglePaymentOption ?? false,
+      });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : t.archiveError);
     } finally {
@@ -2345,6 +3071,7 @@ function AttachmentModal({
           notes: notes.trim() || null,
         },
         file,
+        analysisMeta,
       );
     } finally {
       setLoading(false);
@@ -2353,7 +3080,7 @@ function AttachmentModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal upload-modal" onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="close" onClick={onClose}>
           <X />
         </button>
@@ -2365,10 +3092,20 @@ function AttachmentModal({
           <input
             type="file"
             accept="application/pdf,image/*"
-            onChange={(event) => {
+            onChange={async (event) => {
               const selectedFile = event.target.files?.[0] || null;
-              setFile(selectedFile);
-              if (selectedFile) void analyzeSelectedFile(selectedFile);
+              if (!selectedFile) {
+                setFile(null);
+                return;
+              }
+              let preparedFile = selectedFile;
+              try {
+                preparedFile = await compressImageForUpload(selectedFile);
+              } catch {
+                preparedFile = selectedFile;
+              }
+              setFile(preparedFile);
+              void analyzeSelectedFile(preparedFile);
             }}
           />
           <Upload size={28} />
@@ -2505,28 +3242,75 @@ function UploadModal({
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<SmartAnalysis | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
+  const [matchedDocuments, setMatchedDocuments] = useState<StoredDocument[]>([]);
   const t = translations[language];
 
-  const candidateDocuments = documents.map((document) => ({
-    id: document.id,
-    title: document.title,
-    category: document.category,
-    summary: document.summary,
-    keywords: document.keywords,
-    expiryDate: document.expiryDate,
-    paymentStatus: document.paymentStatus,
-    paidAt: document.paidAt,
-    paidAmount: document.paidAmount,
-    paymentMethod: document.paymentMethod,
-    totalAmount: document.totalAmount,
-    installmentCount: document.installmentCount,
-    isSinglePaymentOption: document.isSinglePaymentOption,
-  }));
+  function serializeCandidateDocuments(items: StoredDocument[]) {
+    return items.map((document) => ({
+      id: document.id,
+      title: document.title,
+      category: document.category,
+      summary: document.summary,
+      keywords: document.keywords,
+      expiryDate: document.expiryDate,
+      paymentStatus: document.paymentStatus,
+      paidAt: document.paidAt,
+      paidAmount: document.paidAmount,
+      paymentMethod: document.paymentMethod,
+      totalAmount: document.totalAmount,
+      installmentCount: document.installmentCount,
+      isSinglePaymentOption: document.isSinglePaymentOption,
+      paidInstallments: document.paidInstallments,
+      remainingAmount: document.remainingAmount,
+      lastPaymentDate: document.lastPaymentDate,
+      paymentProgressConfirmed: document.paymentProgressConfirmed,
+    }));
+  }
+
+  async function requestAnalysis(
+    candidateDocuments: ReturnType<typeof serializeCandidateDocuments> = [],
+    mode: "document" | "attachment" = "document",
+  ) {
+    if (!file) {
+      throw new Error(
+        language === "it" ? "File mancante." : "Missing file.",
+      );
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("userNote", note);
+    formData.append("language", language);
+    formData.append("mode", mode);
+    formData.append(
+      "candidateDocuments",
+      JSON.stringify(candidateDocuments),
+    );
+
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: await getApiAuthHeaders(),
+      body: formData,
+    });
+
+    const data = (await response.json()) as SmartAnalysis & {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(data.error || "Analysis failed");
+    }
+
+    return data;
+  }
 
   async function analyze() {
     if (!file || loading) return;
 
     setLoading(true);
+    setAnalysis(null);
+    setMatchedDocuments([]);
+    setSelectedDocumentId("");
 
     try {
       if (file.size > 4 * 1024 * 1024) {
@@ -2537,44 +3321,76 @@ function UploadModal({
         );
       }
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("userNote", note);
-      formData.append("language", language);
-      formData.append("mode", "document");
-      formData.append(
-        "candidateDocuments",
-        JSON.stringify(candidateDocuments),
-      );
+      // Prima passata: l'IA estrae solo i dati del file, senza ricevere
+      // l'intero archivio dell'utente.
+      const extracted = await requestAnalysis([], "document");
 
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = (await response.json()) as SmartAnalysis & {
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(data.error || "Analysis failed");
-      }
-
-      if (data.isAttachment && documents.length > 0) {
-        const suggestedExists = documents.some(
-          (document) => document.id === data.suggestedDocumentId,
-        );
-
-        setAnalysis(data);
-        setSelectedDocumentId(
-          suggestedExists
-            ? data.suggestedDocumentId || ""
-            : documents[0]?.id || "",
-        );
+      if (!extracted.isAttachment || documents.length === 0) {
+        await saveAsNewDocument(extracted);
         return;
       }
 
-      await saveAsNewDocument(data);
+      // Il server filtra l'archivio e restituisce al massimo 15 candidati.
+      const matchResponse = await fetch("/api/match-attachment", {
+        method: "POST",
+        headers: await getApiAuthHeaders("application/json"),
+        body: JSON.stringify({
+          title: extracted.title,
+          summary: extracted.summary,
+          notes: extracted.notes || note,
+          category: extracted.category,
+          keywords: extracted.keywords,
+          amount: extracted.amount,
+          paymentDate: extracted.paymentDate,
+          documentTotalAmount: extracted.documentTotalAmount,
+          limit: 15,
+        }),
+      });
+
+      const matchData = (await matchResponse.json()) as {
+        candidates?: Array<{ id: string }>;
+        error?: string;
+      };
+
+      if (!matchResponse.ok) {
+        throw new Error(matchData.error || "Document matching failed");
+      }
+
+      const candidateIds = new Set(
+        (matchData.candidates ?? []).map((candidate) => candidate.id),
+      );
+      const candidates = documents.filter((document) =>
+        candidateIds.has(document.id),
+      );
+
+      setMatchedDocuments(candidates);
+
+      if (candidates.length === 0) {
+        setAnalysis({
+          ...extracted,
+          suggestedDocumentId: null,
+          matchConfidence: 0,
+          matchReasons: [],
+        });
+        return;
+      }
+
+      // Seconda passata: l'IA confronta solamente i candidati già filtrati.
+      const ranked = await requestAnalysis(
+        serializeCandidateDocuments(candidates),
+        "attachment",
+      );
+
+      const suggestedExists = candidates.some(
+        (document) => document.id === ranked.suggestedDocumentId,
+      );
+
+      setAnalysis(ranked);
+      setSelectedDocumentId(
+        suggestedExists
+          ? ranked.suggestedDocumentId || ""
+          : candidates[0]?.id || "",
+      );
     } catch (error) {
       window.alert(error instanceof Error ? error.message : t.archiveError);
     } finally {
@@ -2606,6 +3422,10 @@ function UploadModal({
         totalAmount: data.documentTotalAmount ?? null,
         installmentCount: data.installmentCount ?? null,
         isSinglePaymentOption: data.isSinglePaymentOption ?? false,
+        paidInstallments: null,
+        remainingAmount: data.documentTotalAmount ?? null,
+        lastPaymentDate: null,
+        paymentProgressConfirmed: false,
       },
       file,
     );
@@ -2649,13 +3469,21 @@ function UploadModal({
   }
 
   if (analysis?.isAttachment) {
-    const suggestedDocument = documents.find(
+    const selectableDocuments =
+      matchedDocuments.length > 0 ? matchedDocuments : [];
+    const suggestedDocument = selectableDocuments.find(
       (document) => document.id === analysis.suggestedDocumentId,
     );
 
     return (
-      <div className="modal-backdrop" onMouseDown={onClose}>
-        <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="modal-backdrop match-modal-backdrop"
+        onMouseDown={onClose}
+      >
+        <div
+          className="modal match-modal"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
           <button
             type="button"
             className="close"
@@ -2665,22 +3493,15 @@ function UploadModal({
             <X />
           </button>
 
-          <h2>{t.possibleMatch}</h2>
-          <p>
+          <h2 className="match-modal-title">{t.possibleMatch}</h2>
+          <p className="match-modal-document-title">
             <strong>{analysis.title}</strong>
           </p>
 
           {suggestedDocument ? (
-            <div
-              style={{
-                border: "1px solid #dbeafe",
-                borderRadius: 12,
-                padding: 12,
-                marginBottom: 12,
-              }}
-            >
+            <div className="match-modal-suggestion">
               <strong>{suggestedDocument.title}</strong>
-              <div style={{ marginTop: 6 }}>
+              <div className="match-modal-reasons">
                 {getMatchLabel(analysis.matchConfidence, language)}
                 {" · "}
                 {Math.round(
@@ -2698,22 +3519,28 @@ function UploadModal({
             <p>{t.noMatchFound}</p>
           )}
 
-          <label className="field">
+          <label className="field match-modal-field">
             {t.chooseDocument}
             <select
+              className="match-modal-select"
               value={selectedDocumentId}
+              disabled={selectableDocuments.length === 0}
               onChange={(event) => setSelectedDocumentId(event.target.value)}
             >
-              {documents.map((document) => (
-                <option key={document.id} value={document.id}>
-                  {document.title}
-                </option>
-              ))}
+              {selectableDocuments.length === 0 ? (
+                <option value="">{t.noMatchFound}</option>
+              ) : (
+                selectableDocuments.map((document) => (
+                  <option key={document.id} value={document.id}>
+                    {document.title}
+                  </option>
+                ))
+              )}
             </select>
           </label>
 
           <button
-            className="primary full"
+            className="primary full match-modal-primary"
             disabled={!selectedDocumentId || loading}
             onClick={linkToSelectedDocument}
           >
@@ -2722,7 +3549,7 @@ function UploadModal({
 
           <button
             type="button"
-            style={{ width: "100%", marginTop: 10 }}
+            className="match-modal-secondary"
             disabled={loading}
             onClick={() => saveAsNewDocument()}
           >
@@ -2735,7 +3562,7 @@ function UploadModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal upload-modal" onMouseDown={(event) => event.stopPropagation()}>
         <button
           type="button"
           className="close"
@@ -2755,15 +3582,51 @@ function UploadModal({
           <input
             type="file"
             accept="application/pdf,image/*"
-            onChange={(event) => {
-              setFile(event.target.files?.[0] || null);
+            onChange={async (event) => {
+              const selected = event.target.files?.[0] || null;
               setAnalysis(null);
+              setMatchedDocuments([]);
+              setSelectedDocumentId("");
+              if (!selected) {
+                setFile(null);
+                return;
+              }
+              try {
+                setFile(await compressImageForUpload(selected));
+              } catch {
+                setFile(selected);
+              }
             }}
           />
           <Upload size={28} />
           <strong>{file ? file.name : t.chooseFile}</strong>
           <span>{t.fileFormats}</span>
         </label>
+
+        {file && (
+          <div
+            role="status"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 12,
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: "#ecfdf5",
+              border: "1px solid #a7f3d0",
+              color: "#065f46",
+              fontWeight: 800,
+            }}
+          >
+            <span aria-hidden="true">✓</span>
+            <span>
+              {language === "it"
+                ? "Foto o file acquisito correttamente. Ora premi Analizza e archivia."
+                : "Photo or file captured successfully. Now press Analyze and archive."}
+            </span>
+          </div>
+        )}
 
         <label className="field">
           {t.optionalNote}
@@ -2784,13 +3647,16 @@ function UploadModal({
           />
         </label>
 
-        <button
-          className="primary full"
-          disabled={!file || loading}
-          onClick={analyze}
-        >
-          {loading ? t.organizing : t.analyzeAndArchive}
-        </button>
+        <div className="upload-actions">
+          <button
+            className="primary full upload-submit"
+            disabled={!file || loading}
+            onClick={analyze}
+            aria-label={loading ? t.organizing : t.analyzeAndArchive}
+          >
+            <span>{loading ? t.organizing : t.analyzeAndArchive}</span>
+          </button>
+        </div>
       </div>
     </div>
   );
