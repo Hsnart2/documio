@@ -205,7 +205,7 @@ const translations: Record<Language, Translation> = {
     dashboardPartial: "Parzialmente pagati",
     dashboardExpiring: "In scadenza",
     dashboardPaid: "Pagati",
-    dashboardOutstanding: "Totale ancora da pagare",
+    dashboardOutstanding: "Totale da pagare adesso",
     smartSearchHint: "Scrivi una frase e premi Invio per la ricerca IA",
     searchingWithAi: "Ricerca IA in corso…",
     assistantTitle: "DocuMio Assistant",
@@ -357,9 +357,111 @@ type PaymentSnapshot = {
   totalAmount: number | null;
   paidAmount: number;
   remainingAmount: number | null;
+  dueNowAmount: number;
   paidInstallments: number;
   lastPaymentDate: string | null;
 };
+
+function isAppointmentDocument(document: StoredDocument) {
+  if (["Appuntamenti", "Visite mediche"].includes(document.category)) {
+    return true;
+  }
+
+  const text = normalizeSearchText(
+    `${document.title} ${document.summary} ${(document.keywords ?? []).join(" ")}`,
+  );
+
+  return [
+    "appuntamento",
+    "prenotazione",
+    "visita medica",
+    "dentista",
+    "promemoria",
+  ].some((term) => text.includes(term));
+}
+
+function getFinancingTerms(document: StoredDocument) {
+  const text = `${document.title} ${document.summary}`;
+  const normalized = normalizeSearchText(text);
+  const countMatch = text.match(/(\d{1,3})\s*rate/i);
+  const amountMatch = text.match(
+    /(?:rate\s+mensili\s+da|importo\s+rata\s+mensile)\s*€?\s*([\d.]+(?:,\d{1,2})?)/i,
+  );
+  const parsedAmount = amountMatch
+    ? Number(amountMatch[1].replace(/\./g, "").replace(",", "."))
+    : null;
+  const installmentCount =
+    Number(document.installmentCount) > 0
+      ? Number(document.installmentCount)
+      : countMatch
+        ? Number(countMatch[1])
+        : null;
+  const installmentAmount =
+    Number(document.installmentAmount) > 0
+      ? Number(document.installmentAmount)
+      : parsedAmount && Number.isFinite(parsedAmount)
+        ? parsedAmount
+        : null;
+  const financingTotalAmount =
+    Number(document.financingTotalAmount) > 0
+      ? Number(document.financingTotalAmount)
+      : null;
+  const firstInstallmentDate = document.firstInstallmentDate ?? null;
+  const isFinancing = Boolean(
+    document.isFinancing ||
+      normalized.includes("finanziament") ||
+      (installmentCount && installmentAmount),
+  );
+
+  return {
+    isFinancing,
+    installmentCount,
+    installmentAmount,
+    financingTotalAmount,
+    firstInstallmentDate,
+  };
+}
+
+function installmentsDueByDate(firstDate: string | null, count: number | null) {
+  if (!firstDate || !count) return 0;
+  const first = new Date(`${firstDate}T12:00:00`);
+  const today = new Date();
+  if (Number.isNaN(first.getTime()) || today < first) return 0;
+  const elapsedMonths =
+    (today.getFullYear() - first.getFullYear()) * 12 +
+    today.getMonth() -
+    first.getMonth();
+  const dueThisMonth = today.getDate() >= first.getDate() ? 1 : 0;
+  return Math.min(count, Math.max(0, elapsedMonths + dueThisMonth));
+}
+
+function getNextInstallmentDate(
+  firstDate: string | null,
+  paidInstallments: number,
+  installmentCount: number | null,
+) {
+  if (!firstDate || !installmentCount || paidInstallments >= installmentCount) {
+    return null;
+  }
+
+  const first = new Date(`${firstDate}T12:00:00`);
+  if (Number.isNaN(first.getTime())) return null;
+
+  const originalDay = first.getDate();
+  const target = new Date(
+    first.getFullYear(),
+    first.getMonth() + paidInstallments,
+    1,
+    12,
+  );
+  const lastDay = new Date(
+    target.getFullYear(),
+    target.getMonth() + 1,
+    0,
+  ).getDate();
+  target.setDate(Math.min(originalDay, lastDay));
+  return target;
+}
 
 function getPaidTotal(items: DocumentAttachment[]) {
   return items
@@ -382,10 +484,21 @@ function getPaymentSnapshot(
     ? attachmentPaidAmount
     : Math.max(storedPaidAmount, attachmentPaidAmount);
   const parsedTotalAmount = Number(document.totalAmount);
-  const totalAmount =
+  const principalAmount =
     Number.isFinite(parsedTotalAmount) && parsedTotalAmount > 0
       ? parsedTotalAmount
       : null;
+  const financing = getFinancingTerms(document);
+  const scheduledFinancingTotal =
+    financing.isFinancing &&
+    financing.financingTotalAmount != null
+      ? financing.financingTotalAmount
+      : financing.isFinancing &&
+          financing.installmentCount != null &&
+          financing.installmentAmount != null
+        ? financing.installmentCount * financing.installmentAmount
+        : null;
+  const totalAmount = scheduledFinancingTotal ?? principalAmount;
   const remainingAmount =
     totalAmount != null ? Math.max(0, totalAmount - paidAmount) : null;
   const attachmentInstallments = paymentAttachments.filter(
@@ -397,6 +510,19 @@ function getPaymentSnapshot(
         Number(document.paidInstallments) || 0,
         attachmentInstallments,
       );
+  const dueInstallments = financing.isFinancing
+    ? installmentsDueByDate(
+        financing.firstInstallmentDate,
+        financing.installmentCount,
+      )
+    : 0;
+  const dueNowAmount = financing.isFinancing
+    ? Math.min(
+        remainingAmount ?? 0,
+        Math.max(0, dueInstallments - paidInstallments) *
+          (financing.installmentAmount ?? 0),
+      )
+    : remainingAmount ?? 0;
   const latestPayment = [...paymentAttachments].sort((a, b) =>
     String(b.paymentDate ?? b.uploadedAt).localeCompare(
       String(a.paymentDate ?? a.uploadedAt),
@@ -434,6 +560,7 @@ function getPaymentSnapshot(
     totalAmount,
     paidAmount,
     remainingAmount,
+    dueNowAmount,
     paidInstallments,
     lastPaymentDate,
   };
@@ -443,16 +570,50 @@ function isExpiringWithin30Days(
   document: StoredDocument,
   documentAttachments: DocumentAttachment[] = [],
 ) {
+  if (document.appointmentCompletedAt) return false;
+
+  const snapshot = getPaymentSnapshot(document, documentAttachments);
+  if (snapshot.status === "Pagato" || snapshot.status === "Contestato") {
+    return false;
+  }
+
+  const now = new Date();
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const thirtyDaysFromNow = today + 30 * 24 * 60 * 60 * 1000;
+
+  const financing = getFinancingTerms(document);
+  if (
+    financing.isFinancing &&
+    financing.firstInstallmentDate &&
+    financing.installmentCount
+  ) {
+    const nextInstallment = getNextInstallmentDate(
+      financing.firstInstallmentDate,
+      snapshot.paidInstallments,
+      financing.installmentCount,
+    );
+
+    if (nextInstallment) {
+      const nextDueDate = new Date(
+        nextInstallment.getFullYear(),
+        nextInstallment.getMonth(),
+        nextInstallment.getDate(),
+      ).getTime();
+
+      if (nextDueDate >= today && nextDueDate <= thirtyDaysFromNow) {
+        return true;
+      }
+    }
+  }
+
   if (!document.expiryDate) return false;
 
-  const status = getPaymentSnapshot(document, documentAttachments).status;
-  if (status === "Pagato" || status === "Contestato") return false;
-
   const expiry = new Date(`${document.expiryDate}T23:59:59`).getTime();
-  const now = Date.now();
-  const thirtyDaysFromNow = now + 30 * 24 * 60 * 60 * 1000;
-
-  return expiry >= now && expiry <= thirtyDaysFromNow;
+  return expiry >= today && expiry <= thirtyDaysFromNow;
 }
 
 function hasPaymentTracking(
@@ -624,8 +785,20 @@ async function compressImageForUpload(file: File): Promise<File> {
 }
 
 function rankDocumentsForQuestion(question: string, documents: StoredDocument[], attachments: Record<string, DocumentAttachment[]>) {
-  const terms = normalizeSearchText(question).split(/\s+/).filter((term) => term.length > 1);
-  return [...documents]
+  const normalizedQuestion = normalizeSearchText(question);
+  const terms = normalizedQuestion.split(/\s+/).filter((term) => term.length > 1);
+  const isPaymentQuestion = [
+    "pagar", "pagament", "pagato", "debito", "saldo", "importo",
+    "totale", "spesa", "costo", "pay", "paid", "payment", "owe",
+    "outstanding", "amount", "total", "bill", "invoice",
+  ].some((term) => normalizedQuestion.includes(term));
+  const candidateDocuments = isPaymentQuestion
+    ? documents.filter((document) =>
+        hasPaymentTracking(document, attachments[document.id] ?? []),
+      )
+    : documents;
+
+  return [...candidateDocuments]
     .map((document) => {
       const attachmentText = (attachments[document.id] ?? []).map((item) => `${item.title} ${item.fileName} ${item.notes ?? ""}`).join(" ");
       const text = normalizeSearchText(`${document.title} ${document.category} ${document.summary} ${document.keywords.join(" ")} ${attachmentText}`);
@@ -687,13 +860,28 @@ export default function Home() {
   const [attachments, setAttachments] = useState<
     Record<string, DocumentAttachment[]>
   >({});
+  const [expandedAttachmentDocuments, setExpandedAttachmentDocuments] =
+    useState<Set<string>>(() => new Set());
   const [isLoaded, setIsLoaded] = useState(false);
+
+  function toggleAttachments(documentId: string) {
+    setExpandedAttachmentDocuments((current) => {
+      const next = new Set(current);
+      if (next.has(documentId)) {
+        next.delete(documentId);
+      } else {
+        next.add(documentId);
+      }
+      return next;
+    });
+  }
 
   const t = translations[language];
 
   useEffect(() => {
     const rememberedEmail = localStorage.getItem("documio-remembered-email");
     const rememberedLanguage = localStorage.getItem("documio-language");
+    let savedBrowserPreference: boolean | null = null;
 
     if (rememberedEmail) setEmail(rememberedEmail);
     if (rememberedLanguage === "it" || rememberedLanguage === "en") {
@@ -707,8 +895,27 @@ export default function Home() {
       setReadNotificationIds([]);
     }
 
+    try {
+      const savedPreferences = JSON.parse(
+        localStorage.getItem("documio-notification-preferences") ?? "null",
+      );
+      if (savedPreferences) {
+        setEmailNotificationsEnabled(savedPreferences.email_enabled ?? true);
+        setWeeklyDigestEnabled(
+          savedPreferences.weekly_digest_enabled ?? true,
+        );
+        if (typeof savedPreferences.browser_enabled === "boolean") {
+          savedBrowserPreference = savedPreferences.browser_enabled;
+        }
+      }
+    } catch {
+      localStorage.removeItem("documio-notification-preferences");
+    }
+
     if (typeof Notification !== "undefined") {
-      setBrowserNotificationsEnabled(Notification.permission === "granted");
+      setBrowserNotificationsEnabled(
+        savedBrowserPreference !== false && Notification.permission === "granted",
+      );
     }
   }, []);
 
@@ -801,6 +1008,11 @@ export default function Home() {
         summary: item.summary,
         keywords: item.keywords ?? [],
         expiryDate: item.expiry_date,
+        appointmentTime: item.appointment_time
+          ? String(item.appointment_time).slice(0, 5)
+          : null,
+        appointmentCompletedAt: item.appointment_completed_at ?? null,
+        reminderSnoozedUntil: item.reminder_snoozed_until ?? null,
         size: item.size ?? undefined,
         storagePath: item.storage_path ?? null,
         paymentStatus: (item.payment_status ?? "Da pagare") as PaymentStatus,
@@ -809,6 +1021,10 @@ export default function Home() {
         paymentMethod: item.payment_method ?? null,
         totalAmount: item.total_amount ?? null,
         installmentCount: item.installment_count ?? null,
+        installmentAmount: item.installment_amount ?? null,
+        financingTotalAmount: item.financing_total_amount ?? null,
+        firstInstallmentDate: item.first_installment_date ?? null,
+        isFinancing: item.is_financing ?? false,
         isSinglePaymentOption: item.is_single_payment_option ?? false,
         paidInstallments: item.paid_installments ?? null,
         remainingAmount: item.remaining_amount ?? null,
@@ -863,13 +1079,20 @@ export default function Home() {
         .maybeSingle();
 
       if (preference) {
-        setEmailNotificationsEnabled(preference.email_enabled ?? true);
-        setWeeklyDigestEnabled(preference.weekly_digest_enabled ?? true);
-        setBrowserNotificationsEnabled(
-          Boolean(preference.browser_enabled) &&
-            typeof Notification !== "undefined" &&
-            Notification.permission === "granted",
+        const hasLocalPreferences = Boolean(
+          localStorage.getItem("documio-notification-preferences"),
         );
+        if (!hasLocalPreferences) {
+          setEmailNotificationsEnabled(preference.email_enabled ?? true);
+          setWeeklyDigestEnabled(preference.weekly_digest_enabled ?? true);
+        }
+        if (!hasLocalPreferences) {
+          setBrowserNotificationsEnabled(
+            Boolean(preference.browser_enabled) &&
+              typeof Notification !== "undefined" &&
+              Notification.permission === "granted",
+          );
+        }
       }
 
       setIsLoaded(true);
@@ -978,7 +1201,9 @@ export default function Home() {
       const documentAttachments = attachments[document.id] ?? [];
       return (
         hasPaymentTracking(document, documentAttachments) &&
-        getPaymentSnapshot(document, documentAttachments).status === "Da pagare"
+        ["Da pagare", "Scaduto"].includes(
+          getPaymentSnapshot(document, documentAttachments).status,
+        )
       );
     });
     const partial = documents.filter((document) => {
@@ -1013,7 +1238,7 @@ export default function Home() {
         return total;
       }
 
-      return total + snapshot.remainingAmount;
+      return total + snapshot.dueNowAmount;
     }, 0);
 
     return {
@@ -1032,37 +1257,135 @@ export default function Home() {
 
     return documents
       .flatMap((document) => {
-        if (!document.expiryDate) return [];
+        const items: NotificationItem[] = [];
+        const documentAttachments = attachments[document.id] ?? [];
+        const snapshot = getPaymentSnapshot(document, documentAttachments);
+        const financing = getFinancingTerms(document);
 
-        const due = new Date(`${document.expiryDate}T12:00:00`).getTime();
-        const days = Math.ceil((due - today) / dayMs);
-        const payment = hasPaymentTracking(document, attachments[document.id] ?? []);
-        const paid = getPaymentSnapshot(document, attachments[document.id] ?? []).status === "Pagato";
+        if (
+          financing.isFinancing &&
+          financing.firstInstallmentDate &&
+          financing.installmentCount &&
+          financing.installmentAmount &&
+          snapshot.status !== "Pagato" &&
+          snapshot.status !== "Contestato"
+        ) {
+          const nextInstallment = getNextInstallmentDate(
+            financing.firstInstallmentDate,
+            snapshot.paidInstallments,
+            financing.installmentCount,
+          );
 
-        if (payment && paid) return [];
-        if (days > 30) return [];
+          if (nextInstallment) {
+            const dueDate = [
+              nextInstallment.getFullYear(),
+              String(nextInstallment.getMonth() + 1).padStart(2, "0"),
+              String(nextInstallment.getDate()).padStart(2, "0"),
+            ].join("-");
+            const due = new Date(`${dueDate}T12:00:00`).getTime();
+            const days = Math.ceil((due - today) / dayMs);
+            const dueInstallments = installmentsDueByDate(
+              financing.firstInstallmentDate,
+              financing.installmentCount,
+            );
+            const overdueInstallments = Math.max(
+              0,
+              dueInstallments - snapshot.paidInstallments,
+            );
 
-        const severity: NotificationItem["severity"] =
-          days < 0 || days <= 1 ? "urgent" : days <= 7 ? "warning" : "info";
-        const kind = payment
-          ? language === "it" ? "Pagamento" : "Payment"
-          : language === "it" ? "Documento" : "Document";
-        const timing = days < 0
-          ? language === "it" ? `scaduto da ${Math.abs(days)} giorni` : `overdue by ${Math.abs(days)} days`
-          : days === 0
-            ? language === "it" ? "scade oggi" : "is due today"
-            : days === 1
-              ? language === "it" ? "scade domani" : "is due tomorrow"
-              : language === "it" ? `scade tra ${days} giorni` : `is due in ${days} days`;
+            if (days <= 30) {
+              const severity: NotificationItem["severity"] =
+                days <= 1 ? "urgent" : days <= 7 ? "warning" : "info";
+              const formattedAmount = new Intl.NumberFormat(
+                language === "it" ? "it-IT" : "en-GB",
+                { style: "currency", currency: "EUR" },
+              ).format(financing.installmentAmount);
+              const timing = days < 0
+                ? language === "it"
+                  ? `scaduta da ${Math.abs(days)} giorni`
+                  : `overdue by ${Math.abs(days)} days`
+                : days === 0
+                  ? language === "it" ? "scade oggi" : "is due today"
+                  : days === 1
+                    ? language === "it" ? "scade domani" : "is due tomorrow"
+                    : language === "it" ? `scade tra ${days} giorni` : `is due in ${days} days`;
+              const message = overdueInstallments > 1
+                ? language === "it"
+                  ? `${overdueInstallments} rate risultano scadute. Totale dovuto adesso: ${new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(snapshot.dueNowAmount)}.`
+                  : `${overdueInstallments} installments are overdue. Due now: ${new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(snapshot.dueNowAmount)}.`
+                : language === "it"
+                  ? `Rata ${snapshot.paidInstallments + 1}/${financing.installmentCount} da ${formattedAmount}: ${timing}.`
+                  : `Installment ${snapshot.paidInstallments + 1}/${financing.installmentCount} for ${formattedAmount} ${timing}.`;
 
-        return [{
-          id: `${document.id}:${document.expiryDate}:${payment ? "payment" : "document"}`,
-          documentId: document.id,
-          title: `${kind}: ${document.title}`,
-          message: `${document.title} ${timing}.`,
-          severity,
-          dueDate: document.expiryDate,
-        }];
+              items.push({
+                id: `${document.id}:installment:${snapshot.paidInstallments + 1}:${dueDate}`,
+                documentId: document.id,
+                title: `${language === "it" ? "Rata" : "Installment"}: ${document.title}`,
+                message,
+                severity,
+                dueDate,
+              });
+            }
+          }
+        }
+
+        const appointmentReminderSuppressed =
+          isAppointmentDocument(document) &&
+          (Boolean(document.appointmentCompletedAt) ||
+            (Boolean(document.reminderSnoozedUntil) &&
+              new Date(document.reminderSnoozedUntil!).getTime() > Date.now()));
+
+        if (document.expiryDate && !appointmentReminderSuppressed) {
+          const due = new Date(`${document.expiryDate}T12:00:00`).getTime();
+          const days = Math.ceil((due - today) / dayMs);
+          const payment = hasPaymentTracking(document, documentAttachments);
+          const paid = snapshot.status === "Pagato";
+
+          if ((!payment || !paid) && days <= 30) {
+            const severity: NotificationItem["severity"] =
+              days < 0 || days <= 1 ? "urgent" : days <= 7 ? "warning" : "info";
+            const isAppointment = isAppointmentDocument(document);
+            const kind = isAppointment
+              ? language === "it" ? "Appuntamento" : "Appointment"
+              : payment
+                ? language === "it" ? "Pagamento" : "Payment"
+                : language === "it" ? "Documento" : "Document";
+            const timing = days < 0
+              ? isAppointment
+                ? language === "it" ? `era ${Math.abs(days)} giorni fa` : `was ${Math.abs(days)} days ago`
+                : language === "it" ? `scaduto da ${Math.abs(days)} giorni` : `overdue by ${Math.abs(days)} days`
+              : days === 0
+                ? isAppointment
+                  ? language === "it" ? "è oggi" : "is today"
+                  : language === "it" ? "scade oggi" : "is due today"
+                : days === 1
+                  ? isAppointment
+                    ? language === "it" ? "è domani" : "is tomorrow"
+                    : language === "it" ? "scade domani" : "is due tomorrow"
+                  : isAppointment
+                    ? language === "it" ? `è tra ${days} giorni` : `is in ${days} days`
+                    : language === "it" ? `scade tra ${days} giorni` : `is due in ${days} days`;
+
+            const appointmentTime = isAppointment && document.appointmentTime
+              ? language === "it"
+                ? ` alle ${document.appointmentTime.slice(0, 5)}`
+                : ` at ${document.appointmentTime.slice(0, 5)}`
+              : "";
+
+            items.push({
+              id: `${document.id}:${document.expiryDate}:${payment ? "payment" : "document"}`,
+              documentId: document.id,
+              title: `${kind}: ${document.title}`,
+              message: isAppointment
+                ? `${document.title}${appointmentTime}: ${timing}.`
+                : `${document.title} ${timing}.`,
+              severity,
+              dueDate: document.expiryDate,
+            });
+          }
+        }
+
+        return items;
       })
       .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
   }, [documents, attachments, language]);
@@ -1088,21 +1411,51 @@ export default function Home() {
     const nextEmail = values.emailEnabled ?? emailNotificationsEnabled;
     const nextWeekly = values.weeklyDigestEnabled ?? weeklyDigestEnabled;
     const nextBrowser = values.browserEnabled ?? browserNotificationsEnabled;
-
-    const { error } = await supabase.from("notification_preferences").upsert({
-      user_id: userId,
+    const preferenceValues = {
       email_enabled: nextEmail,
       weekly_digest_enabled: nextWeekly,
       browser_enabled: nextBrowser,
       updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" });
+    };
+
+    localStorage.setItem(
+      "documio-notification-preferences",
+      JSON.stringify(preferenceValues),
+    );
+
+    const { data: existingPreference, error: readError } = await supabase
+      .from("notification_preferences")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (readError) {
+      console.error("Notification preferences:", readError.message);
+      return;
+    }
+
+    const { error } = existingPreference
+      ? await supabase
+          .from("notification_preferences")
+          .update(preferenceValues)
+          .eq("user_id", userId)
+      : await supabase.from("notification_preferences").insert({
+          user_id: userId,
+          ...preferenceValues,
+        });
 
     if (error) console.error("Notification preferences:", error.message);
   }
 
-  async function enableBrowserNotifications() {
+  async function toggleBrowserNotifications() {
     if (typeof Notification === "undefined") {
       alert(language === "it" ? "Questo browser non supporta le notifiche." : "This browser does not support notifications.");
+      return;
+    }
+
+    if (browserNotificationsEnabled) {
+      setBrowserNotificationsEnabled(false);
+      await saveNotificationPreferences({ browserEnabled: false });
       return;
     }
 
@@ -1126,11 +1479,11 @@ export default function Home() {
     const storageKey = `documio-browser-notified-${todayKey}`;
     if (localStorage.getItem(storageKey)) return;
 
-    const urgent = notificationItems.filter((item) => item.severity !== "info").slice(0, 3);
-    if (!urgent.length) return;
+    const upcoming = notificationItems.slice(0, 3);
+    if (!upcoming.length) return;
 
     new Notification(language === "it" ? "DocuMio: scadenze importanti" : "DocuMio: important deadlines", {
-      body: urgent.map((item) => item.message).join(" "),
+      body: upcoming.map((item) => item.message).join(" "),
     });
     localStorage.setItem(storageKey, "1");
   }, [browserNotificationsEnabled, notificationItems, language]);
@@ -1163,6 +1516,7 @@ export default function Home() {
             summary: document.summary,
             keywords: document.keywords,
             expiryDate: document.expiryDate,
+            appointmentTime: document.appointmentTime,
             paymentStatus: getPaymentSnapshot(document, attachments[document.id] ?? []).status,
             totalAmount: document.totalAmount,
             paidAmount: document.paidAmount,
@@ -1225,6 +1579,7 @@ export default function Home() {
             summary: document.summary,
             keywords: document.keywords,
             expiryDate: document.expiryDate,
+            appointmentTime: document.appointmentTime,
             paymentStatus: getPaymentSnapshot(
               document,
               attachments[document.id] ?? [],
@@ -1233,6 +1588,18 @@ export default function Home() {
               document,
               attachments[document.id] ?? [],
             ).totalAmount,
+            financedPrincipal: document.totalAmount,
+            isFinancing: getFinancingTerms(document).isFinancing,
+            installmentCount: getFinancingTerms(document).installmentCount,
+            installmentAmount: getFinancingTerms(document).installmentAmount,
+            financingTotalAmount:
+              getFinancingTerms(document).financingTotalAmount,
+            firstInstallmentDate:
+              getFinancingTerms(document).firstInstallmentDate,
+            dueNowAmount: getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).dueNowAmount,
             paidAmount: getPaymentSnapshot(
               document,
               attachments[document.id] ?? [],
@@ -1325,10 +1692,12 @@ export default function Home() {
             )) ||
           (activeCategory === "Da pagare" &&
             hasPaymentTracking(document, attachments[document.id] ?? []) &&
-            getPaymentSnapshot(
-              document,
-              attachments[document.id] ?? [],
-            ).status === "Da pagare") ||
+            ["Da pagare", "Scaduto"].includes(
+              getPaymentSnapshot(
+                document,
+                attachments[document.id] ?? [],
+              ).status,
+            )) ||
           (activeCategory === "Parzialmente pagato" &&
             hasPaymentTracking(document, attachments[document.id] ?? []) &&
             getPaymentSnapshot(
@@ -1370,6 +1739,120 @@ export default function Home() {
     attachments,
     aiResultIds,
   ]);
+
+  async function updateAppointment(
+    document: StoredDocument,
+    databaseValues: Record<string, string | null>,
+    localValues: Partial<StoredDocument>,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const { error } = await supabase
+      .from("documents")
+      .update(databaseValues)
+      .eq("id", document.id);
+
+    if (error) return alert(error.message);
+
+    setDocuments((current) =>
+      current.map((item) =>
+        item.id === document.id ? { ...item, ...localValues } : item,
+      ),
+    );
+  }
+
+  async function completeAppointment(document: StoredDocument) {
+    const completed = !document.appointmentCompletedAt;
+    if (
+      completed &&
+      !window.confirm(
+        language === "it"
+          ? `Segnare “${document.title}” come completato?`
+          : `Mark “${document.title}” as completed?`,
+      )
+    ) return;
+
+    const completedAt = completed ? new Date().toISOString() : null;
+    await updateAppointment(
+      document,
+      {
+        appointment_completed_at: completedAt,
+        reminder_snoozed_until: null,
+      },
+      {
+        appointmentCompletedAt: completedAt,
+        reminderSnoozedUntil: null,
+      },
+    );
+  }
+
+  async function snoozeAppointment(document: StoredDocument) {
+    const choice = window.prompt(
+      language === "it"
+        ? "Quando vuoi ricevere di nuovo l’avviso?\n1 = tra un’ora\n2 = domani\n3 = tra una settimana"
+        : "When should the reminder return?\n1 = in one hour\n2 = tomorrow\n3 = in one week",
+      "2",
+    );
+    if (!choice) return;
+
+    const delay = choice === "1"
+      ? 60 * 60 * 1000
+      : choice === "3"
+        ? 7 * 24 * 60 * 60 * 1000
+        : choice === "2"
+          ? 24 * 60 * 60 * 1000
+          : 0;
+    if (!delay) {
+      alert(language === "it" ? "Scegli 1, 2 oppure 3." : "Choose 1, 2, or 3.");
+      return;
+    }
+
+    const snoozedUntil = new Date(Date.now() + delay).toISOString();
+    await updateAppointment(
+      document,
+      { reminder_snoozed_until: snoozedUntil },
+      { reminderSnoozedUntil: snoozedUntil },
+    );
+  }
+
+  async function editAppointment(document: StoredDocument) {
+    const nextDate = window.prompt(
+      language === "it" ? "Nuova data (AAAA-MM-GG)" : "New date (YYYY-MM-DD)",
+      document.expiryDate ?? "",
+    );
+    if (nextDate === null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+      alert(language === "it" ? "Inserisci una data valida, per esempio 2026-07-24." : "Enter a valid date, for example 2026-07-24.");
+      return;
+    }
+
+    const nextTime = window.prompt(
+      language === "it" ? "Nuova ora (HH:MM)" : "New time (HH:MM)",
+      document.appointmentTime?.slice(0, 5) ?? "",
+    );
+    if (nextTime === null) return;
+    if (nextTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(nextTime)) {
+      alert(language === "it" ? "Inserisci un’ora valida, per esempio 15:30." : "Enter a valid time, for example 15:30.");
+      return;
+    }
+
+    await updateAppointment(
+      document,
+      {
+        expiry_date: nextDate,
+        appointment_time: nextTime || null,
+        appointment_completed_at: null,
+        reminder_snoozed_until: null,
+      },
+      {
+        expiryDate: nextDate,
+        appointmentTime: nextTime || null,
+        appointmentCompletedAt: null,
+        reminderSnoozedUntil: null,
+      },
+    );
+  }
 
   async function deleteDocument(id: string) {
     const confirmed = window.confirm(t.deleteConfirm);
@@ -1572,18 +2055,27 @@ export default function Home() {
       ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
     );
     const paidTotal = getPaidTotal(paymentAttachments);
-    const totalAmount =
+    const principalAmount =
       Number(document.totalAmount) > 0
         ? Number(document.totalAmount)
         : Number(inferredTotalAmount) > 0
           ? Number(inferredTotalAmount)
           : null;
+    const financing = getFinancingTerms(document);
+    const repaymentTotal =
+      financing.isFinancing && financing.financingTotalAmount != null
+        ? financing.financingTotalAmount
+        : financing.isFinancing &&
+            financing.installmentCount != null &&
+            financing.installmentAmount != null
+          ? financing.installmentCount * financing.installmentAmount
+          : principalAmount;
 
     let paymentStatus: PaymentStatus = document.paymentStatus ?? "Da pagare";
 
-    if (totalAmount != null) {
+    if (repaymentTotal != null) {
       const tolerance = 0.01;
-      if (paidTotal + tolerance >= totalAmount) {
+      if (paidTotal + tolerance >= repaymentTotal) {
         paymentStatus = "Pagato";
       } else if (paidTotal > 0) {
         paymentStatus = "Parzialmente pagato";
@@ -1602,14 +2094,14 @@ export default function Home() {
     )[0];
 
     const remainingAmount =
-      totalAmount != null ? Math.max(0, totalAmount - paidTotal) : null;
+      repaymentTotal != null ? Math.max(0, repaymentTotal - paidTotal) : null;
     const paidInstallments = paymentAttachments.filter(
       (item) => (Number(item.amount) || 0) > 0,
     ).length;
     const lastPaymentDate =
       latestPayment?.paymentDate ?? latestPayment?.uploadedAt?.slice(0, 10) ?? null;
     const installmentCount =
-      document.installmentCount ?? inferredInstallmentCount ?? null;
+      financing.installmentCount ?? inferredInstallmentCount ?? null;
     const isSinglePaymentOption =
       document.isSinglePaymentOption ??
       inferredSinglePaymentOption ??
@@ -1625,8 +2117,8 @@ export default function Home() {
         : `DocuMio proposes updating the payment for “${document.title}”:`,
       `${t.paymentStatus}: ${t.statuses[paymentStatus]}`,
       `${t.paidProgress}: ${currency.format(paidTotal)}`,
-      totalAmount != null
-        ? `${language === "it" ? "Totale" : "Total"}: ${currency.format(totalAmount)}`
+      repaymentTotal != null
+        ? `${financing.isFinancing ? (language === "it" ? "Totale piano rateale" : "Installment plan total") : (language === "it" ? "Totale" : "Total")}: ${currency.format(repaymentTotal)}`
         : null,
       remainingAmount != null
         ? `${language === "it" ? "Residuo" : "Remaining"}: ${currency.format(remainingAmount)}`
@@ -1652,8 +2144,12 @@ export default function Home() {
       paid_at: lastPaymentDate,
       paid_amount: paidTotal || null,
       payment_method: latestPayment?.paymentMethod ?? null,
-      total_amount: totalAmount,
+      total_amount: principalAmount,
       installment_count: installmentCount,
+      installment_amount: financing.installmentAmount,
+      financing_total_amount: financing.financingTotalAmount,
+      first_installment_date: financing.firstInstallmentDate,
+      is_financing: financing.isFinancing,
       is_single_payment_option: isSinglePaymentOption,
       paid_installments: paidInstallments || null,
       remaining_amount: remainingAmount,
@@ -1680,8 +2176,12 @@ export default function Home() {
               paidAt: updateData.paid_at,
               paidAmount: updateData.paid_amount,
               paymentMethod: updateData.payment_method,
-              totalAmount,
+              totalAmount: principalAmount,
               installmentCount: updateData.installment_count,
+              financingTotalAmount: updateData.financing_total_amount,
+              firstInstallmentDate: updateData.first_installment_date,
+              installmentAmount: updateData.installment_amount,
+              isFinancing: updateData.is_financing,
               isSinglePaymentOption: updateData.is_single_payment_option,
               paidInstallments: updateData.paid_installments,
               remainingAmount: updateData.remaining_amount,
@@ -1701,6 +2201,10 @@ export default function Home() {
     analysisMeta?: {
       documentTotalAmount?: number | null;
       installmentCount?: number | null;
+      installmentAmount?: number | null;
+      financingTotalAmount?: number | null;
+      firstInstallmentDate?: string | null;
+      isFinancing?: boolean;
       isSinglePaymentOption?: boolean;
     },
   ) {
@@ -1843,6 +2347,9 @@ export default function Home() {
         file_name: doc.fileName,
         uploaded_at: doc.uploadedAt,
         expiry_date: doc.expiryDate,
+        appointment_time: doc.appointmentTime ?? null,
+        appointment_completed_at: doc.appointmentCompletedAt ?? null,
+        reminder_snoozed_until: doc.reminderSnoozedUntil ?? null,
         summary: doc.summary,
         keywords: doc.keywords,
         size: doc.size ?? null,
@@ -1853,6 +2360,10 @@ export default function Home() {
         payment_method: doc.paymentMethod ?? null,
         total_amount: doc.totalAmount ?? null,
         installment_count: doc.installmentCount ?? null,
+        installment_amount: doc.installmentAmount ?? null,
+        financing_total_amount: doc.financingTotalAmount ?? null,
+        first_installment_date: doc.firstInstallmentDate ?? null,
+        is_financing: doc.isFinancing ?? false,
         is_single_payment_option: doc.isSinglePaymentOption ?? false,
         paid_installments: doc.paidInstallments ?? null,
         remaining_amount: doc.remainingAmount ?? null,
@@ -1878,6 +2389,11 @@ export default function Home() {
       summary: data.summary,
       keywords: data.keywords ?? [],
       expiryDate: data.expiry_date,
+      appointmentTime: data.appointment_time
+        ? String(data.appointment_time).slice(0, 5)
+        : null,
+      appointmentCompletedAt: data.appointment_completed_at ?? null,
+      reminderSnoozedUntil: data.reminder_snoozed_until ?? null,
       size: data.size ?? undefined,
       storagePath: data.storage_path ?? storagePath,
       paymentStatus: (data.payment_status ?? "Da pagare") as PaymentStatus,
@@ -1886,6 +2402,10 @@ export default function Home() {
       paymentMethod: data.payment_method ?? null,
       totalAmount: data.total_amount ?? null,
       installmentCount: data.installment_count ?? null,
+      installmentAmount: data.installment_amount ?? null,
+      financingTotalAmount: data.financing_total_amount ?? null,
+      firstInstallmentDate: data.first_installment_date ?? null,
+      isFinancing: data.is_financing ?? false,
       isSinglePaymentOption: data.is_single_payment_option ?? false,
       paidInstallments: data.paid_installments ?? null,
       remainingAmount: data.remaining_amount ?? null,
@@ -2288,6 +2808,80 @@ export default function Home() {
                 <h3>{doc.title}</h3>
                 <p>{doc.summary}</p>
 
+                {getFinancingTerms(doc).isFinancing &&
+                  getFinancingTerms(doc).installmentCount != null &&
+                  getFinancingTerms(doc).installmentAmount != null && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 10,
+                        borderRadius: 12,
+                        background: "#eef2ff",
+                        color: "#312e81",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <strong>
+                        {language === "it" ? "Finanziamento" : "Financing"}
+                      </strong>
+                      <div>
+                        {getFinancingTerms(doc).installmentCount} {language === "it" ? "rate da" : "installments of"} €
+                        {getFinancingTerms(doc).installmentAmount!.toFixed(2)}
+                        {" · "}
+                        {language === "it" ? "Totale piano" : "Plan total"} €
+                        {(
+                          getFinancingTerms(doc).financingTotalAmount ??
+                          getFinancingTerms(doc).installmentCount! *
+                            getFinancingTerms(doc).installmentAmount!
+                        ).toFixed(2)}
+                        {getFinancingTerms(doc).firstInstallmentDate && (
+                          <>
+                            <br />
+                            {language === "it" ? "Prima scadenza" : "First due date"}: {new Date(
+                              `${getFinancingTerms(doc).firstInstallmentDate}T12:00:00`,
+                            ).toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
+                          </>
+                        )}
+                        <br />
+                        {language === "it" ? "Rate pagate" : "Paid installments"}: {getPaymentSnapshot(
+                          doc,
+                          attachments[doc.id] ?? [],
+                        ).paidInstallments}/{getFinancingTerms(doc).installmentCount}
+                        <br />
+                        {language === "it" ? "Residuo" : "Remaining"}: {new Intl.NumberFormat(
+                          language === "it" ? "it-IT" : "en-GB",
+                          { style: "currency", currency: "EUR" },
+                        ).format(
+                          getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                            .remainingAmount ?? 0,
+                        )}
+                        {getNextInstallmentDate(
+                          getFinancingTerms(doc).firstInstallmentDate,
+                          getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                            .paidInstallments,
+                          getFinancingTerms(doc).installmentCount,
+                        ) ? (
+                          <>
+                            <br />
+                            {language === "it" ? "Prossima scadenza" : "Next due date"}: {getNextInstallmentDate(
+                              getFinancingTerms(doc).firstInstallmentDate,
+                              getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                                .paidInstallments,
+                              getFinancingTerms(doc).installmentCount,
+                            )!.toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
+                          </>
+                        ) : getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                            .paidInstallments >=
+                          getFinancingTerms(doc).installmentCount! ? (
+                          <>
+                            <br />
+                            {language === "it" ? "Piano completato" : "Plan completed"}
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+
                 {doc.expiryDate &&
                   (!hasPaymentTracking(doc, attachments[doc.id] ?? []) ||
                     getPaymentSnapshot(
@@ -2295,15 +2889,59 @@ export default function Home() {
                       attachments[doc.id] ?? [],
                     ).status !== "Pagato") && (
                   <span className="expiry-date">
-                    {t.expiresOn} {" "}
+                    {isAppointmentDocument(doc)
+                      ? language === "it" ? "Appuntamento il" : "Appointment on"
+                      : t.expiresOn} {" "}
                     {new Date(
                       `${doc.expiryDate}T12:00:00`,
                     ).toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
+                    {doc.appointmentTime
+                      ? ` · ${doc.appointmentTime.slice(0, 5)}`
+                      : ""}
                   </span>
+                )}
+
+                {isAppointmentDocument(doc) && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      marginTop: 10,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => completeAppointment(doc)}
+                      style={doc.appointmentCompletedAt ? undefined : {
+                        background: "#16a34a",
+                        color: "white",
+                        borderColor: "#16a34a",
+                      }}
+                    >
+                      {doc.appointmentCompletedAt
+                        ? language === "it" ? "↩ Riattiva" : "↩ Reactivate"
+                        : language === "it" ? "✓ Completato" : "✓ Completed"}
+                    </button>
+                    <button type="button" onClick={() => editAppointment(doc)}>
+                      {language === "it" ? "Modifica data/ora" : "Edit date/time"}
+                    </button>
+                    {!doc.appointmentCompletedAt && (
+                      <button type="button" onClick={() => snoozeAppointment(doc)}>
+                        {language === "it" ? "Ricordamelo più tardi" : "Remind me later"}
+                      </button>
+                    )}
+                    {doc.appointmentCompletedAt && (
+                      <span style={{ color: "#15803d", fontWeight: 700 }}>
+                        {language === "it" ? "Appuntamento completato" : "Appointment completed"}
+                      </span>
+                    )}
+                  </div>
                 )}
 
                 {hasPaymentTracking(doc, attachments[doc.id] ?? []) && (
                   <div
+                    className="payment-row"
                     style={{
                       display: "flex",
                       gap: 8,
@@ -2375,8 +3013,8 @@ export default function Home() {
                             attachments[doc.id] ?? [],
                           ).paidAmount.toFixed(2)}`
                         : ""}
-                      {doc.totalAmount != null
-                        ? ` su €${Number(doc.totalAmount).toFixed(2)}`
+                      {getPaymentSnapshot(doc, attachments[doc.id] ?? []).totalAmount != null
+                        ? ` su €${Number(getPaymentSnapshot(doc, attachments[doc.id] ?? []).totalAmount).toFixed(2)}`
                         : ""}
                       {doc.paymentMethod ? ` · ${doc.paymentMethod}` : ""}
                     </span>
@@ -2386,6 +3024,7 @@ export default function Home() {
 
                 {doc.storagePath && (
                   <div
+                    className="document-buttons"
                     style={{
                       display: "flex",
                       gap: 8,
@@ -2402,8 +3041,9 @@ export default function Home() {
                   </div>
                 )}
 
-                <div style={{ marginTop: 16 }}>
+                <div className="attachments-section" style={{ marginTop: 16 }}>
                   <div
+                    className="attachments-heading"
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
@@ -2414,21 +3054,59 @@ export default function Home() {
                     <strong>
                       📎 {t.attachments} ({(attachments[doc.id] ?? []).length})
                     </strong>
-                    <button
-                      type="button"
-                      onClick={() => setAttachmentDocument(doc)}
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        justifyContent: "flex-end",
+                      }}
                     >
-                      {t.addAttachment}
-                    </button>
+                      {(attachments[doc.id] ?? []).length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleAttachments(doc.id)}
+                          aria-expanded={expandedAttachmentDocuments.has(doc.id)}
+                          aria-label={
+                            expandedAttachmentDocuments.has(doc.id)
+                              ? language === "it"
+                                ? "Riduci allegati"
+                                : "Collapse attachments"
+                              : language === "it"
+                                ? "Mostra allegati"
+                                : "Show attachments"
+                          }
+                          style={{
+                            width: 38,
+                            height: 38,
+                            padding: 0,
+                            borderRadius: 10,
+                            fontSize: 24,
+                            fontWeight: 800,
+                            lineHeight: 1,
+                          }}
+                        >
+                          {expandedAttachmentDocuments.has(doc.id) ? "−" : "+"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAttachmentDocument(doc)}
+                      >
+                        {t.addAttachment}
+                      </button>
+                    </div>
                   </div>
 
                   {(attachments[doc.id] ?? []).length === 0 ? (
                     <p style={{ marginTop: 8 }}>{t.noAttachments}</p>
-                  ) : (
+                  ) : expandedAttachmentDocuments.has(doc.id) ? (
                     <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
                       {(attachments[doc.id] ?? []).map((attachment) => (
                         <div
                           key={attachment.id}
+                          className="attachment-card"
                           style={{
                             border: "1px solid #e5e7eb",
                             borderRadius: 12,
@@ -2450,6 +3128,7 @@ export default function Home() {
                               : ""}
                           </div>
                           <div
+                            className="attachment-buttons"
                             style={{
                               display: "flex",
                               gap: 8,
@@ -2479,7 +3158,7 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="keywords">
@@ -2564,8 +3243,8 @@ export default function Home() {
               </label>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginTop: 10 }}>
                 <span>{language === "it" ? "Notifiche del browser" : "Browser notifications"}</span>
-                <button type="button" onClick={() => void enableBrowserNotifications()}>
-                  {browserNotificationsEnabled ? (language === "it" ? "Attive" : "Enabled") : (language === "it" ? "Attiva" : "Enable")}
+                <button type="button" onClick={() => void toggleBrowserNotifications()}>
+                  {browserNotificationsEnabled ? (language === "it" ? "Disattiva" : "Disable") : (language === "it" ? "Attiva" : "Enable")}
                 </button>
               </div>
             </div>
@@ -2905,6 +3584,67 @@ export default function Home() {
           white-space: nowrap;
         }
         @media (max-width: 640px) {
+          html, body {
+            max-width: 100%;
+            overflow-x: hidden;
+          }
+          main, .layout, .layout > section, .grid {
+            min-width: 0 !important;
+            max-width: 100% !important;
+          }
+          .layout {
+            grid-template-columns: minmax(0, 1fr) !important;
+          }
+          .grid {
+            grid-template-columns: minmax(0, 1fr) !important;
+          }
+          .doc-card {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            overflow: hidden;
+            box-sizing: border-box;
+          }
+          .doc-card h3, .doc-card p, .doc-card strong,
+          .doc-card span, .doc-card footer {
+            min-width: 0;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+          }
+          .doc-card-actions {
+            right: 12px !important;
+            max-width: calc(100% - 24px);
+          }
+          .payment-row select {
+            max-width: 100%;
+          }
+          .document-buttons, .attachment-buttons {
+            width: 100%;
+          }
+          .document-buttons button, .attachment-buttons button {
+            flex: 1 1 auto;
+            min-width: 0;
+          }
+          .attachments-heading {
+            align-items: stretch !important;
+            flex-direction: column;
+          }
+          .attachments-heading button {
+            width: 100%;
+            white-space: normal;
+          }
+          .attachment-card {
+            min-width: 0;
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+          .doc-card footer {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+          }
           .topbar {
             padding-left: 12px !important;
             padding-right: 12px !important;
@@ -2943,6 +3683,7 @@ export default function Home() {
         <UploadModal
           language={language}
           documents={documents}
+          attachments={attachments}
           onClose={() => setShowUpload(false)}
           onSaved={saveDocument}
           onLinkedAttachment={saveAttachment}
@@ -2971,6 +3712,10 @@ function AttachmentModal({
     analysisMeta?: {
       documentTotalAmount?: number | null;
       installmentCount?: number | null;
+      installmentAmount?: number | null;
+      financingTotalAmount?: number | null;
+      firstInstallmentDate?: string | null;
+      isFinancing?: boolean;
       isSinglePaymentOption?: boolean;
     },
   ) => void | Promise<void>;
@@ -2986,6 +3731,10 @@ function AttachmentModal({
   const [analysisMeta, setAnalysisMeta] = useState<{
     documentTotalAmount?: number | null;
     installmentCount?: number | null;
+    installmentAmount?: number | null;
+    financingTotalAmount?: number | null;
+    firstInstallmentDate?: string | null;
+    isFinancing?: boolean;
     isSinglePaymentOption?: boolean;
   }>({});
   const [loading, setLoading] = useState(false);
@@ -3014,6 +3763,10 @@ function AttachmentModal({
             paidAmount: document.paidAmount,
             totalAmount: document.totalAmount,
             installmentCount: document.installmentCount,
+            installmentAmount: document.installmentAmount,
+            financingTotalAmount: document.financingTotalAmount,
+            firstInstallmentDate: document.firstInstallmentDate,
+            isFinancing: document.isFinancing,
             isSinglePaymentOption: document.isSinglePaymentOption,
             paidInstallments: document.paidInstallments,
             remainingAmount: document.remainingAmount,
@@ -3043,6 +3796,10 @@ function AttachmentModal({
       setAnalysisMeta({
         documentTotalAmount: data.documentTotalAmount ?? null,
         installmentCount: data.installmentCount ?? null,
+        installmentAmount: data.installmentAmount ?? null,
+        financingTotalAmount: data.financingTotalAmount ?? null,
+        firstInstallmentDate: data.firstInstallmentDate ?? null,
+        isFinancing: data.isFinancing ?? false,
         isSinglePaymentOption: data.isSinglePaymentOption ?? false,
       });
     } catch (error) {
@@ -3194,12 +3951,14 @@ function AttachmentModal({
 function UploadModal({
   language,
   documents,
+  attachments,
   onClose,
   onSaved,
   onLinkedAttachment,
 }: {
   language: Language;
   documents: StoredDocument[];
+  attachments: Record<string, DocumentAttachment[]>;
   onClose: () => void;
   onSaved: (doc: StoredDocument, file: File) => void | Promise<void>;
   onLinkedAttachment: (
@@ -3212,6 +3971,10 @@ function UploadModal({
     analysisMeta?: {
       documentTotalAmount?: number | null;
       installmentCount?: number | null;
+      installmentAmount?: number | null;
+      financingTotalAmount?: number | null;
+      firstInstallmentDate?: string | null;
+      isFinancing?: boolean;
       isSinglePaymentOption?: boolean;
     },
   ) => void | Promise<void>;
@@ -3222,6 +3985,7 @@ function UploadModal({
     summary: string;
     keywords: string[];
     expiryDate: string | null;
+    appointmentTime: string | null;
     isAttachment: boolean;
     attachmentType: DocumentAttachment["attachmentType"];
     paymentDate: string | null;
@@ -3230,6 +3994,10 @@ function UploadModal({
     notes: string;
     documentTotalAmount: number | null;
     installmentCount: number | null;
+    installmentAmount: number | null;
+    financingTotalAmount: number | null;
+    firstInstallmentDate: string | null;
+    isFinancing: boolean;
     isSinglePaymentOption: boolean;
     suggestedDocumentId: string | null;
     matchConfidence: number;
@@ -3253,18 +4021,73 @@ function UploadModal({
       summary: document.summary,
       keywords: document.keywords,
       expiryDate: document.expiryDate,
+      appointmentTime: document.appointmentTime,
       paymentStatus: document.paymentStatus,
       paidAt: document.paidAt,
       paidAmount: document.paidAmount,
       paymentMethod: document.paymentMethod,
       totalAmount: document.totalAmount,
       installmentCount: document.installmentCount,
+      installmentAmount: document.installmentAmount,
+      financingTotalAmount: document.financingTotalAmount,
+      firstInstallmentDate: document.firstInstallmentDate,
+      isFinancing: document.isFinancing,
       isSinglePaymentOption: document.isSinglePaymentOption,
       paidInstallments: document.paidInstallments,
       remainingAmount: document.remainingAmount,
       lastPaymentDate: document.lastPaymentDate,
       paymentProgressConfirmed: document.paymentProgressConfirmed,
     }));
+  }
+
+  function keepRelevantCandidates(
+    extracted: SmartAnalysis,
+    items: StoredDocument[],
+  ) {
+    const genericTokens = new Set([
+      "allegato", "allegati", "banca", "bonifico", "documento",
+      "eseguito", "fattura", "fatture", "importo", "pagamento",
+      "pagato", "ricevuta", "riferimento", "totale", "test",
+      "fittizio", "creato", "codice",
+    ]);
+    const sourceTokens = normalizeSearchText(
+      `${extracted.title} ${extracted.summary} ${extracted.notes} ${extracted.keywords.join(" ")}`,
+    )
+      .split(/\s+/)
+      .filter(
+        (token) =>
+          token.length >= 4 &&
+          /[a-z]/.test(token) &&
+          !searchStopWords.has(token) &&
+          !genericTokens.has(token),
+      );
+    const paidAmount = extracted.amount ?? extracted.documentTotalAmount;
+
+    const relevant = items.filter((document) => {
+      if (document.paymentStatus === "Pagato") return false;
+
+      const documentText = normalizeSearchText(
+        `${document.title} ${document.fileName} ${document.summary} ${document.keywords.join(" ")}`,
+      );
+      const matchingTokens = sourceTokens.filter((token) =>
+        documentText.includes(token),
+      );
+      const hasExactReferenceMatch = matchingTokens.some(
+        (token) => /[a-z]/.test(token) && /[0-9]/.test(token),
+      );
+      const hasSpecificTextMatch =
+        hasExactReferenceMatch || matchingTokens.length >= 2;
+      const documentAmount =
+        document.remainingAmount ?? document.totalAmount ?? null;
+      const hasAmountMatch =
+        paidAmount != null &&
+        documentAmount != null &&
+        Math.abs(Number(paidAmount) - Number(documentAmount)) < 0.01;
+
+      return hasSpecificTextMatch || hasAmountMatch;
+    });
+
+    return relevant;
   }
 
   async function requestAnalysis(
@@ -3306,6 +4129,7 @@ function UploadModal({
 
   async function analyze() {
     if (!file || loading) return;
+    const selectedFileName = file.name;
 
     setLoading(true);
     setAnalysis(null);
@@ -3327,6 +4151,84 @@ function UploadModal({
 
       if (!extracted.isAttachment || documents.length === 0) {
         await saveAsNewDocument(extracted);
+        return;
+      }
+
+      const normalizedTitle = normalizeSearchText(extracted.title || "");
+      const extractedIdentityText = normalizeSearchText(
+        `${extracted.title || ""} ${extracted.summary || ""} ${extracted.notes || ""}`,
+      );
+      const findRateNumber = (text: string) => {
+        const match = text.match(
+          /rata\s*(?:n[.\s]*)?(\d+)\s*(?:di|\/|\s)\s*(\d+)/i,
+        );
+        return match ? `${match[1]}/${match[2]}` : null;
+      };
+      const findOperationNumber = (text: string) => {
+        const match = text.match(/\bbon[-\s]?[a-z0-9-]{6,}\b/i);
+        return match ? match[0].replace(/\s+/g, "-").toLowerCase() : null;
+      };
+      const extractedRateNumber = findRateNumber(extractedIdentityText);
+      const extractedOperationNumber = findOperationNumber(
+        extractedIdentityText,
+      );
+      const duplicateEntry = Object.entries(attachments).find(
+        ([, documentAttachments]) =>
+          documentAttachments.some((attachment) => {
+            const storedTitle = normalizeSearchText(attachment.title);
+            const sameTitle =
+              normalizedTitle.length >= 12 &&
+              storedTitle.length >= 12 &&
+              (storedTitle === normalizedTitle ||
+                storedTitle.includes(normalizedTitle) ||
+                normalizedTitle.includes(storedTitle));
+            const sameFileName =
+              normalizeSearchText(attachment.fileName) ===
+              normalizeSearchText(selectedFileName);
+            const samePaymentData =
+              extracted.paymentDate != null &&
+              attachment.paymentDate === extracted.paymentDate &&
+              extracted.amount != null &&
+              attachment.amount != null &&
+              Math.abs(Number(attachment.amount) - Number(extracted.amount)) <
+                0.01;
+
+            const storedIdentityText = normalizeSearchText(
+              `${attachment.title || ""} ${attachment.notes || ""}`,
+            );
+            const storedRateNumber = findRateNumber(storedIdentityText);
+            const storedOperationNumber = findOperationNumber(
+              storedIdentityText,
+            );
+            const explicitlyDifferentRate = Boolean(
+              extractedRateNumber &&
+                storedRateNumber &&
+                extractedRateNumber !== storedRateNumber,
+            );
+            const explicitlyDifferentOperation = Boolean(
+              extractedOperationNumber &&
+                storedOperationNumber &&
+                extractedOperationNumber !== storedOperationNumber,
+            );
+
+            if (sameFileName) return true;
+            if (explicitlyDifferentRate || explicitlyDifferentOperation) {
+              return false;
+            }
+            return sameTitle || samePaymentData;
+          }),
+      );
+
+      if (duplicateEntry) {
+        const linkedDocument = documents.find(
+          (document) => document.id === duplicateEntry[0],
+        );
+        window.alert(
+          language === "it"
+            ? `Questa ricevuta è già collegata al documento: ${linkedDocument?.title ?? "documento esistente"}.`
+            : `This receipt is already linked to: ${linkedDocument?.title ?? "an existing document"}.`,
+        );
+        setFile(null);
         return;
       }
 
@@ -3359,9 +4261,10 @@ function UploadModal({
       const candidateIds = new Set(
         (matchData.candidates ?? []).map((candidate) => candidate.id),
       );
-      const candidates = documents.filter((document) =>
+      const serverCandidates = documents.filter((document) =>
         candidateIds.has(document.id),
       );
+      const candidates = keepRelevantCandidates(extracted, serverCandidates);
 
       setMatchedDocuments(candidates);
 
@@ -3409,6 +4312,9 @@ function UploadModal({
         fileName: file.name,
         uploadedAt: new Date().toISOString(),
         expiryDate: expiryDate || data.expiryDate || null,
+        appointmentTime: data.appointmentTime ?? null,
+        appointmentCompletedAt: null,
+        reminderSnoozedUntil: null,
         summary:
           data.summary ||
           (language === "it" ? "Documento caricato." : "Document uploaded."),
@@ -3421,9 +4327,14 @@ function UploadModal({
         paymentMethod: null,
         totalAmount: data.documentTotalAmount ?? null,
         installmentCount: data.installmentCount ?? null,
+        installmentAmount: data.installmentAmount ?? null,
+        financingTotalAmount: data.financingTotalAmount ?? null,
+        firstInstallmentDate: data.firstInstallmentDate ?? null,
+        isFinancing: data.isFinancing ?? false,
         isSinglePaymentOption: data.isSinglePaymentOption ?? false,
         paidInstallments: null,
-        remainingAmount: data.documentTotalAmount ?? null,
+        remainingAmount:
+          data.financingTotalAmount ?? data.documentTotalAmount ?? null,
         lastPaymentDate: null,
         paymentProgressConfirmed: false,
       },
@@ -3459,6 +4370,10 @@ function UploadModal({
         {
           documentTotalAmount: analysis.documentTotalAmount,
           installmentCount: analysis.installmentCount,
+          installmentAmount: analysis.installmentAmount,
+          financingTotalAmount: analysis.financingTotalAmount,
+          firstInstallmentDate: analysis.firstInstallmentDate,
+          isFinancing: analysis.isFinancing,
           isSinglePaymentOption: analysis.isSinglePaymentOption,
         },
       );

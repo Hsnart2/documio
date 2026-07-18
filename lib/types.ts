@@ -27,6 +27,9 @@ export type StoredDocument = {
   summary: string;
   keywords: string[];
   expiryDate?: string | null;
+  appointmentTime?: string | null;
+  appointmentCompletedAt?: string | null;
+  reminderSnoozedUntil?: string | null;
   size?: number;
   storagePath?: string | null;
   paymentStatus?: PaymentStatus;
@@ -35,6 +38,10 @@ export type StoredDocument = {
   paymentMethod?: string | null;
   totalAmount?: number | null;
   installmentCount?: number | null;
+  installmentAmount?: number | null;
+  financingTotalAmount?: number | null;
+  firstInstallmentDate?: string | null;
+  isFinancing?: boolean;
   isSinglePaymentOption?: boolean;
   paidInstallments?: number | null;
   remainingAmount?: number | null;

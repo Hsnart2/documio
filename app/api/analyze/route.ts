@@ -42,6 +42,7 @@ type AnalysisResult = {
   summary: string;
   keywords: string[];
   expiryDate: string | null;
+  appointmentTime: string | null;
   isAttachment: boolean;
   attachmentType: (typeof allowedAttachmentTypes)[number];
   paymentDate: string | null;
@@ -50,6 +51,10 @@ type AnalysisResult = {
   notes: string;
   documentTotalAmount: number | null;
   installmentCount: number | null;
+  installmentAmount: number | null;
+  financingTotalAmount: number | null;
+  firstInstallmentDate: string | null;
+  isFinancing: boolean;
   isSinglePaymentOption: boolean;
   suggestedDocumentId: string | null;
   matchConfidence: number;
@@ -113,6 +118,7 @@ export async function POST(request: Request) {
       candidateDocuments.length > 0
         ? JSON.stringify(candidateDocuments)
         : "[]";
+    const currentDate = new Date().toISOString().slice(0, 10);
 
     const instructions =
       language === "it"
@@ -128,6 +134,7 @@ Estrai senza inventare:
 - riassunto
 - 2-6 parole chiave
 - eventuale scadenza
+- eventuale ora dell'appuntamento nel formato HH:MM
 - tipo allegato
 - data pagamento
 - importo
@@ -135,7 +142,27 @@ Estrai senza inventare:
 - note brevi
 - importo totale del documento principale, se certo
 - numero di rate, se certo
+- importo della singola rata, se certo
+- importo totale dovuto del piano di finanziamento, se indicato
+- data della prima rata, se indicata
+- se si tratta di finanziamento, prestito o pagamento rateale
 - se il documento consente anche il pagamento in unica soluzione
+
+Oggi è ${currentDate}. Se il file è un foglietto, una prenotazione, una visita,
+un appuntamento o un promemoria con una data e/o un'ora, trattalo come documento
+principale, usa la categoria Appuntamenti (oppure Visite mediche quando è
+chiaramente una visita sanitaria), inserisci la data in expiryDate e l'ora in
+appointmentTime. Non considerarlo un pagamento: amount e documentTotalAmount
+devono essere null, isFinancing=false e isAttachment=false. Trascrivi anche
+scrittura a mano leggibile senza inventare dati mancanti.
+
+Per un finanziamento distingui sempre il capitale finanziato dall'importo
+complessivo delle rate. In documentTotalAmount inserisci il capitale finanziato,
+in installmentCount il numero totale di rate, in installmentAmount l'importo
+della singola rata, in financingTotalAmount il totale esatto dovuto del piano,
+in firstInstallmentDate la prima scadenza nel formato YYYY-MM-DD e imposta
+isFinancing=true. Non trattare il capitale
+finanziato come una somma da pagare immediatamente.
 
 Per ricevute e pagamenti, se il documento candidato contiene nel titolo, riassunto
 o parole chiave un importo totale o un piano rateale, estrailo in documentTotalAmount
@@ -160,9 +187,26 @@ receipt, payment proof, payment, reminder, or communication.
 
 Extract without inventing:
 title, category, short summary, 2-6 keywords, expiry date,
+appointment time in HH:MM when present,
 attachment type, payment date, amount, payment method, short notes,
 the main document total amount when certain, installment count when certain,
+single installment amount when certain, whether it is financing or an installment plan,
+the exact total repayment amount and first installment date when stated,
 and whether a single-payment option is available.
+
+Today is ${currentDate}. For a note, booking, visit, appointment, or reminder
+containing a date or time, treat it as a main document, use Appuntamenti (or
+Visite mediche when clearly medical), put the date in expiryDate and time in
+appointmentTime. It is not a payment: amount and documentTotalAmount must be
+null, isFinancing=false, and isAttachment=false. Read legible handwriting
+without inventing missing information.
+
+For financing, distinguish financed principal from total scheduled repayments.
+Use documentTotalAmount for financed principal, installmentCount for the total
+number of installments, installmentAmount for one installment, and set
+financingTotalAmount for the exact scheduled repayment total,
+firstInstallmentDate for the first due date in YYYY-MM-DD, and set isFinancing=true.
+Never describe the financed principal as immediately due.
 
 For receipts and payments, when a candidate document title, summary, or keywords
 contain a total amount or installment plan, extract it as documentTotalAmount and
@@ -233,6 +277,12 @@ User note: ${userNote || "none"}`;
                     { type: "null" },
                   ],
                 },
+                appointmentTime: {
+                  anyOf: [
+                    { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+                    { type: "null" },
+                  ],
+                },
                 isAttachment: { type: "boolean" },
                 attachmentType: {
                   type: "string",
@@ -260,6 +310,19 @@ User note: ${userNote || "none"}`;
                     { type: "null" },
                   ],
                 },
+                installmentAmount: {
+                  anyOf: [{ type: "number", minimum: 0 }, { type: "null" }],
+                },
+                financingTotalAmount: {
+                  anyOf: [{ type: "number", minimum: 0 }, { type: "null" }],
+                },
+                firstInstallmentDate: {
+                  anyOf: [
+                    { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+                    { type: "null" },
+                  ],
+                },
+                isFinancing: { type: "boolean" },
                 isSinglePaymentOption: { type: "boolean" },
                 suggestedDocumentId: {
                   anyOf: [{ type: "string" }, { type: "null" }],
@@ -281,6 +344,7 @@ User note: ${userNote || "none"}`;
                 "summary",
                 "keywords",
                 "expiryDate",
+                "appointmentTime",
                 "isAttachment",
                 "attachmentType",
                 "paymentDate",
@@ -289,6 +353,10 @@ User note: ${userNote || "none"}`;
                 "notes",
                 "documentTotalAmount",
                 "installmentCount",
+                "installmentAmount",
+                "financingTotalAmount",
+                "firstInstallmentDate",
+                "isFinancing",
                 "isSinglePaymentOption",
                 "suggestedDocumentId",
                 "matchConfidence",
