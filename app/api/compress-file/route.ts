@@ -82,7 +82,7 @@ export async function POST(request: Request) {
 
     await task.start();
     await task.addFile(new ILovePDFFile(inputPath));
-    await task.process({ compression_level: "recommended" });
+    await task.process({ compression_level: "extreme" });
 
     const downloaded = await task.download();
     const compressedBuffer = Buffer.isBuffer(downloaded)
