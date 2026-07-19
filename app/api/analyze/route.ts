@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
+import ILovePDFApi from "@ilovepdf/ilovepdf-nodejs";
+import ILovePDFFile from "@ilovepdf/ilovepdf-nodejs/ILovePDFFile";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -72,46 +79,189 @@ export async function POST(request: Request) {
       );
     }
 
-    const formData = await request.formData();
-    const file = formData.get("file");
-    const userNote = String(formData.get("userNote") || "");
-    const language = formData.get("language") === "en" ? "en" : "it";
-    const mode = formData.get("mode") === "attachment" ? "attachment" : "document";
-    const candidateDocumentsRaw = String(
-      formData.get("candidateDocuments") || "[]",
-    );
-
+    const contentType = request.headers.get("content-type") ?? "";
+    let file: File | null = null;
+    let storagePath: string | null = null;
+    let suppliedFileName = "documento.pdf";
+    let userNote = "";
+    let language: "it" | "en" = "it";
+    let mode: "document" | "attachment" = "document";
     let candidateDocuments: unknown[] = [];
 
-    try {
-      const parsed = JSON.parse(candidateDocumentsRaw);
-      candidateDocuments = Array.isArray(parsed) ? parsed.slice(0, 50) : [];
-    } catch {
-      candidateDocuments = [];
+    if (contentType.includes("application/json")) {
+      const body = (await request.json()) as {
+        storagePath?: string;
+        fileName?: string;
+        userNote?: string;
+        language?: string;
+        mode?: string;
+        candidateDocuments?: unknown[];
+      };
+
+      storagePath =
+        typeof body.storagePath === "string" ? body.storagePath : null;
+      suppliedFileName =
+        typeof body.fileName === "string" && body.fileName
+          ? body.fileName
+          : suppliedFileName;
+      userNote = typeof body.userNote === "string" ? body.userNote : "";
+      language = body.language === "en" ? "en" : "it";
+      mode = body.mode === "attachment" ? "attachment" : "document";
+      candidateDocuments = Array.isArray(body.candidateDocuments)
+        ? body.candidateDocuments.slice(0, 50)
+        : [];
+    } else {
+      const formData = await request.formData();
+      const incomingFile = formData.get("file");
+      file = incomingFile instanceof File ? incomingFile : null;
+      userNote = String(formData.get("userNote") || "");
+      language = formData.get("language") === "en" ? "en" : "it";
+      mode =
+        formData.get("mode") === "attachment" ? "attachment" : "document";
+
+      try {
+        const parsed = JSON.parse(
+          String(formData.get("candidateDocuments") || "[]"),
+        );
+        candidateDocuments = Array.isArray(parsed) ? parsed.slice(0, 50) : [];
+      } catch {
+        candidateDocuments = [];
+      }
     }
 
-    if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: language === "it" ? "File mancante." : "Missing file." },
-        { status: 400 },
+    let sourceBuffer: Buffer;
+    let sourceMimeType = file?.type || "application/pdf";
+    let sourceFileName = file?.name || suppliedFileName;
+    let temporaryInputPath: string | null = null;
+
+    if (storagePath) {
+      const authorization = request.headers.get("authorization");
+      const token = authorization?.replace(/^Bearer\s+/i, "").trim();
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const publicKey =
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+      const serviceKey =
+        process.env.SUPABASE_SECRET_KEY ??
+        process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+      if (!token || !supabaseUrl || !publicKey || !serviceKey) {
+        return NextResponse.json(
+          { error: "Configurazione Supabase incompleta." },
+          { status: 500 },
+        );
+      }
+
+      const authClient = createClient(supabaseUrl, publicKey, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const {
+        data: { user },
+        error: userError,
+      } = await authClient.auth.getUser(token);
+
+      if (userError || !user || !storagePath.startsWith(`${user.id}/`)) {
+        return NextResponse.json(
+          { error: language === "it" ? "Accesso non autorizzato." : "Unauthorized." },
+          { status: 401 },
+        );
+      }
+
+      const admin = createClient(supabaseUrl, serviceKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: downloaded, error: downloadError } = await admin.storage
+        .from("documents")
+        .download(storagePath);
+
+      if (downloadError || !downloaded) {
+        return NextResponse.json(
+          { error: downloadError?.message || "File Storage non disponibile." },
+          { status: 404 },
+        );
+      }
+
+      sourceBuffer = Buffer.from(await downloaded.arrayBuffer());
+      sourceMimeType = downloaded.type || "application/pdf";
+    } else {
+      if (!file) {
+        return NextResponse.json(
+          { error: language === "it" ? "File mancante." : "Missing file." },
+          { status: 400 },
+        );
+      }
+
+      if (file.size > 20 * 1024 * 1024) {
+        return NextResponse.json(
+          {
+            error:
+              language === "it"
+                ? "Il file supera 20 MB. Usa il caricamento Storage."
+                : "The file is larger than 20 MB. Use Storage upload.",
+          },
+          { status: 413 },
+        );
+      }
+
+      sourceBuffer = Buffer.from(await file.arrayBuffer());
+    }
+
+    const isPdf =
+      sourceMimeType === "application/pdf" ||
+      sourceFileName.toLowerCase().endsWith(".pdf");
+
+    if (isPdf && sourceBuffer.length > 4 * 1024 * 1024) {
+      const publicKey = process.env.ILOVEPDF_PUBLIC_KEY;
+      const secretKey = process.env.ILOVEPDF_SECRET_KEY;
+
+      if (!publicKey || !secretKey) {
+        return NextResponse.json(
+          { error: "Chiavi iLovePDF non configurate." },
+          { status: 500 },
+        );
+      }
+
+      temporaryInputPath = path.join(
+        os.tmpdir(),
+        `${crypto.randomUUID()}-${sourceFileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`,
       );
+      await fs.writeFile(temporaryInputPath, sourceBuffer);
+
+      try {
+        const api = new ILovePDFApi(publicKey, secretKey);
+        const task = api.newTask("compress");
+        await task.start();
+        await task.addFile(new ILovePDFFile(temporaryInputPath));
+        await task.process({ compression_level: "extreme" });
+        const downloaded = await task.download();
+        const compressed = Buffer.isBuffer(downloaded)
+          ? downloaded
+          : Buffer.from(downloaded);
+
+        if (compressed.length > 0 && compressed.length < sourceBuffer.length) {
+          sourceBuffer = compressed;
+        }
+      } finally {
+        await fs.unlink(temporaryInputPath).catch(() => undefined);
+        temporaryInputPath = null;
+      }
     }
 
-    if (file.size > 20 * 1024 * 1024) {
+    if (sourceBuffer.length > 20 * 1024 * 1024) {
       return NextResponse.json(
         {
           error:
             language === "it"
-              ? "Il file supera 20 MB. Scegli un file più piccolo."
-              : "The file is larger than 20 MB. Choose a smaller file.",
+              ? "Il PDF resta superiore a 20 MB anche con la compressione massima."
+              : "The PDF remains larger than 20 MB after maximum compression.",
         },
         { status: 413 },
       );
     }
 
-    const bytes = Buffer.from(await file.arrayBuffer());
-    const base64 = bytes.toString("base64");
-    const mimeType = file.type || "application/octet-stream";
+    const base64 = sourceBuffer.toString("base64");
+    const mimeType = sourceMimeType || "application/octet-stream";
     const fileData = `data:${mimeType};base64,${base64}`;
 
     const candidateText =
@@ -246,7 +396,7 @@ User note: ${userNote || "none"}`;
                 : [
                     {
                       type: "input_file",
-                      filename: file.name,
+                      filename: sourceFileName,
                       file_data: fileData,
                     },
                   ]),
