@@ -494,3 +494,33 @@
     border-radius: 0 0 20px 20px;
   }
 }
+@media (max-width: 720px) {
+  .modal-backdrop {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    padding: 10px !important;
+  }
+
+  .upload-modal {
+    width: 100% !important;
+    max-height: calc(100dvh - 20px) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 20px 16px 24px !important;
+  }
+
+  .upload-modal form {
+    display: block !important;
+  }
+
+  .upload-modal button.primary.full[type="submit"] {
+    position: static !important;
+    width: 100% !important;
+    margin-top: 20px !important;
+    font-size: 16px !important;
+    color: white !important;
+  }
+}
