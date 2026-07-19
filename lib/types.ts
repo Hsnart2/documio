@@ -12,11 +12,22 @@ export type DocumentCategory =
   | "Altro";
 
 export type PaymentStatus =
-  | "Da pagare"
-  | "Parzialmente pagato"
-  | "Pagato"
-  | "Scaduto"
-  | "Contestato";
+  "Da pagare" | "Parzialmente pagato" | "Pagato" | "Scaduto" | "Contestato";
+
+export type PracticeStatus = "In corso" | "Aperta" | "Chiusa";
+
+export type Practice = {
+  id: string;
+  userId: string;
+  title: string;
+  practiceType: string;
+  description?: string | null;
+  status: PracticeStatus;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type StoredDocument = {
   id: string;
@@ -26,6 +37,7 @@ export type StoredDocument = {
   uploadedAt: string;
   summary: string;
   keywords: string[];
+  practiceId?: string | null;
   expiryDate?: string | null;
   appointmentTime?: string | null;
   appointmentCompletedAt?: string | null;

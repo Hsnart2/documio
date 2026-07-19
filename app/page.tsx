@@ -11,6 +11,7 @@ import {
   CalendarDays,
   Car,
   FileText,
+  FolderKanban,
   GraduationCap,
   Heart,
   Landmark,
@@ -27,10 +28,18 @@ import {
   Mail,
   X,
 } from "lucide-react";
-import type { DocumentAttachment, DocumentCategory, PaymentStatus, StoredDocument } from "@/lib/types";
+import type {
+  DocumentAttachment,
+  DocumentCategory,
+  PaymentStatus,
+  Practice,
+  PracticeStatus,
+  StoredDocument,
+} from "@/lib/types";
 import { getSupabaseClient } from "@/lib/supabase";
 
 type Language = "it" | "en";
+type ActiveView = "documents" | "practices";
 type ActiveCategory =
   | DocumentCategory
   | "Tutti"
@@ -409,8 +418,8 @@ function getFinancingTerms(document: StoredDocument) {
   const firstInstallmentDate = document.firstInstallmentDate ?? null;
   const isFinancing = Boolean(
     document.isFinancing ||
-      normalized.includes("finanziament") ||
-      (installmentCount && installmentAmount),
+    normalized.includes("finanziament") ||
+    (installmentCount && installmentAmount),
   );
 
   return {
@@ -490,8 +499,7 @@ function getPaymentSnapshot(
       : null;
   const financing = getFinancingTerms(document);
   const scheduledFinancingTotal =
-    financing.isFinancing &&
-    financing.financingTotalAmount != null
+    financing.isFinancing && financing.financingTotalAmount != null
       ? financing.financingTotalAmount
       : financing.isFinancing &&
           financing.installmentCount != null &&
@@ -506,10 +514,7 @@ function getPaymentSnapshot(
   ).length;
   const paidInstallments = document.paymentProgressConfirmed
     ? attachmentInstallments
-    : Math.max(
-        Number(document.paidInstallments) || 0,
-        attachmentInstallments,
-      );
+    : Math.max(Number(document.paidInstallments) || 0, attachmentInstallments);
   const dueInstallments = financing.isFinancing
     ? installmentsDueByDate(
         financing.firstInstallmentDate,
@@ -522,21 +527,21 @@ function getPaymentSnapshot(
         Math.max(0, dueInstallments - paidInstallments) *
           (financing.installmentAmount ?? 0),
       )
-    : remainingAmount ?? 0;
+    : (remainingAmount ?? 0);
   const latestPayment = [...paymentAttachments].sort((a, b) =>
     String(b.paymentDate ?? b.uploadedAt).localeCompare(
       String(a.paymentDate ?? a.uploadedAt),
     ),
   )[0];
   const lastPaymentDate = document.paymentProgressConfirmed
-    ? latestPayment?.paymentDate ??
+    ? (latestPayment?.paymentDate ??
       latestPayment?.uploadedAt?.slice(0, 10) ??
-      null
-    : document.lastPaymentDate ??
+      null)
+    : (document.lastPaymentDate ??
       latestPayment?.paymentDate ??
       latestPayment?.uploadedAt?.slice(0, 10) ??
       document.paidAt ??
-      null;
+      null);
   const isOverdue =
     Boolean(document.expiryDate) &&
     new Date(`${document.expiryDate}T23:59:59`).getTime() < Date.now();
@@ -545,7 +550,11 @@ function getPaymentSnapshot(
 
   if (document.paymentStatus === "Contestato") {
     status = "Contestato";
-  } else if (totalAmount != null && remainingAmount != null && remainingAmount <= 0.01) {
+  } else if (
+    totalAmount != null &&
+    remainingAmount != null &&
+    remainingAmount <= 0.01
+  ) {
     status = "Pagato";
   } else if (isOverdue) {
     status = "Scaduto";
@@ -628,9 +637,9 @@ function hasPaymentTracking(
 
   const hasPaymentDetails = Boolean(
     document.paidAt ||
-      document.lastPaymentDate ||
-      document.paymentMethod ||
-      document.installmentCount,
+    document.lastPaymentDate ||
+    document.paymentMethod ||
+    document.installmentCount,
   );
   const hasPaymentAttachment = documentAttachments.some((item) =>
     ["Ricevuta", "Quietanza", "Pagamento"].includes(item.attachmentType),
@@ -641,18 +650,14 @@ function hasPaymentTracking(
 
 function getMatchLabel(confidence: number, language: Language) {
   if (confidence >= 85) {
-    return language === "it"
-      ? "Corrispondenza molto alta"
-      : "Very high match";
+    return language === "it" ? "Corrispondenza molto alta" : "Very high match";
   }
 
   if (confidence >= 65) {
     return language === "it" ? "Corrispondenza alta" : "High match";
   }
 
-  return language === "it"
-    ? "Corrispondenza possibile"
-    : "Possible match";
+  return language === "it" ? "Corrispondenza possibile" : "Possible match";
 }
 
 function getDisplayedPaymentStatus(
@@ -662,13 +667,56 @@ function getDisplayedPaymentStatus(
   return getPaymentSnapshot(document, documentAttachments).status;
 }
 
-
 const searchStopWords = new Set([
-  "a", "al", "alla", "alle", "allo", "anche", "che", "chi", "con", "da",
-  "dal", "dalla", "delle", "dei", "del", "di", "dove", "e", "è", "gli",
-  "il", "in", "io", "la", "le", "lo", "mi", "mio", "nel", "nella", "per",
-  "qual", "quale", "sono", "trovami", "trova", "un", "una",
-  "and", "find", "for", "in", "is", "me", "my", "of", "show", "the", "where",
+  "a",
+  "al",
+  "alla",
+  "alle",
+  "allo",
+  "anche",
+  "che",
+  "chi",
+  "con",
+  "da",
+  "dal",
+  "dalla",
+  "delle",
+  "dei",
+  "del",
+  "di",
+  "dove",
+  "e",
+  "è",
+  "gli",
+  "il",
+  "in",
+  "io",
+  "la",
+  "le",
+  "lo",
+  "mi",
+  "mio",
+  "nel",
+  "nella",
+  "per",
+  "qual",
+  "quale",
+  "sono",
+  "trovami",
+  "trova",
+  "un",
+  "una",
+  "and",
+  "find",
+  "for",
+  "in",
+  "is",
+  "me",
+  "my",
+  "of",
+  "show",
+  "the",
+  "where",
 ]);
 
 const searchSynonyms: Record<string, string[]> = {
@@ -703,10 +751,7 @@ function getSearchTokens(value: string) {
 
   return Array.from(
     new Set(
-      baseTokens.flatMap((token) => [
-        token,
-        ...(searchSynonyms[token] ?? []),
-      ]),
+      baseTokens.flatMap((token) => [token, ...(searchSynonyms[token] ?? [])]),
     ),
   );
 }
@@ -725,8 +770,9 @@ function getDocumentSearchScore(
   const summary = normalizeSearchText(document.summary);
   const attachmentText = normalizeSearchText(
     documentAttachments
-      .map((item) =>
-        `${item.title} ${item.attachmentType} ${item.fileName} ${item.paymentMethod ?? ""} ${item.notes ?? ""}`,
+      .map(
+        (item) =>
+          `${item.title} ${item.attachmentType} ${item.fileName} ${item.paymentMethod ?? ""} ${item.notes ?? ""}`,
       )
       .join(" "),
   );
@@ -751,10 +797,11 @@ function getDocumentSearchScore(
   return score;
 }
 
-
 async function getApiAuthHeaders(contentType?: string) {
   const supabase = getSupabaseClient();
-  const { data } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+  const { data } = supabase
+    ? await supabase.auth.getSession()
+    : { data: { session: null } };
   const token = data.session?.access_token;
   return {
     ...(contentType ? { "Content-Type": contentType } : {}),
@@ -781,16 +828,40 @@ async function compressImageForUpload(file: File): Promise<File> {
   );
   if (!blob || blob.size >= file.size) return file;
   const baseName = file.name.replace(/\.[^.]+$/, "");
-  return new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+  return new File([blob], `${baseName}.jpg`, {
+    type: "image/jpeg",
+    lastModified: Date.now(),
+  });
 }
 
-function rankDocumentsForQuestion(question: string, documents: StoredDocument[], attachments: Record<string, DocumentAttachment[]>) {
+function rankDocumentsForQuestion(
+  question: string,
+  documents: StoredDocument[],
+  attachments: Record<string, DocumentAttachment[]>,
+) {
   const normalizedQuestion = normalizeSearchText(question);
-  const terms = normalizedQuestion.split(/\s+/).filter((term) => term.length > 1);
+  const terms = normalizedQuestion
+    .split(/\s+/)
+    .filter((term) => term.length > 1);
   const isPaymentQuestion = [
-    "pagar", "pagament", "pagato", "debito", "saldo", "importo",
-    "totale", "spesa", "costo", "pay", "paid", "payment", "owe",
-    "outstanding", "amount", "total", "bill", "invoice",
+    "pagar",
+    "pagament",
+    "pagato",
+    "debito",
+    "saldo",
+    "importo",
+    "totale",
+    "spesa",
+    "costo",
+    "pay",
+    "paid",
+    "payment",
+    "owe",
+    "outstanding",
+    "amount",
+    "total",
+    "bill",
+    "invoice",
   ].some((term) => normalizedQuestion.includes(term));
   const candidateDocuments = isPaymentQuestion
     ? documents.filter((document) =>
@@ -800,9 +871,16 @@ function rankDocumentsForQuestion(question: string, documents: StoredDocument[],
 
   return [...candidateDocuments]
     .map((document) => {
-      const attachmentText = (attachments[document.id] ?? []).map((item) => `${item.title} ${item.fileName} ${item.notes ?? ""}`).join(" ");
-      const text = normalizeSearchText(`${document.title} ${document.category} ${document.summary} ${document.keywords.join(" ")} ${attachmentText}`);
-      const score = terms.reduce((total, term) => total + (text.includes(term) ? 1 : 0), 0);
+      const attachmentText = (attachments[document.id] ?? [])
+        .map((item) => `${item.title} ${item.fileName} ${item.notes ?? ""}`)
+        .join(" ");
+      const text = normalizeSearchText(
+        `${document.title} ${document.category} ${document.summary} ${document.keywords.join(" ")} ${attachmentText}`,
+      );
+      const score = terms.reduce(
+        (total, term) => total + (text.includes(term) ? 1 : 0),
+        0,
+      );
       return { document, score };
     })
     .sort((a, b) => b.score - a.score)
@@ -835,14 +913,17 @@ export default function Home() {
   const [userId, setUserId] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
-  const [editingDocument, setEditingDocument] =
-    useState<StoredDocument | null>(null);
+  const [practices, setPractices] = useState<Practice[]>([]);
+  const [activeView, setActiveView] = useState<ActiveView>("documents");
+  const [showPracticeModal, setShowPracticeModal] = useState(false);
+  const [editingDocument, setEditingDocument] = useState<StoredDocument | null>(
+    null,
+  );
   const [savingDocumentEdit, setSavingDocumentEdit] = useState(false);
   const [query, setQuery] = useState("");
   const [aiResultIds, setAiResultIds] = useState<string[] | null>(null);
   const [aiSearching, setAiSearching] = useState(false);
-  const [activeCategory, setActiveCategory] =
-    useState<ActiveCategory>("Tutti");
+  const [activeCategory, setActiveCategory] = useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -850,8 +931,10 @@ export default function Home() {
   const [deletePassword, setDeletePassword] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
-  const [browserNotificationsEnabled, setBrowserNotificationsEnabled] = useState(false);
-  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(true);
+  const [browserNotificationsEnabled, setBrowserNotificationsEnabled] =
+    useState(false);
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] =
+    useState(true);
   const [weeklyDigestEnabled, setWeeklyDigestEnabled] = useState(true);
   const [assistantInput, setAssistantInput] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
@@ -892,7 +975,9 @@ export default function Home() {
     }
 
     try {
-      const savedRead = JSON.parse(localStorage.getItem("documio-read-notifications") ?? "[]");
+      const savedRead = JSON.parse(
+        localStorage.getItem("documio-read-notifications") ?? "[]",
+      );
       if (Array.isArray(savedRead)) setReadNotificationIds(savedRead);
     } catch {
       setReadNotificationIds([]);
@@ -904,9 +989,7 @@ export default function Home() {
       );
       if (savedPreferences) {
         setEmailNotificationsEnabled(savedPreferences.email_enabled ?? true);
-        setWeeklyDigestEnabled(
-          savedPreferences.weekly_digest_enabled ?? true,
-        );
+        setWeeklyDigestEnabled(savedPreferences.weekly_digest_enabled ?? true);
         if (typeof savedPreferences.browser_enabled === "boolean") {
           savedBrowserPreference = savedPreferences.browser_enabled;
         }
@@ -917,7 +1000,8 @@ export default function Home() {
 
     if (typeof Notification !== "undefined") {
       setBrowserNotificationsEnabled(
-        savedBrowserPreference !== false && Notification.permission === "granted",
+        savedBrowserPreference !== false &&
+          Notification.permission === "granted",
       );
     }
   }, []);
@@ -977,6 +1061,7 @@ export default function Home() {
 
       if (!userId) {
         setDocuments([]);
+        setPractices([]);
         setIsLoaded(true);
         return;
       }
@@ -989,6 +1074,33 @@ export default function Home() {
       }
 
       setIsLoaded(false);
+
+      const { data: practiceRows, error: practiceError } = await supabase
+        .from("practices")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (practiceError) {
+        alert(practiceError.message);
+        setIsLoaded(true);
+        return;
+      }
+
+      setPractices(
+        (practiceRows ?? []).map((item) => ({
+          id: item.id,
+          userId: item.user_id,
+          title: item.title,
+          practiceType: item.practice_type,
+          description: item.description ?? null,
+          status: item.status as PracticeStatus,
+          openedAt: item.opened_at ?? null,
+          closedAt: item.closed_at ?? null,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at,
+        })),
+      );
 
       const { data, error } = await supabase
         .from("documents")
@@ -1010,6 +1122,7 @@ export default function Home() {
         uploadedAt: item.uploaded_at,
         summary: item.summary,
         keywords: item.keywords ?? [],
+        practiceId: item.practice_id ?? null,
         expiryDate: item.expiry_date,
         appointmentTime: item.appointment_time
           ? String(item.appointment_time).slice(0, 5)
@@ -1032,8 +1145,7 @@ export default function Home() {
         paidInstallments: item.paid_installments ?? null,
         remainingAmount: item.remaining_amount ?? null,
         lastPaymentDate: item.last_payment_date ?? null,
-        paymentProgressConfirmed:
-          item.payment_progress_confirmed ?? false,
+        paymentProgressConfirmed: item.payment_progress_confirmed ?? false,
       }));
 
       setDocuments(loadedDocuments);
@@ -1106,7 +1218,11 @@ export default function Home() {
 
   async function signUp() {
     if (!privacyAccepted) {
-      alert(language === "it" ? "Per registrarti devi accettare Privacy Policy e Termini beta." : "You must accept the Privacy Policy and beta Terms to register.");
+      alert(
+        language === "it"
+          ? "Per registrarti devi accettare Privacy Policy e Termini beta."
+          : "You must accept the Privacy Policy and beta Terms to register.",
+      );
       return;
     }
 
@@ -1152,6 +1268,7 @@ export default function Home() {
     if (error) return alert(error.message);
 
     setDocuments([]);
+    setPractices([]);
     setPassword("");
   }
 
@@ -1170,7 +1287,9 @@ export default function Home() {
       });
 
       if (authError) {
-        alert(language === "it" ? "Password non corretta." : "Incorrect password.");
+        alert(
+          language === "it" ? "Password non corretta." : "Incorrect password.",
+        );
         return;
       }
 
@@ -1181,19 +1300,35 @@ export default function Home() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(data.error || (language === "it" ? "Cancellazione non riuscita." : "Account deletion failed."));
+        throw new Error(
+          data.error ||
+            (language === "it"
+              ? "Cancellazione non riuscita."
+              : "Account deletion failed."),
+        );
       }
 
       await supabase.auth.signOut();
       localStorage.removeItem("documio-read-notifications");
       setDocuments([]);
+      setPractices([]);
       setAttachments({});
       setDeletePassword("");
       setShowDeleteAccount(false);
       setShowNotifications(false);
-      alert(language === "it" ? "Account cancellato definitivamente." : "Account permanently deleted.");
+      alert(
+        language === "it"
+          ? "Account cancellato definitivamente."
+          : "Account permanently deleted.",
+      );
     } catch (error) {
-      alert(error instanceof Error ? error.message : (language === "it" ? "Cancellazione non riuscita." : "Account deletion failed."));
+      alert(
+        error instanceof Error
+          ? error.message
+          : language === "it"
+            ? "Cancellazione non riuscita."
+            : "Account deletion failed.",
+      );
     } finally {
       setDeletingAccount(false);
     }
@@ -1255,7 +1390,11 @@ export default function Home() {
 
   const notificationItems = useMemo<NotificationItem[]>(() => {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const today = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    ).getTime();
     const dayMs = 24 * 60 * 60 * 1000;
 
     return documents
@@ -1303,22 +1442,30 @@ export default function Home() {
                 language === "it" ? "it-IT" : "en-GB",
                 { style: "currency", currency: "EUR" },
               ).format(financing.installmentAmount);
-              const timing = days < 0
-                ? language === "it"
-                  ? `scaduta da ${Math.abs(days)} giorni`
-                  : `overdue by ${Math.abs(days)} days`
-                : days === 0
-                  ? language === "it" ? "scade oggi" : "is due today"
-                  : days === 1
-                    ? language === "it" ? "scade domani" : "is due tomorrow"
-                    : language === "it" ? `scade tra ${days} giorni` : `is due in ${days} days`;
-              const message = overdueInstallments > 1
-                ? language === "it"
-                  ? `${overdueInstallments} rate risultano scadute. Totale dovuto adesso: ${new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(snapshot.dueNowAmount)}.`
-                  : `${overdueInstallments} installments are overdue. Due now: ${new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(snapshot.dueNowAmount)}.`
-                : language === "it"
-                  ? `Rata ${snapshot.paidInstallments + 1}/${financing.installmentCount} da ${formattedAmount}: ${timing}.`
-                  : `Installment ${snapshot.paidInstallments + 1}/${financing.installmentCount} for ${formattedAmount} ${timing}.`;
+              const timing =
+                days < 0
+                  ? language === "it"
+                    ? `scaduta da ${Math.abs(days)} giorni`
+                    : `overdue by ${Math.abs(days)} days`
+                  : days === 0
+                    ? language === "it"
+                      ? "scade oggi"
+                      : "is due today"
+                    : days === 1
+                      ? language === "it"
+                        ? "scade domani"
+                        : "is due tomorrow"
+                      : language === "it"
+                        ? `scade tra ${days} giorni`
+                        : `is due in ${days} days`;
+              const message =
+                overdueInstallments > 1
+                  ? language === "it"
+                    ? `${overdueInstallments} rate risultano scadute. Totale dovuto adesso: ${new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(snapshot.dueNowAmount)}.`
+                    : `${overdueInstallments} installments are overdue. Due now: ${new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }).format(snapshot.dueNowAmount)}.`
+                  : language === "it"
+                    ? `Rata ${snapshot.paidInstallments + 1}/${financing.installmentCount} da ${formattedAmount}: ${timing}.`
+                    : `Installment ${snapshot.paidInstallments + 1}/${financing.installmentCount} for ${formattedAmount} ${timing}.`;
 
               items.push({
                 id: `${document.id}:installment:${snapshot.paidInstallments + 1}:${dueDate}`,
@@ -1349,31 +1496,55 @@ export default function Home() {
               days < 0 || days <= 1 ? "urgent" : days <= 7 ? "warning" : "info";
             const isAppointment = isAppointmentDocument(document);
             const kind = isAppointment
-              ? language === "it" ? "Appuntamento" : "Appointment"
-              : payment
-                ? language === "it" ? "Pagamento" : "Payment"
-                : language === "it" ? "Documento" : "Document";
-            const timing = days < 0
-              ? isAppointment
-                ? language === "it" ? `era ${Math.abs(days)} giorni fa` : `was ${Math.abs(days)} days ago`
-                : language === "it" ? `scaduto da ${Math.abs(days)} giorni` : `overdue by ${Math.abs(days)} days`
-              : days === 0
-                ? isAppointment
-                  ? language === "it" ? "è oggi" : "is today"
-                  : language === "it" ? "scade oggi" : "is due today"
-                : days === 1
-                  ? isAppointment
-                    ? language === "it" ? "è domani" : "is tomorrow"
-                    : language === "it" ? "scade domani" : "is due tomorrow"
-                  : isAppointment
-                    ? language === "it" ? `è tra ${days} giorni` : `is in ${days} days`
-                    : language === "it" ? `scade tra ${days} giorni` : `is due in ${days} days`;
-
-            const appointmentTime = isAppointment && document.appointmentTime
               ? language === "it"
-                ? ` alle ${document.appointmentTime.slice(0, 5)}`
-                : ` at ${document.appointmentTime.slice(0, 5)}`
-              : "";
+                ? "Appuntamento"
+                : "Appointment"
+              : payment
+                ? language === "it"
+                  ? "Pagamento"
+                  : "Payment"
+                : language === "it"
+                  ? "Documento"
+                  : "Document";
+            const timing =
+              days < 0
+                ? isAppointment
+                  ? language === "it"
+                    ? `era ${Math.abs(days)} giorni fa`
+                    : `was ${Math.abs(days)} days ago`
+                  : language === "it"
+                    ? `scaduto da ${Math.abs(days)} giorni`
+                    : `overdue by ${Math.abs(days)} days`
+                : days === 0
+                  ? isAppointment
+                    ? language === "it"
+                      ? "è oggi"
+                      : "is today"
+                    : language === "it"
+                      ? "scade oggi"
+                      : "is due today"
+                  : days === 1
+                    ? isAppointment
+                      ? language === "it"
+                        ? "è domani"
+                        : "is tomorrow"
+                      : language === "it"
+                        ? "scade domani"
+                        : "is due tomorrow"
+                    : isAppointment
+                      ? language === "it"
+                        ? `è tra ${days} giorni`
+                        : `is in ${days} days`
+                      : language === "it"
+                        ? `scade tra ${days} giorni`
+                        : `is due in ${days} days`;
+
+            const appointmentTime =
+              isAppointment && document.appointmentTime
+                ? language === "it"
+                  ? ` alle ${document.appointmentTime.slice(0, 5)}`
+                  : ` at ${document.appointmentTime.slice(0, 5)}`
+                : "";
 
             items.push({
               id: `${document.id}:${document.expiryDate}:${payment ? "payment" : "document"}`,
@@ -1452,7 +1623,11 @@ export default function Home() {
 
   async function toggleBrowserNotifications() {
     if (typeof Notification === "undefined") {
-      alert(language === "it" ? "Questo browser non supporta le notifiche." : "This browser does not support notifications.");
+      alert(
+        language === "it"
+          ? "Questo browser non supporta le notifiche."
+          : "This browser does not support notifications.",
+      );
       return;
     }
 
@@ -1469,14 +1644,21 @@ export default function Home() {
 
     if (enabled) {
       new Notification("DocuMio", {
-        body: language === "it" ? "Notifiche del browser attivate." : "Browser notifications enabled.",
+        body:
+          language === "it"
+            ? "Notifiche del browser attivate."
+            : "Browser notifications enabled.",
       });
     }
   }
 
   useEffect(() => {
     if (!browserNotificationsEnabled || !notificationItems.length) return;
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    )
+      return;
 
     const todayKey = new Date().toISOString().slice(0, 10);
     const storageKey = `documio-browser-notified-${todayKey}`;
@@ -1485,9 +1667,14 @@ export default function Home() {
     const upcoming = notificationItems.slice(0, 3);
     if (!upcoming.length) return;
 
-    new Notification(language === "it" ? "DocuMio: scadenze importanti" : "DocuMio: important deadlines", {
-      body: upcoming.map((item) => item.message).join(" "),
-    });
+    new Notification(
+      language === "it"
+        ? "DocuMio: scadenze importanti"
+        : "DocuMio: important deadlines",
+      {
+        body: upcoming.map((item) => item.message).join(" "),
+      },
+    );
     localStorage.setItem(storageKey, "1");
   }, [browserNotificationsEnabled, notificationItems, language]);
 
@@ -1520,7 +1707,10 @@ export default function Home() {
             keywords: document.keywords,
             expiryDate: document.expiryDate,
             appointmentTime: document.appointmentTime,
-            paymentStatus: getPaymentSnapshot(document, attachments[document.id] ?? []).status,
+            paymentStatus: getPaymentSnapshot(
+              document,
+              attachments[document.id] ?? [],
+            ).status,
             totalAmount: document.totalAmount,
             paidAmount: document.paidAmount,
             attachments: (attachments[document.id] ?? []).map((item) => ({
@@ -1540,9 +1730,7 @@ export default function Home() {
         throw new Error(data.error || "Search failed");
       }
 
-      setAiResultIds(
-        Array.isArray(data.documentIds) ? data.documentIds : [],
-      );
+      setAiResultIds(Array.isArray(data.documentIds) ? data.documentIds : []);
     } catch (error) {
       console.error("AI search failed:", error);
       setAiResultIds(null);
@@ -1567,7 +1755,11 @@ export default function Home() {
     setAssistantLoading(true);
 
     try {
-      const relevantDocuments = rankDocumentsForQuestion(cleanQuestion, documents, attachments);
+      const relevantDocuments = rankDocumentsForQuestion(
+        cleanQuestion,
+        documents,
+        attachments,
+      );
       const response = await fetch("/api/assistant", {
         method: "POST",
         headers: await getApiAuthHeaders("application/json"),
@@ -1637,9 +1829,7 @@ export default function Home() {
           id: crypto.randomUUID(),
           role: "assistant",
           text: data.answer || t.assistantError,
-          documentIds: Array.isArray(data.documentIds)
-            ? data.documentIds
-            : [],
+          documentIds: Array.isArray(data.documentIds) ? data.documentIds : [],
         },
       ]);
     } catch (error) {
@@ -1689,30 +1879,21 @@ export default function Home() {
         return (
           activeCategory === "Tutti" ||
           (activeCategory === "In scadenza" &&
-            isExpiringWithin30Days(
-              document,
-              attachments[document.id] ?? [],
-            )) ||
+            isExpiringWithin30Days(document, attachments[document.id] ?? [])) ||
           (activeCategory === "Da pagare" &&
             hasPaymentTracking(document, attachments[document.id] ?? []) &&
             ["Da pagare", "Scaduto"].includes(
-              getPaymentSnapshot(
-                document,
-                attachments[document.id] ?? [],
-              ).status,
+              getPaymentSnapshot(document, attachments[document.id] ?? [])
+                .status,
             )) ||
           (activeCategory === "Parzialmente pagato" &&
             hasPaymentTracking(document, attachments[document.id] ?? []) &&
-            getPaymentSnapshot(
-              document,
-              attachments[document.id] ?? [],
-            ).status === "Parzialmente pagato") ||
+            getPaymentSnapshot(document, attachments[document.id] ?? [])
+              .status === "Parzialmente pagato") ||
           (activeCategory === "Pagato" &&
             hasPaymentTracking(document, attachments[document.id] ?? []) &&
-            getPaymentSnapshot(
-              document,
-              attachments[document.id] ?? [],
-            ).status === "Pagato") ||
+            getPaymentSnapshot(document, attachments[document.id] ?? [])
+              .status === "Pagato") ||
           document.category === activeCategory
         );
       });
@@ -1734,14 +1915,7 @@ export default function Home() {
     }
 
     return rankedDocuments.map(({ document }) => document);
-  }, [
-    documents,
-    query,
-    activeCategory,
-    t,
-    attachments,
-    aiResultIds,
-  ]);
+  }, [documents, query, activeCategory, t, attachments, aiResultIds]);
 
   async function updateAppointment(
     document: StoredDocument,
@@ -1774,7 +1948,8 @@ export default function Home() {
           ? `Segnare “${document.title}” come completato?`
           : `Mark “${document.title}” as completed?`,
       )
-    ) return;
+    )
+      return;
 
     const completedAt = completed ? new Date().toISOString() : null;
     await updateAppointment(
@@ -1799,13 +1974,14 @@ export default function Home() {
     );
     if (!choice) return;
 
-    const delay = choice === "1"
-      ? 60 * 60 * 1000
-      : choice === "3"
-        ? 7 * 24 * 60 * 60 * 1000
-        : choice === "2"
-          ? 24 * 60 * 60 * 1000
-          : 0;
+    const delay =
+      choice === "1"
+        ? 60 * 60 * 1000
+        : choice === "3"
+          ? 7 * 24 * 60 * 60 * 1000
+          : choice === "2"
+            ? 24 * 60 * 60 * 1000
+            : 0;
     if (!delay) {
       alert(language === "it" ? "Scegli 1, 2 oppure 3." : "Choose 1, 2, or 3.");
       return;
@@ -1826,7 +2002,11 @@ export default function Home() {
     );
     if (nextDate === null) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
-      alert(language === "it" ? "Inserisci una data valida, per esempio 2026-07-24." : "Enter a valid date, for example 2026-07-24.");
+      alert(
+        language === "it"
+          ? "Inserisci una data valida, per esempio 2026-07-24."
+          : "Enter a valid date, for example 2026-07-24.",
+      );
       return;
     }
 
@@ -1836,7 +2016,11 @@ export default function Home() {
     );
     if (nextTime === null) return;
     if (nextTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(nextTime)) {
-      alert(language === "it" ? "Inserisci un’ora valida, per esempio 15:30." : "Enter a valid time, for example 15:30.");
+      alert(
+        language === "it"
+          ? "Inserisci un’ora valida, per esempio 15:30."
+          : "Enter a valid time, for example 15:30.",
+      );
       return;
     }
 
@@ -1878,6 +2062,7 @@ export default function Home() {
         .from("documents")
         .update({
           title: updatedDocument.title.trim(),
+          practice_id: updatedDocument.practiceId ?? null,
           category: updatedDocument.category,
           summary: updatedDocument.summary.trim(),
           keywords: (updatedDocument.keywords ?? [])
@@ -1888,10 +2073,8 @@ export default function Home() {
           total_amount: updatedDocument.totalAmount ?? null,
           installment_count: updatedDocument.installmentCount ?? null,
           installment_amount: updatedDocument.installmentAmount ?? null,
-          financing_total_amount:
-            updatedDocument.financingTotalAmount ?? null,
-          first_installment_date:
-            updatedDocument.firstInstallmentDate || null,
+          financing_total_amount: updatedDocument.financingTotalAmount ?? null,
+          first_installment_date: updatedDocument.firstInstallmentDate || null,
           is_financing: Boolean(updatedDocument.isFinancing),
         })
         .eq("id", updatedDocument.id)
@@ -2096,11 +2279,9 @@ export default function Home() {
       [attachment.documentId]: remainingAttachments,
     }));
 
-    const isPaymentAttachment = [
-      "Ricevuta",
-      "Quietanza",
-      "Pagamento",
-    ].includes(attachment.attachmentType);
+    const isPaymentAttachment = ["Ricevuta", "Quietanza", "Pagamento"].includes(
+      attachment.attachmentType,
+    );
 
     if (document && isPaymentAttachment) {
       await recalculateDocumentPaymentStatus(
@@ -2173,13 +2354,13 @@ export default function Home() {
       (item) => (Number(item.amount) || 0) > 0,
     ).length;
     const lastPaymentDate =
-      latestPayment?.paymentDate ?? latestPayment?.uploadedAt?.slice(0, 10) ?? null;
+      latestPayment?.paymentDate ??
+      latestPayment?.uploadedAt?.slice(0, 10) ??
+      null;
     const installmentCount =
       financing.installmentCount ?? inferredInstallmentCount ?? null;
     const isSinglePaymentOption =
-      document.isSinglePaymentOption ??
-      inferredSinglePaymentOption ??
-      false;
+      document.isSinglePaymentOption ?? inferredSinglePaymentOption ?? false;
 
     const currency = new Intl.NumberFormat(
       language === "it" ? "it-IT" : "en-US",
@@ -2192,7 +2373,7 @@ export default function Home() {
       `${t.paymentStatus}: ${t.statuses[paymentStatus]}`,
       `${t.paidProgress}: ${currency.format(paidTotal)}`,
       repaymentTotal != null
-        ? `${financing.isFinancing ? (language === "it" ? "Totale piano rateale" : "Installment plan total") : (language === "it" ? "Totale" : "Total")}: ${currency.format(repaymentTotal)}`
+        ? `${financing.isFinancing ? (language === "it" ? "Totale piano rateale" : "Installment plan total") : language === "it" ? "Totale" : "Total"}: ${currency.format(repaymentTotal)}`
         : null,
       remainingAmount != null
         ? `${language === "it" ? "Residuo" : "Remaining"}: ${currency.format(remainingAmount)}`
@@ -2206,10 +2387,7 @@ export default function Home() {
         : "Do you confirm this update?",
     ].filter((line): line is string => line !== null);
 
-    if (
-      requireConfirmation &&
-      !window.confirm(proposalLines.join("\n"))
-    ) {
+    if (requireConfirmation && !window.confirm(proposalLines.join("\n"))) {
       return;
     }
 
@@ -2260,8 +2438,7 @@ export default function Home() {
               paidInstallments: updateData.paid_installments,
               remainingAmount: updateData.remaining_amount,
               lastPaymentDate: updateData.last_payment_date,
-              paymentProgressConfirmed:
-                updateData.payment_progress_confirmed,
+              paymentProgressConfirmed: updateData.payment_progress_confirmed,
             }
           : item,
       ),
@@ -2416,6 +2593,7 @@ export default function Home() {
       .from("documents")
       .insert({
         user_id: user.id,
+        practice_id: doc.practiceId ?? null,
         title: doc.title,
         category: doc.category,
         file_name: doc.fileName,
@@ -2442,8 +2620,7 @@ export default function Home() {
         paid_installments: doc.paidInstallments ?? null,
         remaining_amount: doc.remainingAmount ?? null,
         last_payment_date: doc.lastPaymentDate ?? null,
-        payment_progress_confirmed:
-          doc.paymentProgressConfirmed ?? false,
+        payment_progress_confirmed: doc.paymentProgressConfirmed ?? false,
       })
       .select()
       .single();
@@ -2462,6 +2639,7 @@ export default function Home() {
       uploadedAt: data.uploaded_at,
       summary: data.summary,
       keywords: data.keywords ?? [],
+      practiceId: data.practice_id ?? null,
       expiryDate: data.expiry_date,
       appointmentTime: data.appointment_time
         ? String(data.appointment_time).slice(0, 5)
@@ -2484,12 +2662,108 @@ export default function Home() {
       paidInstallments: data.paid_installments ?? null,
       remainingAmount: data.remaining_amount ?? null,
       lastPaymentDate: data.last_payment_date ?? null,
-      paymentProgressConfirmed:
-        data.payment_progress_confirmed ?? false,
+      paymentProgressConfirmed: data.payment_progress_confirmed ?? false,
     };
 
     setDocuments((previous) => [savedDocument, ...previous]);
     setShowUpload(false);
+  }
+
+  async function createPractice(values: {
+    title: string;
+    practiceType: string;
+    description: string;
+    status: PracticeStatus;
+    openedAt: string;
+  }) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !userId) return alert(t.notConfigured);
+
+    const { data, error } = await supabase
+      .from("practices")
+      .insert({
+        user_id: userId,
+        title: values.title.trim(),
+        practice_type: values.practiceType.trim() || "Altro",
+        description: values.description.trim() || null,
+        status: values.status,
+        opened_at: values.openedAt || null,
+      })
+      .select()
+      .single();
+
+    if (error) return alert(error.message);
+
+    setPractices((current) => [
+      {
+        id: data.id,
+        userId: data.user_id,
+        title: data.title,
+        practiceType: data.practice_type,
+        description: data.description ?? null,
+        status: data.status as PracticeStatus,
+        openedAt: data.opened_at ?? null,
+        closedAt: data.closed_at ?? null,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      },
+      ...current,
+    ]);
+    setShowPracticeModal(false);
+  }
+
+  async function assignDocumentToPractice(
+    documentId: string,
+    practiceId: string | null,
+  ) {
+    const supabase = getSupabaseClient();
+    if (!supabase || !userId) return alert(t.notConfigured);
+
+    const { error } = await supabase
+      .from("documents")
+      .update({ practice_id: practiceId })
+      .eq("id", documentId)
+      .eq("user_id", userId);
+
+    if (error) return alert(error.message);
+
+    setDocuments((current) =>
+      current.map((document) =>
+        document.id === documentId ? { ...document, practiceId } : document,
+      ),
+    );
+  }
+
+  async function deletePractice(practice: Practice) {
+    const linkedCount = documents.filter(
+      (document) => document.practiceId === practice.id,
+    ).length;
+    const confirmed = window.confirm(
+      language === "it"
+        ? `Eliminare la pratica “${practice.title}”? I ${linkedCount} documenti collegati resteranno nell’archivio.`
+        : `Delete “${practice.title}”? Its ${linkedCount} linked documents will remain in the archive.`,
+    );
+    if (!confirmed) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !userId) return alert(t.notConfigured);
+    const { error } = await supabase
+      .from("practices")
+      .delete()
+      .eq("id", practice.id)
+      .eq("user_id", userId);
+    if (error) return alert(error.message);
+
+    setPractices((current) =>
+      current.filter((item) => item.id !== practice.id),
+    );
+    setDocuments((current) =>
+      current.map((document) =>
+        document.practiceId === practice.id
+          ? { ...document, practiceId: null }
+          : document,
+      ),
+    );
   }
 
   if (!authReady) {
@@ -2503,7 +2777,9 @@ export default function Home() {
   if (!userId) {
     return (
       <main style={{ maxWidth: 420, margin: "80px auto", padding: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div
+          style={{ display: "flex", justifyContent: "space-between", gap: 12 }}
+        >
           <h1>{t.loginTitle}</h1>
           <button
             type="button"
@@ -2533,7 +2809,16 @@ export default function Home() {
           style={{ width: "100%", padding: 12, marginBottom: 12 }}
         />
 
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 9, margin: "4px 0 14px", fontSize: 14, lineHeight: 1.45 }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 9,
+            margin: "4px 0 14px",
+            fontSize: 14,
+            lineHeight: 1.45,
+          }}
+        >
           <input
             type="checkbox"
             checked={privacyAccepted}
@@ -2541,10 +2826,17 @@ export default function Home() {
             style={{ marginTop: 3 }}
           />
           <span>
-            {language === "it" ? "Ho letto e accetto " : "I have read and accept the "}
-            <a href="/privacy" target="_blank">Privacy Policy</a>
+            {language === "it"
+              ? "Ho letto e accetto "
+              : "I have read and accept the "}
+            <a href="/privacy" target="_blank">
+              Privacy Policy
+            </a>
             {language === "it" ? " e i " : " and "}
-            <a href="/terms" target="_blank">{language === "it" ? "Termini beta" : "beta Terms"}</a>.
+            <a href="/terms" target="_blank">
+              {language === "it" ? "Termini beta" : "beta Terms"}
+            </a>
+            .
           </span>
         </label>
 
@@ -2584,22 +2876,42 @@ export default function Home() {
           >
             <Settings size={19} />
             {unreadNotificationCount > 0 && (
-              <span style={{
-                position: "absolute", top: -7, right: -7, minWidth: 20, height: 20,
-                borderRadius: 999, padding: "0 5px", display: "grid", placeItems: "center",
-                background: "#dc2626", color: "white", fontSize: 11, fontWeight: 800,
-              }}>
+              <span
+                style={{
+                  position: "absolute",
+                  top: -7,
+                  right: -7,
+                  minWidth: 20,
+                  height: 20,
+                  borderRadius: 999,
+                  padding: "0 5px",
+                  display: "grid",
+                  placeItems: "center",
+                  background: "#dc2626",
+                  color: "white",
+                  fontSize: 11,
+                  fontWeight: 800,
+                }}
+              >
                 {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
               </span>
             )}
           </button>
 
-          <button className="primary topbar-upload" onClick={() => setShowUpload(true)}>
+          <button
+            className="primary topbar-upload"
+            onClick={() => setShowUpload(true)}
+          >
             <Plus size={18} />
             <span>{language === "it" ? "Carica" : "Upload"}</span>
           </button>
 
-          <button className="topbar-logout" type="button" onClick={signOut} title={userEmail ?? undefined}>
+          <button
+            className="topbar-logout"
+            type="button"
+            onClick={signOut}
+            title={userEmail ?? undefined}
+          >
             <LogOut size={18} />
             <span>{t.logout}</span>
           </button>
@@ -2705,571 +3017,808 @@ export default function Home() {
       <section
         style={{
           maxWidth: 1400,
-          margin: "0 auto 26px",
+          margin: "0 auto 20px",
           padding: "0 24px",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 14,
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
         }}
       >
-        {[
-          {
-            label: t.dashboardToPay,
-            value: dashboard.toPayCount,
-            filter: "Da pagare" as ActiveCategory,
-            icon: "🟠",
-          },
-          {
-            label: t.dashboardPartial,
-            value: dashboard.partialCount,
-            filter: "Parzialmente pagato" as ActiveCategory,
-            icon: "🟡",
-          },
-          {
-            label: t.dashboardExpiring,
-            value: dashboard.expiringCount,
-            filter: "In scadenza" as ActiveCategory,
-            icon: "🔴",
-          },
-          {
-            label: t.dashboardPaid,
-            value: dashboard.paidCount,
-            filter: "Pagato" as ActiveCategory,
-            icon: "🟢",
-          },
-        ].map((item) => (
-          <button
-            type="button"
-            key={item.label}
-            onClick={() => {
-              setQuery("");
-              setAiResultIds(null);
-              setActiveCategory(item.filter);
-            }}
-            style={{
-              textAlign: "left",
-              border: "1px solid #e2e8f0",
-              borderRadius: 18,
-              background: "#ffffff",
-              padding: 18,
-              boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
-            }}
-          >
-            <div style={{ fontSize: 22 }}>{item.icon}</div>
-            <strong style={{ display: "block", marginTop: 8 }}>
-              {item.label}
-            </strong>
-            <span style={{ fontSize: 28, fontWeight: 800 }}>{item.value}</span>
-          </button>
-        ))}
-
-        <div
-          style={{
-            border: "1px solid #c7d2fe",
-            borderRadius: 18,
-            background: "linear-gradient(135deg, #eef2ff, #ffffff)",
-            padding: 18,
-            boxShadow: "0 10px 30px rgba(79, 70, 229, 0.08)",
-          }}
+        <button
+          type="button"
+          className={activeView === "documents" ? "primary" : ""}
+          onClick={() => setActiveView("documents")}
         >
-          <div style={{ fontSize: 22 }}>💶</div>
-          <strong style={{ display: "block", marginTop: 8 }}>
-            {t.dashboardOutstanding}
-          </strong>
-          <span style={{ fontSize: 28, fontWeight: 800 }}>
-            {new Intl.NumberFormat(
-              language === "it" ? "it-IT" : "en-GB",
-              { style: "currency", currency: "EUR" },
-            ).format(dashboard.outstandingTotal)}
-          </span>
-        </div>
+          <FileText size={18} /> {language === "it" ? "Documenti" : "Documents"}
+        </button>
+        <button
+          type="button"
+          className={activeView === "practices" ? "primary" : ""}
+          onClick={() => setActiveView("practices")}
+        >
+          <FolderKanban size={18} /> {language === "it" ? "Pratiche" : "Cases"}
+        </button>
+        {activeView === "practices" && (
+          <button type="button" onClick={() => setShowPracticeModal(true)}>
+            <Plus size={18} />{" "}
+            {language === "it" ? "Nuova pratica" : "New case"}
+          </button>
+        )}
       </section>
 
-      <section className="layout">
-        <aside>
-          <button
-            className={
-              activeCategory === "In scadenza"
-                ? "category active"
-                : "category"
-            }
-            onClick={() => setActiveCategory("In scadenza")}
-          >
-            <span>⏰</span>
-            {t.expiring}
-            <span>{expiringCount}</span>
-          </button>
-
-          <button
-            className={
-              activeCategory === "Tutti" ? "category active" : "category"
-            }
-            onClick={() => setActiveCategory("Tutti")}
-          >
-            <FileText size={20} />
-            {t.allDocuments}
-            <span>{documents.length}</span>
-          </button>
-
-          {categories.map((category) => (
+      {activeView === "documents" && (
+        <section
+          style={{
+            maxWidth: 1400,
+            margin: "0 auto 26px",
+            padding: "0 24px",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 14,
+          }}
+        >
+          {[
+            {
+              label: t.dashboardToPay,
+              value: dashboard.toPayCount,
+              filter: "Da pagare" as ActiveCategory,
+              icon: "🟠",
+            },
+            {
+              label: t.dashboardPartial,
+              value: dashboard.partialCount,
+              filter: "Parzialmente pagato" as ActiveCategory,
+              icon: "🟡",
+            },
+            {
+              label: t.dashboardExpiring,
+              value: dashboard.expiringCount,
+              filter: "In scadenza" as ActiveCategory,
+              icon: "🔴",
+            },
+            {
+              label: t.dashboardPaid,
+              value: dashboard.paidCount,
+              filter: "Pagato" as ActiveCategory,
+              icon: "🟢",
+            },
+          ].map((item) => (
             <button
-              key={category.name}
-              className={
-                activeCategory === category.name
-                  ? "category active"
-                  : "category"
-              }
-              onClick={() => setActiveCategory(category.name)}
+              type="button"
+              key={item.label}
+              onClick={() => {
+                setQuery("");
+                setAiResultIds(null);
+                setActiveCategory(item.filter);
+              }}
+              style={{
+                textAlign: "left",
+                border: "1px solid #e2e8f0",
+                borderRadius: 18,
+                background: "#ffffff",
+                padding: 18,
+                boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
+              }}
             >
-              {category.icon}
-              {t.categories[category.name]}
-              <span>
-                {
-                  documents.filter(
-                    (document) => document.category === category.name,
-                  ).length
-                }
+              <div style={{ fontSize: 22 }}>{item.icon}</div>
+              <strong style={{ display: "block", marginTop: 8 }}>
+                {item.label}
+              </strong>
+              <span style={{ fontSize: 28, fontWeight: 800 }}>
+                {item.value}
               </span>
             </button>
           ))}
-        </aside>
 
-        <section>
-          <div className="section-title">
-            <div>
-              <h2>
-                {activeCategory === "Tutti"
-                  ? t.allDocuments
-                  : activeCategory === "In scadenza"
-                    ? t.expiring
-                    : activeCategory === "Da pagare"
-                      ? t.dashboardToPay
-                      : activeCategory === "Parzialmente pagato"
-                        ? t.dashboardPartial
-                        : activeCategory === "Pagato"
-                          ? t.dashboardPaid
-                          : t.categories[activeCategory]}
-              </h2>
-              <p>
-                {filtered.length} {" "}
-                {filtered.length === 1
-                  ? t.documentFound
-                  : t.documentsFound}
-              </p>
-            </div>
+          <div
+            style={{
+              border: "1px solid #c7d2fe",
+              borderRadius: 18,
+              background: "linear-gradient(135deg, #eef2ff, #ffffff)",
+              padding: 18,
+              boxShadow: "0 10px 30px rgba(79, 70, 229, 0.08)",
+            }}
+          >
+            <div style={{ fontSize: 22 }}>💶</div>
+            <strong style={{ display: "block", marginTop: 8 }}>
+              {t.dashboardOutstanding}
+            </strong>
+            <span style={{ fontSize: 28, fontWeight: 800 }}>
+              {new Intl.NumberFormat(language === "it" ? "it-IT" : "en-GB", {
+                style: "currency",
+                currency: "EUR",
+              }).format(dashboard.outstandingTotal)}
+            </span>
           </div>
+        </section>
+      )}
 
-          <div className="grid">
-            {filtered.map((doc) => (
-              <article className="doc-card" key={doc.id} data-document-id={doc.id}>
-                <div className="doc-card-actions">
-                  <button
-                    type="button"
-                    className="edit-button"
-                    onClick={() => setEditingDocument(doc)}
-                    aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
-                  >
-                    {language === "it" ? "Modifica" : "Edit"}
-                  </button>
-                  <button
-                    type="button"
-                    className="delete-button"
-                    onClick={() => deleteDocument(doc.id)}
-                    aria-label={`${t.delete} ${doc.title}`}
-                  >
-                    {t.delete}
-                  </button>
-                </div>
+      {activeView === "documents" ? (
+        <section className="layout">
+          <aside>
+            <button
+              className={
+                activeCategory === "In scadenza"
+                  ? "category active"
+                  : "category"
+              }
+              onClick={() => setActiveCategory("In scadenza")}
+            >
+              <span>⏰</span>
+              {t.expiring}
+              <span>{expiringCount}</span>
+            </button>
 
-                <div className="doc-icon">
-                  <FileText size={24} />
-                </div>
-                <span className="badge">
-                  {t.categories[doc.category] ?? doc.category}
+            <button
+              className={
+                activeCategory === "Tutti" ? "category active" : "category"
+              }
+              onClick={() => setActiveCategory("Tutti")}
+            >
+              <FileText size={20} />
+              {t.allDocuments}
+              <span>{documents.length}</span>
+            </button>
+
+            {categories.map((category) => (
+              <button
+                key={category.name}
+                className={
+                  activeCategory === category.name
+                    ? "category active"
+                    : "category"
+                }
+                onClick={() => setActiveCategory(category.name)}
+              >
+                {category.icon}
+                {t.categories[category.name]}
+                <span>
+                  {
+                    documents.filter(
+                      (document) => document.category === category.name,
+                    ).length
+                  }
                 </span>
-                <h3>{doc.title}</h3>
-                <p>{doc.summary}</p>
+              </button>
+            ))}
+          </aside>
 
-                {getFinancingTerms(doc).isFinancing &&
-                  getFinancingTerms(doc).installmentCount != null &&
-                  getFinancingTerms(doc).installmentAmount != null && (
+          <section>
+            <div className="section-title">
+              <div>
+                <h2>
+                  {activeCategory === "Tutti"
+                    ? t.allDocuments
+                    : activeCategory === "In scadenza"
+                      ? t.expiring
+                      : activeCategory === "Da pagare"
+                        ? t.dashboardToPay
+                        : activeCategory === "Parzialmente pagato"
+                          ? t.dashboardPartial
+                          : activeCategory === "Pagato"
+                            ? t.dashboardPaid
+                            : t.categories[activeCategory]}
+                </h2>
+                <p>
+                  {filtered.length}{" "}
+                  {filtered.length === 1 ? t.documentFound : t.documentsFound}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid">
+              {filtered.map((doc) => (
+                <article
+                  className="doc-card"
+                  key={doc.id}
+                  data-document-id={doc.id}
+                >
+                  <div className="doc-card-actions">
+                    <button
+                      type="button"
+                      className="edit-button"
+                      onClick={() => setEditingDocument(doc)}
+                      aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
+                    >
+                      {language === "it" ? "Modifica" : "Edit"}
+                    </button>
+                    <button
+                      type="button"
+                      className="delete-button"
+                      onClick={() => deleteDocument(doc.id)}
+                      aria-label={`${t.delete} ${doc.title}`}
+                    >
+                      {t.delete}
+                    </button>
+                  </div>
+
+                  <div className="doc-icon">
+                    <FileText size={24} />
+                  </div>
+                  <span className="badge">
+                    {t.categories[doc.category] ?? doc.category}
+                  </span>
+                  <h3>{doc.title}</h3>
+                  <p>{doc.summary}</p>
+
+                  {getFinancingTerms(doc).isFinancing &&
+                    getFinancingTerms(doc).installmentCount != null &&
+                    getFinancingTerms(doc).installmentAmount != null && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: 10,
+                          borderRadius: 12,
+                          background: "#eef2ff",
+                          color: "#312e81",
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        <strong>
+                          {language === "it" ? "Finanziamento" : "Financing"}
+                        </strong>
+                        <div>
+                          {getFinancingTerms(doc).installmentCount}{" "}
+                          {language === "it" ? "rate da" : "installments of"} €
+                          {getFinancingTerms(doc).installmentAmount!.toFixed(2)}
+                          {" · "}
+                          {language === "it" ? "Totale piano" : "Plan total"} €
+                          {(
+                            getFinancingTerms(doc).financingTotalAmount ??
+                            getFinancingTerms(doc).installmentCount! *
+                              getFinancingTerms(doc).installmentAmount!
+                          ).toFixed(2)}
+                          {getFinancingTerms(doc).firstInstallmentDate && (
+                            <>
+                              <br />
+                              {language === "it"
+                                ? "Prima scadenza"
+                                : "First due date"}
+                              :{" "}
+                              {new Date(
+                                `${getFinancingTerms(doc).firstInstallmentDate}T12:00:00`,
+                              ).toLocaleDateString(
+                                language === "it" ? "it-IT" : "en-GB",
+                              )}
+                            </>
+                          )}
+                          <br />
+                          {language === "it"
+                            ? "Rate pagate"
+                            : "Paid installments"}
+                          :{" "}
+                          {
+                            getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                              .paidInstallments
+                          }
+                          /{getFinancingTerms(doc).installmentCount}
+                          <br />
+                          {language === "it" ? "Residuo" : "Remaining"}:{" "}
+                          {new Intl.NumberFormat(
+                            language === "it" ? "it-IT" : "en-GB",
+                            { style: "currency", currency: "EUR" },
+                          ).format(
+                            getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                              .remainingAmount ?? 0,
+                          )}
+                          {getNextInstallmentDate(
+                            getFinancingTerms(doc).firstInstallmentDate,
+                            getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                              .paidInstallments,
+                            getFinancingTerms(doc).installmentCount,
+                          ) ? (
+                            <>
+                              <br />
+                              {language === "it"
+                                ? "Prossima scadenza"
+                                : "Next due date"}
+                              :{" "}
+                              {getNextInstallmentDate(
+                                getFinancingTerms(doc).firstInstallmentDate,
+                                getPaymentSnapshot(
+                                  doc,
+                                  attachments[doc.id] ?? [],
+                                ).paidInstallments,
+                                getFinancingTerms(doc).installmentCount,
+                              )!.toLocaleDateString(
+                                language === "it" ? "it-IT" : "en-GB",
+                              )}
+                            </>
+                          ) : getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                              .paidInstallments >=
+                            getFinancingTerms(doc).installmentCount! ? (
+                            <>
+                              <br />
+                              {language === "it"
+                                ? "Piano completato"
+                                : "Plan completed"}
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+
+                  {doc.expiryDate &&
+                    (!hasPaymentTracking(doc, attachments[doc.id] ?? []) ||
+                      getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                        .status !== "Pagato") && (
+                      <span className="expiry-date">
+                        {isAppointmentDocument(doc)
+                          ? language === "it"
+                            ? "Appuntamento il"
+                            : "Appointment on"
+                          : t.expiresOn}{" "}
+                        {new Date(
+                          `${doc.expiryDate}T12:00:00`,
+                        ).toLocaleDateString(
+                          language === "it" ? "it-IT" : "en-GB",
+                        )}
+                        {doc.appointmentTime
+                          ? ` · ${doc.appointmentTime.slice(0, 5)}`
+                          : ""}
+                      </span>
+                    )}
+
+                  {isAppointmentDocument(doc) && (
                     <div
                       style={{
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
                         marginTop: 10,
-                        padding: 10,
-                        borderRadius: 12,
-                        background: "#eef2ff",
-                        color: "#312e81",
-                        lineHeight: 1.5,
                       }}
                     >
-                      <strong>
-                        {language === "it" ? "Finanziamento" : "Financing"}
-                      </strong>
-                      <div>
-                        {getFinancingTerms(doc).installmentCount} {language === "it" ? "rate da" : "installments of"} €
-                        {getFinancingTerms(doc).installmentAmount!.toFixed(2)}
-                        {" · "}
-                        {language === "it" ? "Totale piano" : "Plan total"} €
-                        {(
-                          getFinancingTerms(doc).financingTotalAmount ??
-                          getFinancingTerms(doc).installmentCount! *
-                            getFinancingTerms(doc).installmentAmount!
-                        ).toFixed(2)}
-                        {getFinancingTerms(doc).firstInstallmentDate && (
-                          <>
-                            <br />
-                            {language === "it" ? "Prima scadenza" : "First due date"}: {new Date(
-                              `${getFinancingTerms(doc).firstInstallmentDate}T12:00:00`,
-                            ).toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
-                          </>
-                        )}
-                        <br />
-                        {language === "it" ? "Rate pagate" : "Paid installments"}: {getPaymentSnapshot(
-                          doc,
-                          attachments[doc.id] ?? [],
-                        ).paidInstallments}/{getFinancingTerms(doc).installmentCount}
-                        <br />
-                        {language === "it" ? "Residuo" : "Remaining"}: {new Intl.NumberFormat(
-                          language === "it" ? "it-IT" : "en-GB",
-                          { style: "currency", currency: "EUR" },
-                        ).format(
-                          getPaymentSnapshot(doc, attachments[doc.id] ?? [])
-                            .remainingAmount ?? 0,
-                        )}
-                        {getNextInstallmentDate(
-                          getFinancingTerms(doc).firstInstallmentDate,
-                          getPaymentSnapshot(doc, attachments[doc.id] ?? [])
-                            .paidInstallments,
-                          getFinancingTerms(doc).installmentCount,
-                        ) ? (
-                          <>
-                            <br />
-                            {language === "it" ? "Prossima scadenza" : "Next due date"}: {getNextInstallmentDate(
-                              getFinancingTerms(doc).firstInstallmentDate,
-                              getPaymentSnapshot(doc, attachments[doc.id] ?? [])
-                                .paidInstallments,
-                              getFinancingTerms(doc).installmentCount,
-                            )!.toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
-                          </>
-                        ) : getPaymentSnapshot(doc, attachments[doc.id] ?? [])
-                            .paidInstallments >=
-                          getFinancingTerms(doc).installmentCount! ? (
-                          <>
-                            <br />
-                            {language === "it" ? "Piano completato" : "Plan completed"}
-                          </>
-                        ) : null}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => completeAppointment(doc)}
+                        style={
+                          doc.appointmentCompletedAt
+                            ? undefined
+                            : {
+                                background: "#16a34a",
+                                color: "white",
+                                borderColor: "#16a34a",
+                              }
+                        }
+                      >
+                        {doc.appointmentCompletedAt
+                          ? language === "it"
+                            ? "↩ Riattiva"
+                            : "↩ Reactivate"
+                          : language === "it"
+                            ? "✓ Completato"
+                            : "✓ Completed"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => editAppointment(doc)}
+                      >
+                        {language === "it"
+                          ? "Modifica data/ora"
+                          : "Edit date/time"}
+                      </button>
+                      {!doc.appointmentCompletedAt && (
+                        <button
+                          type="button"
+                          onClick={() => snoozeAppointment(doc)}
+                        >
+                          {language === "it"
+                            ? "Ricordamelo più tardi"
+                            : "Remind me later"}
+                        </button>
+                      )}
+                      {doc.appointmentCompletedAt && (
+                        <span style={{ color: "#15803d", fontWeight: 700 }}>
+                          {language === "it"
+                            ? "Appuntamento completato"
+                            : "Appointment completed"}
+                        </span>
+                      )}
                     </div>
                   )}
 
-                {doc.expiryDate &&
-                  (!hasPaymentTracking(doc, attachments[doc.id] ?? []) ||
-                    getPaymentSnapshot(
-                      doc,
-                      attachments[doc.id] ?? [],
-                    ).status !== "Pagato") && (
-                  <span className="expiry-date">
-                    {isAppointmentDocument(doc)
-                      ? language === "it" ? "Appuntamento il" : "Appointment on"
-                      : t.expiresOn} {" "}
-                    {new Date(
-                      `${doc.expiryDate}T12:00:00`,
-                    ).toLocaleDateString(language === "it" ? "it-IT" : "en-GB")}
-                    {doc.appointmentTime
-                      ? ` · ${doc.appointmentTime.slice(0, 5)}`
-                      : ""}
-                  </span>
-                )}
-
-                {isAppointmentDocument(doc) && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      marginTop: 10,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => completeAppointment(doc)}
-                      style={doc.appointmentCompletedAt ? undefined : {
-                        background: "#16a34a",
-                        color: "white",
-                        borderColor: "#16a34a",
-                      }}
-                    >
-                      {doc.appointmentCompletedAt
-                        ? language === "it" ? "↩ Riattiva" : "↩ Reactivate"
-                        : language === "it" ? "✓ Completato" : "✓ Completed"}
-                    </button>
-                    <button type="button" onClick={() => editAppointment(doc)}>
-                      {language === "it" ? "Modifica data/ora" : "Edit date/time"}
-                    </button>
-                    {!doc.appointmentCompletedAt && (
-                      <button type="button" onClick={() => snoozeAppointment(doc)}>
-                        {language === "it" ? "Ricordamelo più tardi" : "Remind me later"}
-                      </button>
-                    )}
-                    {doc.appointmentCompletedAt && (
-                      <span style={{ color: "#15803d", fontWeight: 700 }}>
-                        {language === "it" ? "Appuntamento completato" : "Appointment completed"}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {hasPaymentTracking(doc, attachments[doc.id] ?? []) && (
-                  <div
-                    className="payment-row"
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      marginTop: 12,
-                    }}
-                  >
-                    <strong>{t.paymentStatus}:</strong>
-                  <select
-                    value={
-                      getPaymentSnapshot(
-                        doc,
-                        attachments[doc.id] ?? [],
-                      ).status === "Contestato"
-                        ? "Contestato"
-                        : "Automatico"
-                    }
-                    onChange={(event) =>
-                      updatePaymentStatusOverride(
-                        doc,
-                        event.target.value === "Contestato",
-                      )
-                    }
-                    aria-label={`${t.paymentStatus} ${doc.title}`}
-                  >
-                    <option value="Automatico">
-                      {language === "it"
-                        ? `Automatico · ${
-                            t.statuses[
-                              getPaymentSnapshot(
-                                { ...doc, paymentStatus: "Da pagare" },
-                                attachments[doc.id] ?? [],
-                              ).status
-                            ]
-                          }`
-                        : `Automatic · ${
-                            t.statuses[
-                              getPaymentSnapshot(
-                                { ...doc, paymentStatus: "Da pagare" },
-                                attachments[doc.id] ?? [],
-                              ).status
-                            ]
-                          }`
-                      }
-                    </option>
-                    <option value="Contestato">{t.statuses.Contestato}</option>
-                  </select>
-
-                  {["Pagato", "Parzialmente pagato"].includes(
-                    getPaymentSnapshot(
-                      doc,
-                      attachments[doc.id] ?? [],
-                    ).status,
-                  ) && getPaymentSnapshot(
-                    doc,
-                    attachments[doc.id] ?? [],
-                  ).lastPaymentDate && (
-                    <span style={{ fontSize: 13 }}>
-                      {new Date(`${getPaymentSnapshot(doc, attachments[doc.id] ?? []).lastPaymentDate}T12:00:00`).toLocaleDateString(
-                        language === "it" ? "it-IT" : "en-GB",
-                      )}
-                      {getPaymentSnapshot(
-                        doc,
-                        attachments[doc.id] ?? [],
-                      ).paidAmount > 0
-                        ? ` · €${getPaymentSnapshot(
-                            doc,
-                            attachments[doc.id] ?? [],
-                          ).paidAmount.toFixed(2)}`
-                        : ""}
-                      {getPaymentSnapshot(doc, attachments[doc.id] ?? []).totalAmount != null
-                        ? ` su €${Number(getPaymentSnapshot(doc, attachments[doc.id] ?? []).totalAmount).toFixed(2)}`
-                        : ""}
-                      {doc.paymentMethod ? ` · ${doc.paymentMethod}` : ""}
-                    </span>
-                  )}
-                  </div>
-                )}
-
-                {doc.storagePath && (
-                  <div
-                    className="document-buttons"
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      marginTop: 12,
-                    }}
-                  >
-                    <button type="button" onClick={() => openDocument(doc)}>
-                      {t.openDocument}
-                    </button>
-                    <button type="button" onClick={() => openDocument(doc, true)}>
-                      {t.downloadDocument}
-                    </button>
-                  </div>
-                )}
-
-                <div className="attachments-section" style={{ marginTop: 16 }}>
-                  <div
-                    className="attachments-heading"
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      alignItems: "center",
-                    }}
-                  >
-                    <strong>
-                      📎 {t.attachments} ({(attachments[doc.id] ?? []).length})
-                    </strong>
+                  {hasPaymentTracking(doc, attachments[doc.id] ?? []) && (
                     <div
+                      className="payment-row"
                       style={{
                         display: "flex",
                         gap: 8,
                         alignItems: "center",
                         flexWrap: "wrap",
-                        justifyContent: "flex-end",
+                        marginTop: 12,
                       }}
                     >
-                      {(attachments[doc.id] ?? []).length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => toggleAttachments(doc.id)}
-                          aria-expanded={expandedAttachmentDocuments.has(doc.id)}
-                          aria-label={
-                            expandedAttachmentDocuments.has(doc.id)
-                              ? language === "it"
-                                ? "Riduci allegati"
-                                : "Collapse attachments"
-                              : language === "it"
-                                ? "Mostra allegati"
-                                : "Show attachments"
-                          }
-                          style={{
-                            width: 38,
-                            height: 38,
-                            padding: 0,
-                            borderRadius: 10,
-                            fontSize: 24,
-                            fontWeight: 800,
-                            lineHeight: 1,
-                          }}
-                        >
-                          {expandedAttachmentDocuments.has(doc.id) ? "−" : "+"}
-                        </button>
-                      )}
+                      <strong>{t.paymentStatus}:</strong>
+                      <select
+                        value={
+                          getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                            .status === "Contestato"
+                            ? "Contestato"
+                            : "Automatico"
+                        }
+                        onChange={(event) =>
+                          updatePaymentStatusOverride(
+                            doc,
+                            event.target.value === "Contestato",
+                          )
+                        }
+                        aria-label={`${t.paymentStatus} ${doc.title}`}
+                      >
+                        <option value="Automatico">
+                          {language === "it"
+                            ? `Automatico · ${
+                                t.statuses[
+                                  getPaymentSnapshot(
+                                    { ...doc, paymentStatus: "Da pagare" },
+                                    attachments[doc.id] ?? [],
+                                  ).status
+                                ]
+                              }`
+                            : `Automatic · ${
+                                t.statuses[
+                                  getPaymentSnapshot(
+                                    { ...doc, paymentStatus: "Da pagare" },
+                                    attachments[doc.id] ?? [],
+                                  ).status
+                                ]
+                              }`}
+                        </option>
+                        <option value="Contestato">
+                          {t.statuses.Contestato}
+                        </option>
+                      </select>
+
+                      {["Pagato", "Parzialmente pagato"].includes(
+                        getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                          .status,
+                      ) &&
+                        getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                          .lastPaymentDate && (
+                          <span style={{ fontSize: 13 }}>
+                            {new Date(
+                              `${getPaymentSnapshot(doc, attachments[doc.id] ?? []).lastPaymentDate}T12:00:00`,
+                            ).toLocaleDateString(
+                              language === "it" ? "it-IT" : "en-GB",
+                            )}
+                            {getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                              .paidAmount > 0
+                              ? ` · €${getPaymentSnapshot(
+                                  doc,
+                                  attachments[doc.id] ?? [],
+                                ).paidAmount.toFixed(2)}`
+                              : ""}
+                            {getPaymentSnapshot(doc, attachments[doc.id] ?? [])
+                              .totalAmount != null
+                              ? ` su €${Number(getPaymentSnapshot(doc, attachments[doc.id] ?? []).totalAmount).toFixed(2)}`
+                              : ""}
+                            {doc.paymentMethod ? ` · ${doc.paymentMethod}` : ""}
+                          </span>
+                        )}
+                    </div>
+                  )}
+
+                  <label
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 7,
+                      marginTop: 14,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {language === "it" ? "Pratica" : "Case"}
+                    <select
+                      value={doc.practiceId ?? ""}
+                      onChange={(event) =>
+                        void assignDocumentToPractice(
+                          doc.id,
+                          event.target.value || null,
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        border: "1px solid #d7dce7",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        background: "white",
+                      }}
+                    >
+                      <option value="">
+                        {language === "it" ? "Nessuna pratica" : "No case"}
+                      </option>
+                      {practices.map((practice) => (
+                        <option key={practice.id} value={practice.id}>
+                          {practice.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {doc.storagePath && (
+                    <div
+                      className="document-buttons"
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        marginTop: 12,
+                      }}
+                    >
+                      <button type="button" onClick={() => openDocument(doc)}>
+                        {t.openDocument}
+                      </button>
                       <button
                         type="button"
-                        onClick={() => setAttachmentDocument(doc)}
+                        onClick={() => openDocument(doc, true)}
                       >
-                        {t.addAttachment}
+                        {t.downloadDocument}
                       </button>
                     </div>
-                  </div>
+                  )}
 
-                  {(attachments[doc.id] ?? []).length === 0 ? (
-                    <p style={{ marginTop: 8 }}>{t.noAttachments}</p>
-                  ) : expandedAttachmentDocuments.has(doc.id) ? (
-                    <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-                      {(attachments[doc.id] ?? []).map((attachment) => (
-                        <div
-                          key={attachment.id}
-                          className="attachment-card"
-                          style={{
-                            border: "1px solid #e5e7eb",
-                            borderRadius: 12,
-                            padding: 10,
-                          }}
-                        >
-                          <strong>{attachment.title}</strong>
-                          <div style={{ fontSize: 13, marginTop: 4 }}>
-                            {attachment.attachmentType}
-                            {attachment.paymentDate
-                              ? ` · ${new Date(
-                                  `${attachment.paymentDate}T12:00:00`,
-                                ).toLocaleDateString(
-                                  language === "it" ? "it-IT" : "en-GB",
-                                )}`
-                              : ""}
-                            {attachment.amount != null
-                              ? ` · €${Number(attachment.amount).toFixed(2)}`
-                              : ""}
-                          </div>
-                          <div
-                            className="attachment-buttons"
+                  <div
+                    className="attachments-section"
+                    style={{ marginTop: 16 }}
+                  >
+                    <div
+                      className="attachments-heading"
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
+                    >
+                      <strong>
+                        📎 {t.attachments} ({(attachments[doc.id] ?? []).length}
+                        )
+                      </strong>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          justifyContent: "flex-end",
+                        }}
+                      >
+                        {(attachments[doc.id] ?? []).length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => toggleAttachments(doc.id)}
+                            aria-expanded={expandedAttachmentDocuments.has(
+                              doc.id,
+                            )}
+                            aria-label={
+                              expandedAttachmentDocuments.has(doc.id)
+                                ? language === "it"
+                                  ? "Riduci allegati"
+                                  : "Collapse attachments"
+                                : language === "it"
+                                  ? "Mostra allegati"
+                                  : "Show attachments"
+                            }
                             style={{
-                              display: "flex",
-                              gap: 8,
-                              flexWrap: "wrap",
-                              marginTop: 8,
+                              width: 38,
+                              height: 38,
+                              padding: 0,
+                              borderRadius: 10,
+                              fontSize: 24,
+                              fontWeight: 800,
+                              lineHeight: 1,
                             }}
                           >
-                            <button
-                              type="button"
-                              onClick={() => openAttachment(attachment)}
-                            >
-                              {t.openDocument}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openAttachment(attachment, true)}
-                            >
-                              {t.downloadDocument}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteAttachment(attachment)}
-                            >
-                              {t.delete}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                            {expandedAttachmentDocuments.has(doc.id)
+                              ? "−"
+                              : "+"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setAttachmentDocument(doc)}
+                        >
+                          {t.addAttachment}
+                        </button>
+                      </div>
                     </div>
-                  ) : null}
+
+                    {(attachments[doc.id] ?? []).length === 0 ? (
+                      <p style={{ marginTop: 8 }}>{t.noAttachments}</p>
+                    ) : expandedAttachmentDocuments.has(doc.id) ? (
+                      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                        {(attachments[doc.id] ?? []).map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            className="attachment-card"
+                            style={{
+                              border: "1px solid #e5e7eb",
+                              borderRadius: 12,
+                              padding: 10,
+                            }}
+                          >
+                            <strong>{attachment.title}</strong>
+                            <div style={{ fontSize: 13, marginTop: 4 }}>
+                              {attachment.attachmentType}
+                              {attachment.paymentDate
+                                ? ` · ${new Date(
+                                    `${attachment.paymentDate}T12:00:00`,
+                                  ).toLocaleDateString(
+                                    language === "it" ? "it-IT" : "en-GB",
+                                  )}`
+                                : ""}
+                              {attachment.amount != null
+                                ? ` · €${Number(attachment.amount).toFixed(2)}`
+                                : ""}
+                            </div>
+                            <div
+                              className="attachment-buttons"
+                              style={{
+                                display: "flex",
+                                gap: 8,
+                                flexWrap: "wrap",
+                                marginTop: 8,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => openAttachment(attachment)}
+                              >
+                                {t.openDocument}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openAttachment(attachment, true)}
+                              >
+                                {t.downloadDocument}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteAttachment(attachment)}
+                              >
+                                {t.delete}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="keywords">
+                    {doc.keywords.slice(0, 3).map((keyword) => (
+                      <span key={keyword}>{keyword}</span>
+                    ))}
+                  </div>
+
+                  <footer>
+                    <span>{doc.fileName}</span>
+                    <time>
+                      {new Date(doc.uploadedAt).toLocaleDateString(
+                        language === "it" ? "it-IT" : "en-GB",
+                      )}
+                    </time>
+                  </footer>
+                </article>
+              ))}
+
+              {isLoaded && !filtered.length && (
+                <div className="empty">
+                  <FileText size={42} />
+                  <h3>{t.noDocuments}</h3>
+                  <p>{t.noDocumentsHelp}</p>
                 </div>
-
-                <div className="keywords">
-                  {doc.keywords.slice(0, 3).map((keyword) => (
-                    <span key={keyword}>{keyword}</span>
-                  ))}
-                </div>
-
-                <footer>
-                  <span>{doc.fileName}</span>
-                  <time>
-                    {new Date(doc.uploadedAt).toLocaleDateString(
-                      language === "it" ? "it-IT" : "en-GB",
-                    )}
-                  </time>
-                </footer>
-              </article>
-            ))}
-
-            {isLoaded && !filtered.length && (
+              )}
+            </div>
+          </section>
+        </section>
+      ) : (
+        <section
+          style={{ maxWidth: 1400, margin: "0 auto 60px", padding: "0 24px" }}
+        >
+          <div className="section-title">
+            <div>
+              <h2>{language === "it" ? "Le tue pratiche" : "Your cases"}</h2>
+              <p>
+                {practices.length} {language === "it" ? "pratiche" : "cases"}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setShowPracticeModal(true)}
+            >
+              <Plus size={18} />{" "}
+              {language === "it" ? "Nuova pratica" : "New case"}
+            </button>
+          </div>
+          <div className="grid">
+            {practices.map((practice) => {
+              const linkedDocuments = documents.filter(
+                (document) => document.practiceId === practice.id,
+              );
+              const linkedAttachments = linkedDocuments.reduce(
+                (total, document) =>
+                  total + (attachments[document.id] ?? []).length,
+                0,
+              );
+              return (
+                <article className="doc-card" key={practice.id}>
+                  <div className="doc-card-actions">
+                    <button
+                      type="button"
+                      className="delete-button"
+                      onClick={() => void deletePractice(practice)}
+                    >
+                      {t.delete}
+                    </button>
+                  </div>
+                  <div className="doc-icon">
+                    <FolderKanban size={24} />
+                  </div>
+                  <span className="badge">{practice.practiceType}</span>
+                  <h3>{practice.title}</h3>
+                  <p>
+                    {practice.description ||
+                      (language === "it"
+                        ? "Nessuna descrizione."
+                        : "No description.")}
+                  </p>
+                  <div
+                    style={{
+                      marginTop: 14,
+                      display: "grid",
+                      gap: 6,
+                      color: "#475569",
+                    }}
+                  >
+                    <span>
+                      📄 {linkedDocuments.length}{" "}
+                      {language === "it" ? "documenti" : "documents"}
+                    </span>
+                    <span>
+                      📎 {linkedAttachments}{" "}
+                      {language === "it" ? "allegati" : "attachments"}
+                    </span>
+                    <span>
+                      📌 {language === "it" ? "Stato" : "Status"}:{" "}
+                      {practice.status}
+                    </span>
+                  </div>
+                  <footer>
+                    <span>
+                      {practice.openedAt
+                        ? new Date(
+                            `${practice.openedAt}T12:00:00`,
+                          ).toLocaleDateString(
+                            language === "it" ? "it-IT" : "en-GB",
+                          )
+                        : language === "it"
+                          ? "Data non indicata"
+                          : "No date"}
+                    </span>
+                    <time>
+                      {new Date(practice.createdAt).toLocaleDateString(
+                        language === "it" ? "it-IT" : "en-GB",
+                      )}
+                    </time>
+                  </footer>
+                </article>
+              );
+            })}
+            {isLoaded && practices.length === 0 && (
               <div className="empty">
-                <FileText size={42} />
-                <h3>{t.noDocuments}</h3>
-                <p>{t.noDocumentsHelp}</p>
+                <FolderKanban size={42} />
+                <h3>{language === "it" ? "Nessuna pratica" : "No cases"}</h3>
+                <p>
+                  {language === "it"
+                    ? "Crea la prima pratica per raggruppare documenti, ricevute e comunicazioni."
+                    : "Create your first case to group documents, receipts and communications."}
+                </p>
               </div>
             )}
           </div>
         </section>
-      </section>
+      )}
 
       <footer className="legal-footer">
         <a href="/privacy">Privacy</a>
@@ -3278,55 +3827,191 @@ export default function Home() {
       </footer>
 
       {showNotifications && (
-        <div className="modal-backdrop" onMouseDown={() => setShowNotifications(false)}>
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => setShowNotifications(false)}
+        >
           <section
             onMouseDown={(event) => event.stopPropagation()}
-            style={{ width: "min(620px, calc(100vw - 24px))", maxHeight: "88vh", overflow: "auto", background: "white", borderRadius: 22, padding: 20 }}
+            style={{
+              width: "min(620px, calc(100vw - 24px))",
+              maxHeight: "88vh",
+              overflow: "auto",
+              background: "white",
+              borderRadius: 22,
+              padding: 20,
+            }}
           >
-            <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <header
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 16,
+              }}
+            >
               <div>
-                <h2 style={{ margin: 0 }}>{language === "it" ? "Impostazioni" : "Settings"}</h2>
+                <h2 style={{ margin: 0 }}>
+                  {language === "it" ? "Impostazioni" : "Settings"}
+                </h2>
                 <p style={{ margin: "4px 0 0", color: "#64748b" }}>
-                  {language === "it" ? `${unreadNotificationCount} avvisi non letti` : `${unreadNotificationCount} unread alerts`}
+                  {language === "it"
+                    ? `${unreadNotificationCount} avvisi non letti`
+                    : `${unreadNotificationCount} unread alerts`}
                 </p>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={markAllNotificationsRead} title={language === "it" ? "Segna tutte come lette" : "Mark all as read"}>
+                <button
+                  type="button"
+                  onClick={markAllNotificationsRead}
+                  title={
+                    language === "it"
+                      ? "Segna tutte come lette"
+                      : "Mark all as read"
+                  }
+                >
                   <CheckCheck size={18} />
                 </button>
-                <button type="button" onClick={() => setShowNotifications(false)}><X size={18} /></button>
+                <button
+                  type="button"
+                  onClick={() => setShowNotifications(false)}
+                >
+                  <X size={18} />
+                </button>
               </div>
             </header>
 
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 14, marginBottom: 16 }}>
+            <div
+              style={{
+                border: "1px solid #e2e8f0",
+                borderRadius: 16,
+                padding: 14,
+                marginBottom: 16,
+              }}
+            >
               <strong>{language === "it" ? "Lingua" : "Language"}</strong>
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <button type="button" className={language === "it" ? "primary" : ""} onClick={() => setLanguage("it")}>Italiano</button>
-                <button type="button" className={language === "en" ? "primary" : ""} onClick={() => setLanguage("en")}>English</button>
+                <button
+                  type="button"
+                  className={language === "it" ? "primary" : ""}
+                  onClick={() => setLanguage("it")}
+                >
+                  Italiano
+                </button>
+                <button
+                  type="button"
+                  className={language === "en" ? "primary" : ""}
+                  onClick={() => setLanguage("en")}
+                >
+                  English
+                </button>
               </div>
             </div>
 
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 14, marginBottom: 16 }}>
-              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Bell size={17} /> {language === "it" ? "Avvisi" : "Alerts"}</strong>
+            <div
+              style={{
+                border: "1px solid #e2e8f0",
+                borderRadius: 16,
+                padding: 14,
+                marginBottom: 16,
+              }}
+            >
+              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Bell size={17} /> {language === "it" ? "Avvisi" : "Alerts"}
+              </strong>
               <div style={{ marginTop: 8, color: "#64748b", fontSize: 14 }}>
-                {language === "it" ? `${unreadNotificationCount} avvisi non letti` : `${unreadNotificationCount} unread alerts`}
+                {language === "it"
+                  ? `${unreadNotificationCount} avvisi non letti`
+                  : `${unreadNotificationCount} unread alerts`}
               </div>
             </div>
 
-            <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, padding: 14, marginBottom: 16 }}>
-              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}><Mail size={17} /> {language === "it" ? "Canali di avviso" : "Alert channels"}</strong>
-              <label style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
-                <span>{language === "it" ? "Email per scadenze importanti" : "Email for important deadlines"}</span>
-                <input type="checkbox" checked={emailNotificationsEnabled} onChange={(event) => { setEmailNotificationsEnabled(event.target.checked); void saveNotificationPreferences({ emailEnabled: event.target.checked }); }} />
+            <div
+              style={{
+                border: "1px solid #e2e8f0",
+                borderRadius: 16,
+                padding: 14,
+                marginBottom: 16,
+              }}
+            >
+              <strong style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Mail size={17} />{" "}
+                {language === "it" ? "Canali di avviso" : "Alert channels"}
+              </strong>
+              <label
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginTop: 12,
+                }}
+              >
+                <span>
+                  {language === "it"
+                    ? "Email per scadenze importanti"
+                    : "Email for important deadlines"}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={emailNotificationsEnabled}
+                  onChange={(event) => {
+                    setEmailNotificationsEnabled(event.target.checked);
+                    void saveNotificationPreferences({
+                      emailEnabled: event.target.checked,
+                    });
+                  }}
+                />
               </label>
-              <label style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 10 }}>
-                <span>{language === "it" ? "Riepilogo settimanale" : "Weekly digest"}</span>
-                <input type="checkbox" checked={weeklyDigestEnabled} onChange={(event) => { setWeeklyDigestEnabled(event.target.checked); void saveNotificationPreferences({ weeklyDigestEnabled: event.target.checked }); }} />
+              <label
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginTop: 10,
+                }}
+              >
+                <span>
+                  {language === "it"
+                    ? "Riepilogo settimanale"
+                    : "Weekly digest"}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={weeklyDigestEnabled}
+                  onChange={(event) => {
+                    setWeeklyDigestEnabled(event.target.checked);
+                    void saveNotificationPreferences({
+                      weeklyDigestEnabled: event.target.checked,
+                    });
+                  }}
+                />
               </label>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginTop: 10 }}>
-                <span>{language === "it" ? "Notifiche del browser" : "Browser notifications"}</span>
-                <button type="button" onClick={() => void toggleBrowserNotifications()}>
-                  {browserNotificationsEnabled ? (language === "it" ? "Disattiva" : "Disable") : (language === "it" ? "Attiva" : "Enable")}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "center",
+                  marginTop: 10,
+                }}
+              >
+                <span>
+                  {language === "it"
+                    ? "Notifiche del browser"
+                    : "Browser notifications"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void toggleBrowserNotifications()}
+                >
+                  {browserNotificationsEnabled
+                    ? language === "it"
+                      ? "Disattiva"
+                      : "Disable"
+                    : language === "it"
+                      ? "Attiva"
+                      : "Enable"}
                 </button>
               </div>
             </div>
@@ -3334,7 +4019,14 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setShowDeleteAccount(true)}
-              style={{ width: "100%", marginBottom: 16, borderColor: "#fecaca", color: "#b91c1c", background: "#fff7f7", justifyContent: "center" }}
+              style={{
+                width: "100%",
+                marginBottom: 16,
+                borderColor: "#fecaca",
+                color: "#b91c1c",
+                background: "#fff7f7",
+                justifyContent: "center",
+              }}
             >
               <Trash2 size={18} />
               {language === "it" ? "Cancella account" : "Delete account"}
@@ -3344,29 +4036,65 @@ export default function Home() {
               {notificationItems.length === 0 ? (
                 <div className="empty" style={{ padding: 26 }}>
                   <Bell size={34} />
-                  <h3>{language === "it" ? "Nessuna scadenza urgente" : "No urgent deadlines"}</h3>
+                  <h3>
+                    {language === "it"
+                      ? "Nessuna scadenza urgente"
+                      : "No urgent deadlines"}
+                  </h3>
                 </div>
-              ) : notificationItems.map((item) => {
-                const isRead = readNotificationIds.includes(item.id);
-                return (
-                  <button
-                    type="button"
-                    key={item.id}
-                    onClick={() => {
-                      const next = Array.from(new Set([...readNotificationIds, item.id]));
-                      setReadNotificationIds(next);
-                      localStorage.setItem("documio-read-notifications", JSON.stringify(next));
-                      setShowNotifications(false);
-                      const target = document.querySelector(`[data-document-id="${item.documentId}"]`);
-                      target?.scrollIntoView({ behavior: "smooth", block: "center" });
-                    }}
-                    style={{ textAlign: "left", padding: 14, borderRadius: 14, border: `1px solid ${item.severity === "urgent" ? "#fecaca" : item.severity === "warning" ? "#fde68a" : "#c7d2fe"}`, background: isRead ? "#ffffff" : item.severity === "urgent" ? "#fef2f2" : item.severity === "warning" ? "#fffbeb" : "#eef2ff" }}
-                  >
-                    <strong>{item.title}</strong>
-                    <span style={{ display: "block", marginTop: 5, color: "#475569" }}>{item.message}</span>
-                  </button>
-                );
-              })}
+              ) : (
+                notificationItems.map((item) => {
+                  const isRead = readNotificationIds.includes(item.id);
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      onClick={() => {
+                        const next = Array.from(
+                          new Set([...readNotificationIds, item.id]),
+                        );
+                        setReadNotificationIds(next);
+                        localStorage.setItem(
+                          "documio-read-notifications",
+                          JSON.stringify(next),
+                        );
+                        setShowNotifications(false);
+                        const target = document.querySelector(
+                          `[data-document-id="${item.documentId}"]`,
+                        );
+                        target?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                      }}
+                      style={{
+                        textAlign: "left",
+                        padding: 14,
+                        borderRadius: 14,
+                        border: `1px solid ${item.severity === "urgent" ? "#fecaca" : item.severity === "warning" ? "#fde68a" : "#c7d2fe"}`,
+                        background: isRead
+                          ? "#ffffff"
+                          : item.severity === "urgent"
+                            ? "#fef2f2"
+                            : item.severity === "warning"
+                              ? "#fffbeb"
+                              : "#eef2ff",
+                      }}
+                    >
+                      <strong>{item.title}</strong>
+                      <span
+                        style={{
+                          display: "block",
+                          marginTop: 5,
+                          color: "#475569",
+                        }}
+                      >
+                        {item.message}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </section>
         </div>
@@ -3505,8 +4233,7 @@ export default function Home() {
                     alignSelf:
                       message.role === "user" ? "flex-end" : "flex-start",
                     maxWidth: "90%",
-                    background:
-                      message.role === "user" ? "#4338ca" : "#ffffff",
+                    background: message.role === "user" ? "#4338ca" : "#ffffff",
                     color: message.role === "user" ? "#ffffff" : "#0f172a",
                     border:
                       message.role === "user"
@@ -3611,19 +4338,33 @@ export default function Home() {
       )}
 
       {showDeleteAccount && (
-        <div className="modal-backdrop" onMouseDown={() => !deletingAccount && setShowDeleteAccount(false)}>
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => !deletingAccount && setShowDeleteAccount(false)}
+        >
           <section
             onMouseDown={(event) => event.stopPropagation()}
-            style={{ width: "min(520px, calc(100vw - 24px))", background: "white", borderRadius: 22, padding: 22 }}
+            style={{
+              width: "min(520px, calc(100vw - 24px))",
+              background: "white",
+              borderRadius: 22,
+              padding: 22,
+            }}
           >
-            <h2 style={{ marginTop: 0 }}>{language === "it" ? "Cancella definitivamente l’account" : "Permanently delete account"}</h2>
+            <h2 style={{ marginTop: 0 }}>
+              {language === "it"
+                ? "Cancella definitivamente l’account"
+                : "Permanently delete account"}
+            </h2>
             <p style={{ color: "#475569", lineHeight: 1.6 }}>
               {language === "it"
                 ? `Questa operazione eliminerà l’account e tutti i ${documents.length} documenti presenti nell’archivio. Non può essere annullata.`
                 : `This will delete your account and all ${documents.length} documents in your archive. It cannot be undone.`}
             </p>
             <label className="field">
-              {language === "it" ? "Reinserisci la password" : "Enter your password again"}
+              {language === "it"
+                ? "Reinserisci la password"
+                : "Enter your password again"}
               <input
                 type="password"
                 value={deletePassword}
@@ -3631,18 +4372,43 @@ export default function Home() {
                 autoComplete="current-password"
               />
             </label>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 16 }}>
-              <button type="button" disabled={deletingAccount} onClick={() => { setDeletePassword(""); setShowDeleteAccount(false); }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "flex-end",
+                flexWrap: "wrap",
+                marginTop: 16,
+              }}
+            >
+              <button
+                type="button"
+                disabled={deletingAccount}
+                onClick={() => {
+                  setDeletePassword("");
+                  setShowDeleteAccount(false);
+                }}
+              >
                 {language === "it" ? "Annulla" : "Cancel"}
               </button>
               <button
                 type="button"
                 disabled={!deletePassword.trim() || deletingAccount}
                 onClick={() => void deleteAccount()}
-                style={{ background: "#b91c1c", color: "white", borderColor: "#b91c1c" }}
+                style={{
+                  background: "#b91c1c",
+                  color: "white",
+                  borderColor: "#b91c1c",
+                }}
               >
                 <Trash2 size={18} />
-                {deletingAccount ? (language === "it" ? "Cancellazione…" : "Deleting…") : (language === "it" ? "Conferma cancellazione" : "Confirm deletion")}
+                {deletingAccount
+                  ? language === "it"
+                    ? "Cancellazione…"
+                    : "Deleting…"
+                  : language === "it"
+                    ? "Conferma cancellazione"
+                    : "Confirm deletion"}
               </button>
             </div>
           </section>
@@ -3661,16 +4427,22 @@ export default function Home() {
           gap: 8px;
           min-width: 0;
         }
-        .topbar-icon-button, .topbar-upload, .topbar-logout {
+        .topbar-icon-button,
+        .topbar-upload,
+        .topbar-logout {
           flex: 0 0 auto;
           white-space: nowrap;
         }
         @media (max-width: 640px) {
-          html, body {
+          html,
+          body {
             max-width: 100%;
             overflow-x: hidden;
           }
-          main, .layout, .layout > section, .grid {
+          main,
+          .layout,
+          .layout > section,
+          .grid {
             min-width: 0 !important;
             max-width: 100% !important;
           }
@@ -3687,8 +4459,11 @@ export default function Home() {
             overflow: hidden;
             box-sizing: border-box;
           }
-          .doc-card h3, .doc-card p, .doc-card strong,
-          .doc-card span, .doc-card footer {
+          .doc-card h3,
+          .doc-card p,
+          .doc-card strong,
+          .doc-card span,
+          .doc-card footer {
             min-width: 0;
             max-width: 100%;
             overflow-wrap: anywhere;
@@ -3701,10 +4476,12 @@ export default function Home() {
           .payment-row select {
             max-width: 100%;
           }
-          .document-buttons, .attachment-buttons {
+          .document-buttons,
+          .attachment-buttons {
             width: 100%;
           }
-          .document-buttons button, .attachment-buttons button {
+          .document-buttons button,
+          .attachment-buttons button {
             flex: 1 1 auto;
             min-width: 0;
           }
@@ -3746,16 +4523,26 @@ export default function Home() {
             padding: 9px 10px !important;
             justify-content: center;
           }
-          .topbar-upload span, .topbar-logout span {
+          .topbar-upload span,
+          .topbar-logout span {
             display: none;
           }
         }
       `}</style>
 
+      {showPracticeModal && (
+        <PracticeModal
+          language={language}
+          onClose={() => setShowPracticeModal(false)}
+          onSave={createPractice}
+        />
+      )}
+
       {editingDocument && (
         <DocumentEditModal
           language={language}
           document={editingDocument}
+          practices={practices}
           saving={savingDocumentEdit}
           onClose={() => !savingDocumentEdit && setEditingDocument(null)}
           onSave={saveDocumentEdits}
@@ -3785,25 +4572,181 @@ export default function Home() {
   );
 }
 
+function PracticeModal({
+  language,
+  onClose,
+  onSave,
+}: {
+  language: Language;
+  onClose: () => void;
+  onSave: (values: {
+    title: string;
+    practiceType: string;
+    description: string;
+    status: PracticeStatus;
+    openedAt: string;
+  }) => void | Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const [practiceType, setPracticeType] = useState("Altro");
+  const [description, setDescription] = useState("");
+  const [status, setStatus] = useState<PracticeStatus>("In corso");
+  const [openedAt, setOpenedAt] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!title.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onSave({ title, practiceType, description, status, openedAt });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="modal upload-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button type="button" className="close" onClick={onClose}>
+          <X />
+        </button>
+        <div className="modal-icon">
+          <FolderKanban />
+        </div>
+        <h2>{language === "it" ? "Nuova pratica" : "New case"}</h2>
+        <p>
+          {language === "it"
+            ? "Crea un contenitore per raggruppare documenti, ricevute, comunicazioni e scadenze."
+            : "Create a space to group documents, receipts, communications and deadlines."}
+        </p>
+        <form onSubmit={submit}>
+          <label className="field">
+            {language === "it" ? "Nome pratica" : "Case name"}
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              style={{
+                border: "1px solid #e7eaf0",
+                borderRadius: 12,
+                padding: 12,
+              }}
+            />
+          </label>
+          <label className="field" style={{ marginTop: 12 }}>
+            {language === "it" ? "Tipo" : "Type"}
+            <select
+              value={practiceType}
+              onChange={(event) => setPracticeType(event.target.value)}
+              style={{
+                border: "1px solid #e7eaf0",
+                borderRadius: 12,
+                padding: 12,
+              }}
+            >
+              {[
+                "Mutuo",
+                "Finanziamento",
+                "Assicurazione",
+                "Ristrutturazione",
+                "Auto",
+                "Casa",
+                "Salute",
+                "Lavoro",
+                "Altro",
+              ].map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field" style={{ marginTop: 12 }}>
+            {language === "it" ? "Descrizione" : "Description"}
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </label>
+          <label className="field" style={{ marginTop: 12 }}>
+            {language === "it" ? "Stato" : "Status"}
+            <select
+              value={status}
+              onChange={(event) =>
+                setStatus(event.target.value as PracticeStatus)
+              }
+              style={{
+                border: "1px solid #e7eaf0",
+                borderRadius: 12,
+                padding: 12,
+              }}
+            >
+              <option>In corso</option>
+              <option>Aperta</option>
+              <option>Chiusa</option>
+            </select>
+          </label>
+          <label className="field" style={{ marginTop: 12 }}>
+            {language === "it" ? "Data apertura" : "Opening date"}
+            <input
+              type="date"
+              value={openedAt}
+              onChange={(event) => setOpenedAt(event.target.value)}
+              style={{
+                border: "1px solid #e7eaf0",
+                borderRadius: 12,
+                padding: 12,
+              }}
+            />
+          </label>
+          <button
+            className="primary full"
+            type="submit"
+            disabled={!title.trim() || saving}
+          >
+            {saving
+              ? language === "it"
+                ? "Creazione…"
+                : "Creating…"
+              : language === "it"
+                ? "Crea pratica"
+                : "Create case"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function DocumentEditModal({
   language,
   document,
+  practices,
   saving,
   onClose,
   onSave,
 }: {
   language: Language;
   document: StoredDocument;
+  practices: Practice[];
   saving: boolean;
   onClose: () => void;
   onSave: (document: StoredDocument) => void | Promise<void>;
 }) {
   const financingTerms = getFinancingTerms(document);
   const [title, setTitle] = useState(document.title);
+  const [practiceId, setPracticeId] = useState(document.practiceId ?? "");
   const [category, setCategory] = useState<DocumentCategory>(document.category);
   const [summary, setSummary] = useState(document.summary);
-  const [keywords, setKeywords] = useState((document.keywords ?? []).join(", "));
-  const [expiryDate, setExpiryDate] = useState(document.expiryDate?.slice(0, 10) ?? "");
+  const [keywords, setKeywords] = useState(
+    (document.keywords ?? []).join(", "),
+  );
+  const [expiryDate, setExpiryDate] = useState(
+    document.expiryDate?.slice(0, 10) ?? "",
+  );
   const [appointmentTime, setAppointmentTime] = useState(
     document.appointmentTime?.slice(0, 5) ?? "",
   );
@@ -3916,6 +4859,7 @@ function DocumentEditModal({
       const updatedDocument: StoredDocument = {
         ...document,
         title: title.trim(),
+        practiceId: practiceId || null,
         category,
         summary: summary.trim(),
         keywords: keywords
@@ -4021,6 +4965,25 @@ function DocumentEditModal({
                 onChange={(event) => setTitle(event.target.value)}
                 disabled={saving}
               />
+            </label>
+
+            <label style={labelStyle}>
+              {language === "it" ? "Pratica" : "Case"}
+              <select
+                style={inputStyle}
+                value={practiceId}
+                onChange={(event) => setPracticeId(event.target.value)}
+                disabled={saving}
+              >
+                <option value="">
+                  {language === "it" ? "Nessuna pratica" : "No case"}
+                </option>
+                {practices.map((practice) => (
+                  <option key={practice.id} value={practice.id}>
+                    {practice.title}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label style={labelStyle}>
@@ -4160,7 +5123,9 @@ function DocumentEditModal({
               </label>
 
               <label style={labelStyle}>
-                {language === "it" ? "Importo rata (€)" : "Installment amount (€)"}
+                {language === "it"
+                  ? "Importo rata (€)"
+                  : "Installment amount (€)"}
                 <input
                   inputMode="decimal"
                   style={inputStyle}
@@ -4269,10 +5234,7 @@ function AttachmentModal({
   onClose: () => void;
   onSaved: (
     document: StoredDocument,
-    attachment: Omit<
-      DocumentAttachment,
-      "id" | "uploadedAt" | "storagePath"
-    >,
+    attachment: Omit<DocumentAttachment, "id" | "uploadedAt" | "storagePath">,
     file: File,
     analysisMeta?: {
       documentTotalAmount?: number | null;
@@ -4402,7 +5364,10 @@ function AttachmentModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal upload-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="modal upload-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <button type="button" className="close" onClick={onClose}>
           <X />
         </button>
@@ -4528,10 +5493,7 @@ function UploadModal({
   onSaved: (doc: StoredDocument, file: File) => void | Promise<void>;
   onLinkedAttachment: (
     document: StoredDocument,
-    attachment: Omit<
-      DocumentAttachment,
-      "id" | "uploadedAt" | "storagePath"
-    >,
+    attachment: Omit<DocumentAttachment, "id" | "uploadedAt" | "storagePath">,
     file: File,
     analysisMeta?: {
       documentTotalAmount?: number | null;
@@ -4575,7 +5537,9 @@ function UploadModal({
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<SmartAnalysis | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
-  const [matchedDocuments, setMatchedDocuments] = useState<StoredDocument[]>([]);
+  const [matchedDocuments, setMatchedDocuments] = useState<StoredDocument[]>(
+    [],
+  );
   const t = translations[language];
 
   function serializeCandidateDocuments(items: StoredDocument[]) {
@@ -4610,10 +5574,24 @@ function UploadModal({
     items: StoredDocument[],
   ) {
     const genericTokens = new Set([
-      "allegato", "allegati", "banca", "bonifico", "documento",
-      "eseguito", "fattura", "fatture", "importo", "pagamento",
-      "pagato", "ricevuta", "riferimento", "totale", "test",
-      "fittizio", "creato", "codice",
+      "allegato",
+      "allegati",
+      "banca",
+      "bonifico",
+      "documento",
+      "eseguito",
+      "fattura",
+      "fatture",
+      "importo",
+      "pagamento",
+      "pagato",
+      "ricevuta",
+      "riferimento",
+      "totale",
+      "test",
+      "fittizio",
+      "creato",
+      "codice",
     ]);
     const sourceTokens = normalizeSearchText(
       `${extracted.title} ${extracted.summary} ${extracted.notes} ${extracted.keywords.join(" ")}`,
@@ -4660,9 +5638,7 @@ function UploadModal({
     mode: "document" | "attachment" = "document",
   ) {
     if (!file) {
-      throw new Error(
-        language === "it" ? "File mancante." : "Missing file.",
-      );
+      throw new Error(language === "it" ? "File mancante." : "Missing file.");
     }
 
     const formData = new FormData();
@@ -4670,10 +5646,7 @@ function UploadModal({
     formData.append("userNote", note);
     formData.append("language", language);
     formData.append("mode", mode);
-    formData.append(
-      "candidateDocuments",
-      JSON.stringify(candidateDocuments),
-    );
+    formData.append("candidateDocuments", JSON.stringify(candidateDocuments));
 
     const response = await fetch("/api/analyze", {
       method: "POST",
@@ -4762,18 +5735,17 @@ function UploadModal({
               `${attachment.title || ""} ${attachment.notes || ""}`,
             );
             const storedRateNumber = findRateNumber(storedIdentityText);
-            const storedOperationNumber = findOperationNumber(
-              storedIdentityText,
-            );
+            const storedOperationNumber =
+              findOperationNumber(storedIdentityText);
             const explicitlyDifferentRate = Boolean(
               extractedRateNumber &&
-                storedRateNumber &&
-                extractedRateNumber !== storedRateNumber,
+              storedRateNumber &&
+              extractedRateNumber !== storedRateNumber,
             );
             const explicitlyDifferentOperation = Boolean(
               extractedOperationNumber &&
-                storedOperationNumber &&
-                extractedOperationNumber !== storedOperationNumber,
+              storedOperationNumber &&
+              extractedOperationNumber !== storedOperationNumber,
             );
 
             if (sameFileName) return true;
@@ -5042,7 +6014,10 @@ function UploadModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal upload-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="modal upload-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <button
           type="button"
           className="close"
@@ -5141,4 +6116,3 @@ function UploadModal({
     </div>
   );
 }
-
