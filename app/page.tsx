@@ -1281,12 +1281,13 @@ export default function Home() {
     setDeletingAccount(true);
 
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: userEmail,
-        password: deletePassword,
-      });
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: userEmail,
+          password: deletePassword,
+        });
 
-      if (authError) {
+      if (authError || !authData.session?.access_token) {
         alert(
           language === "it" ? "Password non corretta." : "Incorrect password.",
         );
@@ -1295,7 +1296,10 @@ export default function Home() {
 
       const response = await fetch("/api/delete-account", {
         method: "POST",
-        headers: await getApiAuthHeaders("application/json"),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authData.session.access_token}`,
+        },
       });
       const data = await response.json().catch(() => ({}));
 
