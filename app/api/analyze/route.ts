@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (file.size > 4 * 1024 * 1024) {
+    if (file.size > 20 * 1024 * 1024) {
       return NextResponse.json(
         {
           error:

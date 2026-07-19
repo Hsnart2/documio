@@ -25,6 +25,7 @@ import {
   Stethoscope,
   Upload,
   CheckCheck,
+  Download,
   Mail,
   X,
 } from "lucide-react";
@@ -777,7 +778,7 @@ function getDocumentSearchScore(
       .join(" "),
   );
   const completeText = normalizeSearchText(
-    `${document.title} ${document.fileName} ${document.summary} ${document.keywords.join(" ")} ${document.category} ${translatedCategory} ${attachmentText}`,
+    `${document.title} ${getDisplayFileName(document.fileName)} ${document.summary} ${document.keywords.join(" ")} ${document.category} ${translatedCategory} ${attachmentText}`,
   );
 
   let score = 0;
@@ -795,6 +796,14 @@ function getDocumentSearchScore(
   if (completeText.includes(normalizedQuery)) score += 5;
 
   return score;
+}
+
+
+function getDisplayFileName(fileName: string) {
+  return fileName.replace(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-/i,
+    "",
+  );
 }
 
 async function getApiAuthHeaders(contentType?: string) {
@@ -819,19 +828,80 @@ async function compressImageForUpload(file: File): Promise<File> {
   canvas.width = Math.max(1, Math.round(bitmap.width * scale));
   canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   const context = canvas.getContext("2d");
-  if (!context) return file;
+
+  if (!context) {
+    bitmap.close();
+    return file;
+  }
+
   context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
 
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, "image/jpeg", 0.78),
   );
+
   if (!blob || blob.size >= file.size) return file;
+
   const baseName = file.name.replace(/\.[^.]+$/, "");
   return new File([blob], `${baseName}.jpg`, {
     type: "image/jpeg",
     lastModified: Date.now(),
   });
+}
+
+async function compressPdfForUpload(file: File): Promise<File> {
+  const isPdf =
+    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
+  if (!isPdf || file.size < 2 * 1024 * 1024) return file;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const response = await fetch("/api/compress-file", {
+      method: "POST",
+      body: formData,
+    });
+
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (!response.ok || contentType.includes("application/json")) {
+      const errorData = contentType.includes("application/json")
+        ? await response.json().catch(() => null)
+        : null;
+
+      console.warn(
+        "Compressione PDF saltata:",
+        errorData?.error ?? response.statusText,
+      );
+      return file;
+    }
+
+    const blob = await response.blob();
+
+    if (!blob.size || blob.size >= file.size) return file;
+
+    return new File([blob], file.name, {
+      type: "application/pdf",
+      lastModified: Date.now(),
+    });
+  } catch (error) {
+    console.warn("Compressione PDF non disponibile, uso l’originale:", error);
+    return file;
+  }
+}
+
+async function prepareFileForUpload(file: File): Promise<File> {
+  const isPdf =
+    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
+  if (isPdf) {
+    return compressPdfForUpload(file);
+  }
+
+  return compressImageForUpload(file);
 }
 
 function rankDocumentsForQuestion(
@@ -916,6 +986,8 @@ export default function Home() {
   const [practices, setPractices] = useState<Practice[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>("documents");
   const [showPracticeModal, setShowPracticeModal] = useState(false);
+  const [selectedPractice, setSelectedPractice] = useState<Practice | null>(null);
+  const [sendingPracticeEmail, setSendingPracticeEmail] = useState(false);
   const [editingDocument, setEditingDocument] = useState<StoredDocument | null>(
     null,
   );
@@ -2738,6 +2810,153 @@ export default function Home() {
     );
   }
 
+  async function downloadPractice(practice: Practice) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const linkedDocuments = documents.filter(
+      (document) => document.practiceId === practice.id,
+    );
+    const files = linkedDocuments.flatMap((document) => [
+      ...(document.storagePath
+        ? [{ storagePath: document.storagePath, fileName: document.fileName }]
+        : []),
+      ...(attachments[document.id] ?? []).map((attachment) => ({
+        storagePath: attachment.storagePath,
+        fileName: attachment.fileName,
+      })),
+    ]);
+
+    if (!files.length) {
+      alert(
+        language === "it"
+          ? "Questa pratica non contiene ancora file da scaricare."
+          : "This case does not contain any files yet.",
+      );
+      return;
+    }
+
+    for (const [index, file] of files.entries()) {
+      const { data, error } = await supabase.storage
+        .from("documents")
+        .createSignedUrl(file.storagePath, 120, {
+          download: getDisplayFileName(file.fileName),
+        });
+
+      if (error || !data?.signedUrl) {
+        console.error("Practice download:", error?.message);
+        continue;
+      }
+
+      const anchor = window.document.createElement("a");
+      anchor.href = data.signedUrl;
+      anchor.download = getDisplayFileName(file.fileName);
+      anchor.rel = "noopener";
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+
+      if (index < files.length - 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+      }
+    }
+  }
+
+
+  async function sendPracticeEmail(practice: Practice) {
+    if (sendingPracticeEmail) return;
+
+    const linkedDocuments = documents.filter(
+      (document) => document.practiceId === practice.id,
+    );
+
+    if (!linkedDocuments.length) {
+      alert(
+        language === "it"
+          ? "Questa pratica non contiene documenti da inviare."
+          : "This case does not contain documents to send.",
+      );
+      return;
+    }
+
+    const recipient = window.prompt(
+      language === "it"
+        ? "A quale indirizzo email vuoi inviare la pratica?"
+        : "Which email address should receive the case?",
+      "",
+    );
+    if (recipient === null) return;
+
+    const cleanRecipient = recipient.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanRecipient)) {
+      alert(language === "it" ? "Indirizzo email non valido." : "Invalid email address.");
+      return;
+    }
+
+    const defaultSubject =
+      language === "it"
+        ? `Pratica DocuMio: ${practice.title}`
+        : `DocuMio case: ${practice.title}`;
+    const subject = window.prompt(
+      language === "it" ? "Oggetto dell'email" : "Email subject",
+      defaultSubject,
+    );
+    if (subject === null) return;
+
+    const message = window.prompt(
+      language === "it"
+        ? "Messaggio da inserire nell'email"
+        : "Message to include in the email",
+      language === "it"
+        ? `In allegato trovi la pratica “${practice.title}” completa dei documenti disponibili.`
+        : `Attached is the “${practice.title}” case with all available documents.`,
+    );
+    if (message === null) return;
+
+    setSendingPracticeEmail(true);
+
+    try {
+      const response = await fetch("/api/send-practice", {
+        method: "POST",
+        headers: await getApiAuthHeaders("application/json"),
+        body: JSON.stringify({
+          practiceId: practice.id,
+          to: cleanRecipient,
+          subject: subject.trim() || defaultSubject,
+          message: message.trim(),
+          language,
+        }),
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            (language === "it"
+              ? "Invio della pratica non riuscito."
+              : "Case delivery failed."),
+        );
+      }
+
+      alert(
+        language === "it"
+          ? `Pratica inviata a ${cleanRecipient}.`
+          : `Case sent to ${cleanRecipient}.`,
+      );
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : language === "it"
+            ? "Invio della pratica non riuscito."
+            : "Case delivery failed.",
+      );
+    } finally {
+      setSendingPracticeEmail(false);
+    }
+  }
+
   async function deletePractice(practice: Practice) {
     const linkedCount = documents.filter(
       (document) => document.practiceId === practice.id,
@@ -3750,6 +3969,12 @@ export default function Home() {
                   <div className="doc-card-actions">
                     <button
                       type="button"
+                      onClick={() => setSelectedPractice(practice)}
+                    >
+                      {language === "it" ? "Apri" : "Open"}
+                    </button>
+                    <button
+                      type="button"
                       className="delete-button"
                       onClick={() => void deletePractice(practice)}
                     >
@@ -4534,6 +4759,30 @@ export default function Home() {
         }
       `}</style>
 
+      {selectedPractice && (
+        <PracticeDetailsModal
+          language={language}
+          practice={selectedPractice}
+          documents={documents.filter(
+            (document) => document.practiceId === selectedPractice.id,
+          )}
+          attachments={attachments}
+          onClose={() => setSelectedPractice(null)}
+          onOpenDocument={openDocument}
+          onOpenAttachment={openAttachment}
+          onAddAttachment={(document) => {
+            setSelectedPractice(null);
+            setAttachmentDocument(document);
+          }}
+          onRemoveDocument={async (documentId) => {
+            await assignDocumentToPractice(documentId, null);
+          }}
+          onDownloadAll={() => downloadPractice(selectedPractice)}
+          onSendEmail={() => sendPracticeEmail(selectedPractice)}
+          sendingEmail={sendingPracticeEmail}
+        />
+      )}
+
       {showPracticeModal && (
         <PracticeModal
           language={language}
@@ -4573,6 +4822,269 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+
+function PracticeDetailsModal({
+  language,
+  practice,
+  documents,
+  attachments,
+  onClose,
+  onOpenDocument,
+  onOpenAttachment,
+  onAddAttachment,
+  onRemoveDocument,
+  onDownloadAll,
+  onSendEmail,
+  sendingEmail,
+}: {
+  language: Language;
+  practice: Practice;
+  documents: StoredDocument[];
+  attachments: Record<string, DocumentAttachment[]>;
+  onClose: () => void;
+  onOpenDocument: (document: StoredDocument, download?: boolean) => void | Promise<void>;
+  onOpenAttachment: (attachment: DocumentAttachment, download?: boolean) => void | Promise<void>;
+  onAddAttachment: (document: StoredDocument) => void;
+  onRemoveDocument: (documentId: string) => void | Promise<void>;
+  onDownloadAll: () => void | Promise<void>;
+  onSendEmail: () => void | Promise<void>;
+  sendingEmail: boolean;
+}) {
+  const totalAttachments = documents.reduce(
+    (total, document) => total + (attachments[document.id] ?? []).length,
+    0,
+  );
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        className="modal practice-details-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{
+          width: "min(900px, calc(100vw - 24px))",
+          maxHeight: "90dvh",
+          overflowY: "auto",
+          overflowX: "hidden",
+          padding: 22,
+        }}
+      >
+        <button type="button" className="close" onClick={onClose}>
+          <X />
+        </button>
+
+        <header style={{ paddingRight: 46, marginBottom: 18 }}>
+          <div className="modal-icon">
+            <FolderKanban />
+          </div>
+          <span className="badge">{practice.practiceType}</span>
+          <h2 style={{ margin: "10px 0 6px" }}>{practice.title}</h2>
+          <p style={{ margin: 0, color: "#64748b" }}>
+            {practice.description ||
+              (language === "it" ? "Nessuna descrizione." : "No description.")}
+          </p>
+        </header>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+            gap: 10,
+            marginBottom: 18,
+          }}
+        >
+          {[
+            [documents.length, language === "it" ? "Documenti" : "Documents"],
+            [totalAttachments, language === "it" ? "Allegati" : "Attachments"],
+            [practice.status, language === "it" ? "Stato" : "Status"],
+          ].map(([value, label]) => (
+            <div
+              key={String(label)}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 3,
+                padding: 12,
+                border: "1px solid #e5e7eb",
+                borderRadius: 14,
+                background: "#f8fafc",
+              }}
+            >
+              <strong style={{ fontSize: 18, overflowWrap: "anywhere" }}>
+                {value}
+              </strong>
+              <span style={{ color: "#64748b", fontSize: 13 }}>{label}</span>
+            </div>
+          ))}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            marginBottom: 20,
+          }}
+        >
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void onDownloadAll()}
+            disabled={!documents.length}
+          >
+            <Download size={18} />
+            {language === "it" ? "Scarica tutti i file" : "Download all files"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onSendEmail()}
+            disabled={!documents.length || sendingEmail}
+          >
+            <Mail size={18} />
+            {sendingEmail
+              ? language === "it"
+                ? "Invio in corso…"
+                : "Sending…"
+              : language === "it"
+                ? "Invia via email"
+                : "Send by email"}
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 14 }}>
+          {documents.map((document) => {
+            const documentAttachments = attachments[document.id] ?? [];
+
+            return (
+              <article
+                key={document.id}
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 18,
+                  padding: 16,
+                  background: "#fff",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: 12,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+                    <span className="badge">{document.category}</span>
+                    <h3 style={{ margin: "8px 0 4px" }}>{document.title}</h3>
+                    <p style={{ margin: 0, color: "#64748b", overflowWrap: "anywhere" }}>
+                      {getDisplayFileName(document.fileName)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="delete-button"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          language === "it"
+                            ? `Rimuovere “${document.title}” da questa pratica? Il documento resterà nell'archivio.`
+                            : `Remove “${document.title}” from this case? The document will remain in the archive.`,
+                        )
+                      ) {
+                        void onRemoveDocument(document.id);
+                      }
+                    }}
+                  >
+                    {language === "it" ? "Rimuovi" : "Remove"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+                  <button type="button" onClick={() => void onOpenDocument(document)}>
+                    <FileText size={17} />
+                    {language === "it" ? "Apri" : "Open"}
+                  </button>
+                  <button type="button" onClick={() => void onOpenDocument(document, true)}>
+                    <Download size={17} />
+                    {language === "it" ? "Scarica" : "Download"}
+                  </button>
+                  <button type="button" onClick={() => onAddAttachment(document)}>
+                    <Plus size={17} />
+                    {language === "it" ? "Aggiungi allegato" : "Add attachment"}
+                  </button>
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <strong>
+                    {language === "it" ? "Allegati" : "Attachments"} ({documentAttachments.length})
+                  </strong>
+
+                  {documentAttachments.length ? (
+                    <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                      {documentAttachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 10,
+                            padding: 10,
+                            borderRadius: 12,
+                            background: "#f8fafc",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: "1 1 220px" }}>
+                            <strong style={{ display: "block", overflowWrap: "anywhere" }}>
+                              {attachment.title}
+                            </strong>
+                            <span style={{ color: "#64748b", fontSize: 13, overflowWrap: "anywhere" }}>
+                              {getDisplayFileName(attachment.fileName)}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                            <button type="button" onClick={() => void onOpenAttachment(attachment)}>
+                              <FileText size={16} />
+                            </button>
+                            <button type="button" onClick={() => void onOpenAttachment(attachment, true)}>
+                              <Download size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ color: "#64748b", marginBottom: 0 }}>
+                      {language === "it"
+                        ? "Nessun allegato collegato."
+                        : "No linked attachments."}
+                    </p>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+
+          {!documents.length && (
+            <div className="empty" style={{ minHeight: 220 }}>
+              <FolderKanban size={42} />
+              <h3>
+                {language === "it" ? "Pratica ancora vuota" : "This case is still empty"}
+              </h3>
+              <p>
+                {language === "it"
+                  ? "Apri un documento dall'archivio e assegnalo a questa pratica."
+                  : "Open a document from the archive and assign it to this case."}
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -5391,7 +5903,7 @@ function AttachmentModal({
               }
               let preparedFile = selectedFile;
               try {
-                preparedFile = await compressImageForUpload(selectedFile);
+                preparedFile = await prepareFileForUpload(selectedFile);
               } catch {
                 preparedFile = selectedFile;
               }
@@ -5614,7 +6126,7 @@ function UploadModal({
       if (document.paymentStatus === "Pagato") return false;
 
       const documentText = normalizeSearchText(
-        `${document.title} ${document.fileName} ${document.summary} ${document.keywords.join(" ")}`,
+        `${document.title} ${getDisplayFileName(document.fileName)} ${document.summary} ${document.keywords.join(" ")}`,
       );
       const matchingTokens = sourceTokens.filter((token) =>
         documentText.includes(token),
@@ -6051,7 +6563,7 @@ function UploadModal({
                 return;
               }
               try {
-                setFile(await compressImageForUpload(selected));
+                setFile(await prepareFileForUpload(selected));
               } catch {
                 setFile(selected);
               }
