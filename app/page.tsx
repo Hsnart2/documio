@@ -835,6 +835,9 @@ export default function Home() {
   const [userId, setUserId] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
+  const [editingDocument, setEditingDocument] =
+    useState<StoredDocument | null>(null);
+  const [savingDocumentEdit, setSavingDocumentEdit] = useState(false);
   const [query, setQuery] = useState("");
   const [aiResultIds, setAiResultIds] = useState<string[] | null>(null);
   const [aiSearching, setAiSearching] = useState(false);
@@ -1854,6 +1857,77 @@ export default function Home() {
     );
   }
 
+  async function saveDocumentEdits(updatedDocument: StoredDocument) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    setSavingDocumentEdit(true);
+
+    try {
+      const {
+        data: { user: currentUser },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !currentUser) {
+        alert(t.invalidSession);
+        return;
+      }
+
+      const { data: updatedRows, error } = await supabase
+        .from("documents")
+        .update({
+          title: updatedDocument.title.trim(),
+          category: updatedDocument.category,
+          summary: updatedDocument.summary.trim(),
+          keywords: (updatedDocument.keywords ?? [])
+            .map((keyword) => keyword.trim())
+            .filter(Boolean),
+          expiry_date: updatedDocument.expiryDate || null,
+          appointment_time: updatedDocument.appointmentTime || null,
+          total_amount: updatedDocument.totalAmount ?? null,
+          installment_count: updatedDocument.installmentCount ?? null,
+          installment_amount: updatedDocument.installmentAmount ?? null,
+          financing_total_amount:
+            updatedDocument.financingTotalAmount ?? null,
+          first_installment_date:
+            updatedDocument.firstInstallmentDate || null,
+          is_financing: Boolean(updatedDocument.isFinancing),
+        })
+        .eq("id", updatedDocument.id)
+        .eq("user_id", currentUser.id)
+        .select("id");
+
+      if (error) {
+        alert(error.message);
+        return;
+      }
+
+      if (!updatedRows || updatedRows.length === 0) {
+        alert(
+          language === "it"
+            ? "Il documento non è stato aggiornato."
+            : "The document was not updated.",
+        );
+        return;
+      }
+
+      setDocuments((current) =>
+        current.map((document) =>
+          document.id === updatedDocument.id ? updatedDocument : document,
+        ),
+      );
+      setEditingDocument(null);
+      alert(
+        language === "it"
+          ? "Documento aggiornato correttamente."
+          : "Document updated successfully.",
+      );
+    } finally {
+      setSavingDocumentEdit(false);
+    }
+  }
+
   async function deleteDocument(id: string) {
     const confirmed = window.confirm(t.deleteConfirm);
     if (!confirmed) return;
@@ -2791,6 +2865,14 @@ export default function Home() {
                 <div className="doc-card-actions">
                   <button
                     type="button"
+                    className="edit-button"
+                    onClick={() => setEditingDocument(doc)}
+                    aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
+                  >
+                    {language === "it" ? "Modifica" : "Edit"}
+                  </button>
+                  <button
+                    type="button"
                     className="delete-button"
                     onClick={() => deleteDocument(doc.id)}
                     aria-label={`${t.delete} ${doc.title}`}
@@ -3670,6 +3752,16 @@ export default function Home() {
         }
       `}</style>
 
+      {editingDocument && (
+        <DocumentEditModal
+          language={language}
+          document={editingDocument}
+          saving={savingDocumentEdit}
+          onClose={() => !savingDocumentEdit && setEditingDocument(null)}
+          onSave={saveDocumentEdits}
+        />
+      )}
+
       {attachmentDocument && (
         <AttachmentModal
           language={language}
@@ -3690,6 +3782,478 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+function DocumentEditModal({
+  language,
+  document,
+  saving,
+  onClose,
+  onSave,
+}: {
+  language: Language;
+  document: StoredDocument;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (document: StoredDocument) => void | Promise<void>;
+}) {
+  const financingTerms = getFinancingTerms(document);
+  const [title, setTitle] = useState(document.title);
+  const [category, setCategory] = useState<DocumentCategory>(document.category);
+  const [summary, setSummary] = useState(document.summary);
+  const [keywords, setKeywords] = useState((document.keywords ?? []).join(", "));
+  const [expiryDate, setExpiryDate] = useState(document.expiryDate?.slice(0, 10) ?? "");
+  const [appointmentTime, setAppointmentTime] = useState(
+    document.appointmentTime?.slice(0, 5) ?? "",
+  );
+  const [totalAmount, setTotalAmount] = useState(
+    document.totalAmount != null ? String(document.totalAmount) : "",
+  );
+  const [isFinancing, setIsFinancing] = useState(financingTerms.isFinancing);
+  const [installmentCount, setInstallmentCount] = useState(
+    financingTerms.installmentCount != null
+      ? String(financingTerms.installmentCount)
+      : "",
+  );
+  const [installmentAmount, setInstallmentAmount] = useState(
+    financingTerms.installmentAmount != null
+      ? String(financingTerms.installmentAmount)
+      : "",
+  );
+  const [financingTotalAmount, setFinancingTotalAmount] = useState(
+    financingTerms.financingTotalAmount != null
+      ? String(financingTerms.financingTotalAmount)
+      : "",
+  );
+  const [firstInstallmentDate, setFirstInstallmentDate] = useState(
+    document.firstInstallmentDate?.slice(0, 10) ?? "",
+  );
+  const [formError, setFormError] = useState("");
+
+  const categoryOptions: DocumentCategory[] = [
+    ...categories.map((item) => item.name),
+    "Altro",
+  ];
+  const inputStyle = {
+    width: "100%",
+    minWidth: 0,
+    border: "1px solid #d7dce7",
+    borderRadius: 12,
+    padding: "11px 12px",
+    background: "#fff",
+    color: "#172033",
+  };
+  const labelStyle = {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 7,
+    fontWeight: 700,
+    color: "#172033",
+  };
+
+  function parseOptionalAmount(value: string, label: string) {
+    const compact = value.trim().replace(/\s/g, "").replace(/€/g, "");
+    if (!compact) return null;
+
+    const normalized = compact.includes(",")
+      ? compact.replace(/\./g, "").replace(",", ".")
+      : compact;
+    const parsed = Number(normalized);
+
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(
+        language === "it"
+          ? label + ": inserisci un importo valido."
+          : label + ": enter a valid amount.",
+      );
+    }
+
+    return Math.round(parsed * 100) / 100;
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+
+    if (!title.trim()) {
+      setFormError(
+        language === "it" ? "Il titolo è obbligatorio." : "Title is required.",
+      );
+      return;
+    }
+
+    if (
+      appointmentTime &&
+      !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(appointmentTime)
+    ) {
+      setFormError(
+        language === "it"
+          ? "Inserisci un orario valido, per esempio 15:30."
+          : "Enter a valid time, for example 15:30.",
+      );
+      return;
+    }
+
+    try {
+      const parsedInstallmentCount = installmentCount.trim()
+        ? Number(installmentCount)
+        : null;
+
+      if (
+        isFinancing &&
+        (parsedInstallmentCount == null ||
+          !Number.isInteger(parsedInstallmentCount) ||
+          parsedInstallmentCount <= 0)
+      ) {
+        throw new Error(
+          language === "it"
+            ? "Inserisci un numero di rate valido."
+            : "Enter a valid installment count.",
+        );
+      }
+
+      const updatedDocument: StoredDocument = {
+        ...document,
+        title: title.trim(),
+        category,
+        summary: summary.trim(),
+        keywords: keywords
+          .split(",")
+          .map((keyword) => keyword.trim())
+          .filter(Boolean),
+        expiryDate: expiryDate || null,
+        appointmentTime: appointmentTime || null,
+        totalAmount: parseOptionalAmount(
+          totalAmount,
+          language === "it" ? "Importo totale" : "Total amount",
+        ),
+        isFinancing,
+        installmentCount: isFinancing ? parsedInstallmentCount : null,
+        installmentAmount: isFinancing
+          ? parseOptionalAmount(
+              installmentAmount,
+              language === "it" ? "Importo rata" : "Installment amount",
+            )
+          : null,
+        financingTotalAmount: isFinancing
+          ? parseOptionalAmount(
+              financingTotalAmount,
+              language === "it" ? "Totale piano" : "Plan total",
+            )
+          : null,
+        firstInstallmentDate:
+          isFinancing && firstInstallmentDate ? firstInstallmentDate : null,
+      };
+
+      await onSave(updatedDocument);
+    } catch (error) {
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : language === "it"
+            ? "Controlla i dati inseriti."
+            : "Check the entered data.",
+      );
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        className="document-edit-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{
+          width: "min(760px, calc(100vw - 24px))",
+          maxHeight: "90dvh",
+          overflowY: "auto",
+          overflowX: "hidden",
+          background: "#ffffff",
+          borderRadius: 22,
+          padding: 22,
+          boxShadow: "0 30px 80px rgba(0,0,0,.25)",
+        }}
+      >
+        <header
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 16,
+            marginBottom: 18,
+          }}
+        >
+          <div>
+            <h2 style={{ margin: 0 }}>
+              {language === "it" ? "Modifica documento" : "Edit document"}
+            </h2>
+            <p style={{ margin: "6px 0 0", color: "#697386" }}>
+              {language === "it"
+                ? "Correggi i dati estratti dall’IA. Il file originale non verrà modificato."
+                : "Correct the AI-extracted data. The original file will not be changed."}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="close"
+            onClick={onClose}
+            disabled={saving}
+            aria-label={language === "it" ? "Chiudi" : "Close"}
+            style={{ position: "static", flex: "0 0 auto" }}
+          >
+            <X />
+          </button>
+        </header>
+
+        <form onSubmit={submit}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+              gap: 14,
+            }}
+          >
+            <label style={labelStyle}>
+              {language === "it" ? "Titolo" : "Title"}
+              <input
+                style={inputStyle}
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                disabled={saving}
+              />
+            </label>
+
+            <label style={labelStyle}>
+              {language === "it" ? "Categoria" : "Category"}
+              <select
+                style={inputStyle}
+                value={category}
+                onChange={(event) =>
+                  setCategory(event.target.value as DocumentCategory)
+                }
+                disabled={saving}
+              >
+                {categoryOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {translations[language].categories[option] ?? option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>
+            {language === "it" ? "Descrizione" : "Description"}
+            <textarea
+              style={{ ...inputStyle, minHeight: 105, resize: "vertical" }}
+              value={summary}
+              onChange={(event) => setSummary(event.target.value)}
+              disabled={saving}
+            />
+          </label>
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>
+            {language === "it"
+              ? "Parole chiave, separate da virgole"
+              : "Keywords, separated by commas"}
+            <input
+              style={inputStyle}
+              value={keywords}
+              onChange={(event) => setKeywords(event.target.value)}
+              disabled={saving}
+            />
+          </label>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 14,
+              marginTop: 14,
+            }}
+          >
+            <label style={labelStyle}>
+              {language === "it"
+                ? "Scadenza o data appuntamento"
+                : "Due date or appointment date"}
+              <input
+                type="date"
+                style={inputStyle}
+                value={expiryDate}
+                onChange={(event) => setExpiryDate(event.target.value)}
+                disabled={saving}
+              />
+            </label>
+
+            <label style={labelStyle}>
+              {language === "it" ? "Ora appuntamento" : "Appointment time"}
+              <input
+                type="time"
+                style={inputStyle}
+                value={appointmentTime}
+                onChange={(event) => setAppointmentTime(event.target.value)}
+                disabled={saving}
+              />
+            </label>
+
+            <label style={labelStyle}>
+              {language === "it" ? "Importo totale (€)" : "Total amount (€)"}
+              <input
+                inputMode="decimal"
+                style={inputStyle}
+                value={totalAmount}
+                onChange={(event) => setTotalAmount(event.target.value)}
+                placeholder="0,00"
+                disabled={saving}
+              />
+            </label>
+          </div>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 18,
+              padding: 12,
+              borderRadius: 12,
+              background: "#eef2ff",
+              color: "#312e81",
+              fontWeight: 800,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={isFinancing}
+              onChange={(event) => setIsFinancing(event.target.checked)}
+              disabled={saving}
+              style={{ width: 20, height: 20 }}
+            />
+            {language === "it"
+              ? "Questo documento è un finanziamento, mutuo o leasing"
+              : "This document is a loan, mortgage or lease"}
+          </label>
+
+          {isFinancing && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 14,
+                marginTop: 14,
+                padding: 14,
+                border: "1px solid #dbe2ff",
+                borderRadius: 14,
+              }}
+            >
+              <label style={labelStyle}>
+                {language === "it" ? "Numero rate" : "Installments"}
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  style={inputStyle}
+                  value={installmentCount}
+                  onChange={(event) => setInstallmentCount(event.target.value)}
+                  disabled={saving}
+                />
+              </label>
+
+              <label style={labelStyle}>
+                {language === "it" ? "Importo rata (€)" : "Installment amount (€)"}
+                <input
+                  inputMode="decimal"
+                  style={inputStyle}
+                  value={installmentAmount}
+                  onChange={(event) => setInstallmentAmount(event.target.value)}
+                  placeholder="0,00"
+                  disabled={saving}
+                />
+              </label>
+
+              <label style={labelStyle}>
+                {language === "it" ? "Totale piano (€)" : "Plan total (€)"}
+                <input
+                  inputMode="decimal"
+                  style={inputStyle}
+                  value={financingTotalAmount}
+                  onChange={(event) =>
+                    setFinancingTotalAmount(event.target.value)
+                  }
+                  placeholder="0,00"
+                  disabled={saving}
+                />
+              </label>
+
+              <label style={labelStyle}>
+                {language === "it"
+                  ? "Data prima rata"
+                  : "First installment date"}
+                <input
+                  type="date"
+                  style={inputStyle}
+                  value={firstInstallmentDate}
+                  onChange={(event) =>
+                    setFirstInstallmentDate(event.target.value)
+                  }
+                  disabled={saving}
+                />
+              </label>
+            </div>
+          )}
+
+          {formError && (
+            <p
+              role="alert"
+              style={{
+                margin: "14px 0 0",
+                padding: 10,
+                borderRadius: 10,
+                background: "#fff1f2",
+                color: "#be123c",
+                fontWeight: 700,
+              }}
+            >
+              {formError}
+            </p>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+              flexWrap: "wrap",
+              marginTop: 20,
+            }}
+          >
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              style={{
+                border: 0,
+                borderRadius: 12,
+                padding: "12px 17px",
+                fontWeight: 800,
+                cursor: saving ? "not-allowed" : "pointer",
+              }}
+            >
+              {language === "it" ? "Annulla" : "Cancel"}
+            </button>
+            <button type="submit" className="primary" disabled={saving}>
+              {saving
+                ? language === "it"
+                  ? "Salvataggio…"
+                  : "Saving…"
+                : language === "it"
+                  ? "Salva modifiche"
+                  : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -4576,3 +5140,4 @@ function UploadModal({
     </div>
   );
 }
+
