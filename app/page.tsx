@@ -4005,7 +4005,7 @@ function DocumentEditModal({
           </button>
         </header>
 
-        <form onSubmit={submit}>
+        <form className="document-edit-form" onSubmit={submit}>
           <div
             style={{
               display: "grid",
@@ -4219,6 +4219,7 @@ function DocumentEditModal({
           )}
 
           <div
+            className="document-edit-actions"
             style={{
               display: "flex",
               justifyContent: "flex-end",

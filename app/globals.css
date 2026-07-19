@@ -327,3 +327,97 @@
   }
 }
 
+
+
+/* Document edit modal: mobile-safe scrolling and action buttons */
+.document-edit-modal{
+  width:min(760px, calc(100vw - 24px)) !important;
+  max-width:100%;
+  max-height:calc(100dvh - 24px) !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  padding-bottom:0 !important;
+}
+
+.document-edit-form{
+  min-width:0;
+}
+
+.document-edit-form input,
+.document-edit-form select,
+.document-edit-form textarea,
+.document-edit-form label,
+.document-edit-form > div{
+  min-width:0;
+  max-width:100%;
+}
+
+.document-edit-actions{
+  position:sticky;
+  bottom:0;
+  z-index:5;
+  width:auto;
+  margin:20px -22px 0 !important;
+  padding:14px 22px calc(14px + env(safe-area-inset-bottom));
+  background:#fff;
+  border-top:1px solid var(--line);
+  box-shadow:0 -10px 24px rgba(23,32,51,.08);
+}
+
+.document-edit-actions button{
+  min-width:0;
+  max-width:100%;
+  white-space:normal;
+  text-align:center;
+  justify-content:center;
+}
+
+@media(max-width:720px){
+  .document-edit-modal{
+    width:100% !important;
+    max-height:calc(100dvh - 20px) !important;
+    padding:18px 14px 0 !important;
+    border-radius:20px !important;
+  }
+
+  .document-edit-modal > header{
+    gap:10px !important;
+    margin-bottom:14px !important;
+  }
+
+  .document-edit-modal > header h2{
+    font-size:24px !important;
+    line-height:1.15;
+  }
+
+  .document-edit-modal > header p{
+    font-size:14px;
+    line-height:1.4;
+  }
+
+  .document-edit-form > div[style*="grid-template-columns"]{
+    grid-template-columns:minmax(0,1fr) !important;
+  }
+
+  .document-edit-actions{
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    gap:8px !important;
+    margin:18px -14px 0 !important;
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .document-edit-actions button{
+    width:100% !important;
+    padding:12px 8px !important;
+    font-size:15px !important;
+  }
+}
+
+@media(max-width:390px){
+  .document-edit-actions{
+    grid-template-columns:1fr;
+  }
+}
