@@ -21,10 +21,10 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   );
 }
 
-type SupabaseAdminClient = ReturnType<typeof createClient<any>>;
+type SupabaseClientAny = ReturnType<typeof createClient<any>>;
 
 async function removeStorageFiles(
-  supabaseAdmin: SupabaseAdminClient,
+  supabaseAdmin: SupabaseClientAny,
   paths: string[],
 ) {
   const chunkSize = 100;
@@ -44,13 +44,15 @@ async function removeStorageFiles(
 export async function POST(request: Request) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const publishableKey =
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    if (!supabaseUrl || !serviceRoleKey) {
+    if (!supabaseUrl || !publishableKey || !serviceRoleKey) {
       return NextResponse.json(
         {
           error:
-            "Configurazione server incompleta: controlla NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY su Vercel.",
+            "Configurazione server incompleta. Controlla le tre variabili Supabase su Vercel.",
         },
         { status: 500 },
       );
@@ -60,12 +62,13 @@ export async function POST(request: Request) {
 
     if (!accessToken) {
       return NextResponse.json(
-        { error: "Sessione mancante. Accedi nuovamente." },
+        { error: "Token di accesso mancante. Accedi nuovamente." },
         { status: 401 },
       );
     }
 
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+    // Client pubblico: verifica il token dell'utente con la stessa chiave usata dall'app.
+    const supabaseAuth = createClient(supabaseUrl, publishableKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
@@ -75,14 +78,26 @@ export async function POST(request: Request) {
     const {
       data: { user },
       error: userError,
-    } = await supabaseAdmin.auth.getUser(accessToken);
+    } = await supabaseAuth.auth.getUser(accessToken);
 
     if (userError || !user) {
+      console.error("Delete account auth error:", userError?.message);
       return NextResponse.json(
-        { error: "Sessione non valida o scaduta. Accedi nuovamente." },
+        {
+          error:
+            "Sessione non valida o chiavi Supabase non appartenenti allo stesso progetto.",
+        },
         { status: 401 },
       );
     }
+
+    // Client amministratore: usato solo sul server per eliminare dati e account.
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
 
     const [
       { data: documentRows, error: documentsReadError },
@@ -119,48 +134,22 @@ export async function POST(request: Request) {
       await removeStorageFiles(supabaseAdmin, storagePaths);
     }
 
-    const { error: attachmentsDeleteError } = await supabaseAdmin
-      .from("document_attachments")
-      .delete()
-      .eq("user_id", user.id);
+    const tables = [
+      "document_attachments",
+      "documents",
+      "practices",
+      "notification_preferences",
+    ];
 
-    if (attachmentsDeleteError) {
-      throw new Error(
-        `Errore eliminazione allegati: ${attachmentsDeleteError.message}`,
-      );
-    }
+    for (const table of tables) {
+      const { error } = await supabaseAdmin
+        .from(table)
+        .delete()
+        .eq("user_id", user.id);
 
-    const { error: documentsDeleteError } = await supabaseAdmin
-      .from("documents")
-      .delete()
-      .eq("user_id", user.id);
-
-    if (documentsDeleteError) {
-      throw new Error(
-        `Errore eliminazione documenti: ${documentsDeleteError.message}`,
-      );
-    }
-
-    const { error: practicesDeleteError } = await supabaseAdmin
-      .from("practices")
-      .delete()
-      .eq("user_id", user.id);
-
-    if (practicesDeleteError) {
-      throw new Error(
-        `Errore eliminazione pratiche: ${practicesDeleteError.message}`,
-      );
-    }
-
-    const { error: preferencesDeleteError } = await supabaseAdmin
-      .from("notification_preferences")
-      .delete()
-      .eq("user_id", user.id);
-
-    if (preferencesDeleteError) {
-      throw new Error(
-        `Errore eliminazione preferenze: ${preferencesDeleteError.message}`,
-      );
+      if (error) {
+        throw new Error(`Errore eliminazione ${table}: ${error.message}`);
+      }
     }
 
     const { error: authDeleteError } =
