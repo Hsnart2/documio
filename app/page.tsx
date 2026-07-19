@@ -5895,20 +5895,13 @@ function AttachmentModal({
           <input
             type="file"
             accept="application/pdf,image/*"
-            onChange={async (event) => {
+            onChange={(event) => {
               const selectedFile = event.target.files?.[0] || null;
-              if (!selectedFile) {
-                setFile(null);
-                return;
+              setFile(selectedFile);
+
+              if (selectedFile) {
+                void analyzeSelectedFile(selectedFile);
               }
-              let preparedFile = selectedFile;
-              try {
-                preparedFile = await prepareFileForUpload(selectedFile);
-              } catch {
-                preparedFile = selectedFile;
-              }
-              setFile(preparedFile);
-              void analyzeSelectedFile(preparedFile);
             }}
           />
           <Upload size={28} />
@@ -6152,13 +6145,14 @@ function UploadModal({
   async function requestAnalysis(
     candidateDocuments: ReturnType<typeof serializeCandidateDocuments> = [],
     mode: "document" | "attachment" = "document",
+    fileToAnalyze: File | null = file,
   ) {
-    if (!file) {
+    if (!fileToAnalyze) {
       throw new Error(language === "it" ? "File mancante." : "Missing file.");
     }
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", fileToAnalyze);
     formData.append("userNote", note);
     formData.append("language", language);
     formData.append("mode", mode);
@@ -6183,7 +6177,8 @@ function UploadModal({
 
   async function analyze() {
     if (!file || loading) return;
-    const selectedFileName = file.name;
+    const originalFile = file;
+    const selectedFileName = originalFile.name;
 
     setLoading(true);
     setAnalysis(null);
@@ -6191,20 +6186,33 @@ function UploadModal({
     setSelectedDocumentId("");
 
     try {
-      if (file.size > 4 * 1024 * 1024) {
+      let preparedFile = originalFile;
+
+      try {
+        preparedFile = await prepareFileForUpload(originalFile);
+      } catch (error) {
+        console.warn(
+          "Preparazione file non disponibile, uso l’originale:",
+          error,
+        );
+      }
+
+      setFile(preparedFile);
+
+      if (preparedFile.size > 20 * 1024 * 1024) {
         throw new Error(
           language === "it"
-            ? "Il file supera 4 MB. Scegli un file più piccolo."
-            : "The file is larger than 4 MB. Choose a smaller file.",
+            ? "Il file resta superiore a 20 MB anche dopo la compressione. Scegli un PDF più piccolo."
+            : "The file is still larger than 20 MB after compression. Choose a smaller PDF.",
         );
       }
 
       // Prima passata: l'IA estrae solo i dati del file, senza ricevere
       // l'intero archivio dell'utente.
-      const extracted = await requestAnalysis([], "document");
+      const extracted = await requestAnalysis([], "document", preparedFile);
 
       if (!extracted.isAttachment || documents.length === 0) {
-        await saveAsNewDocument(extracted);
+        await saveAsNewDocument(extracted, preparedFile);
         return;
       }
 
@@ -6335,6 +6343,7 @@ function UploadModal({
       const ranked = await requestAnalysis(
         serializeCandidateDocuments(candidates),
         "attachment",
+        preparedFile,
       );
 
       const suggestedExists = candidates.some(
@@ -6354,15 +6363,18 @@ function UploadModal({
     }
   }
 
-  async function saveAsNewDocument(data = analysis) {
-    if (!file || !data) return;
+  async function saveAsNewDocument(
+    data = analysis,
+    fileToSave: File | null = file,
+  ) {
+    if (!fileToSave || !data) return;
 
     await onSaved(
       {
         id: crypto.randomUUID(),
-        title: data.title || file.name,
+        title: data.title || fileToSave.name,
         category: data.category || "Altro",
-        fileName: file.name,
+        fileName: fileToSave.name,
         uploadedAt: new Date().toISOString(),
         expiryDate: expiryDate || data.expiryDate || null,
         appointmentTime: data.appointmentTime ?? null,
@@ -6372,7 +6384,7 @@ function UploadModal({
           data.summary ||
           (language === "it" ? "Documento caricato." : "Document uploaded."),
         keywords: Array.isArray(data.keywords) ? data.keywords : [],
-        size: file.size,
+        size: fileToSave.size,
         storagePath: null,
         paymentStatus: "Da pagare",
         paidAt: null,
@@ -6391,7 +6403,7 @@ function UploadModal({
         lastPaymentDate: null,
         paymentProgressConfirmed: false,
       },
-      file,
+      fileToSave,
     );
   }
 
@@ -6553,20 +6565,12 @@ function UploadModal({
           <input
             type="file"
             accept="application/pdf,image/*"
-            onChange={async (event) => {
+            onChange={(event) => {
               const selected = event.target.files?.[0] || null;
               setAnalysis(null);
               setMatchedDocuments([]);
               setSelectedDocumentId("");
-              if (!selected) {
-                setFile(null);
-                return;
-              }
-              try {
-                setFile(await prepareFileForUpload(selected));
-              } catch {
-                setFile(selected);
-              }
+              setFile(selected);
             }}
           />
           <Upload size={28} />
@@ -6625,6 +6629,40 @@ function UploadModal({
             onClick={analyze}
             aria-label={loading ? t.organizing : t.analyzeAndArchive}
           >
+            {loading && (
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+                style={{ flexShrink: 0 }}
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  opacity="0.25"
+                />
+                <path
+                  d="M21 12a9 9 0 0 0-9-9"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                >
+                  <animateTransform
+                    attributeName="transform"
+                    type="rotate"
+                    from="0 12 12"
+                    to="360 12 12"
+                    dur="0.8s"
+                    repeatCount="indefinite"
+                  />
+                </path>
+              </svg>
+            )}
             <span>{loading ? t.organizing : t.analyzeAndArchive}</span>
           </button>
         </div>
