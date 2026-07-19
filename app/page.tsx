@@ -6197,11 +6197,11 @@ function UploadModal({
     setSelectedDocumentId("");
 
     try {
-      if (file.size > 4 * 1024 * 1024) {
+      if (file.size > 20 * 1024 * 1024) {
         throw new Error(
           language === "it"
-            ? "Il file supera 4 MB. Scegli un file più piccolo."
-            : "The file is larger than 4 MB. Choose a smaller file.",
+            ? "Il file supera 20 MB. Scegli un file più piccolo."
+            : "The file is larger than 20 MB. Choose a smaller file.",
         );
       }
 

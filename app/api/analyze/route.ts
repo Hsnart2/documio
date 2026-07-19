@@ -102,8 +102,8 @@ export async function POST(request: Request) {
         {
           error:
             language === "it"
-              ? "Il file supera 4 MB. Scegli un file più piccolo."
-              : "The file is larger than 4 MB. Choose a smaller file.",
+              ? "Il file supera 20 MB. Scegli un file più piccolo."
+              : "The file is larger than 20 MB. Choose a smaller file.",
         },
         { status: 413 },
       );
