@@ -524,3 +524,22 @@
     color: white !important;
   }
 }
+@media (max-width: 720px) {
+  .modal-backdrop {
+    align-items: flex-start !important;
+    justify-content: center !important;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      10px
+      max(12px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .upload-modal {
+    width: 100% !important;
+    max-height: calc(100dvh - 24px) !important;
+    margin-top: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    border-radius: 22px !important;
+  }
+}
