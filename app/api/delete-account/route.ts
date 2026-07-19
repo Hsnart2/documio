@@ -21,8 +21,10 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   );
 }
 
+type SupabaseAdminClient = ReturnType<typeof createClient<any>>;
+
 async function removeStorageFiles(
-  supabaseAdmin: ReturnType<typeof createClient>,
+  supabaseAdmin: SupabaseAdminClient,
   paths: string[],
 ) {
   const chunkSize = 100;
