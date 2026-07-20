@@ -5,6 +5,8 @@ const MAX_MULTIPART_BYTES = 21 * 1024 * 1024;
 const MAX_JSON_BYTES = 512 * 1024;
 const ALLOWED_FILE_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png"]);
 
+type SupportedFileType = "pdf" | "jpeg" | "png";
+
 function jsonError(message: string, status: number) {
   return NextResponse.json(
     { error: message },
@@ -30,6 +32,52 @@ function getExtension(value: string) {
 
 function hasUnsafeCharacters(value: string) {
   return /[\u0000-\u001f\u007f\\]/.test(value);
+}
+
+function expectedFileType(extension: string): SupportedFileType | null {
+  if (extension === "pdf") return "pdf";
+  if (extension === "jpg" || extension === "jpeg") return "jpeg";
+  if (extension === "png") return "png";
+  return null;
+}
+
+function detectFileType(bytes: Uint8Array): SupportedFileType | null {
+  const isPdf =
+    bytes.length >= 5 &&
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46 &&
+    bytes[4] === 0x2d;
+
+  if (isPdf) return "pdf";
+
+  const isJpeg =
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff;
+
+  if (isJpeg) return "jpeg";
+
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const isPng =
+    bytes.length >= pngSignature.length &&
+    pngSignature.every((value, index) => bytes[index] === value);
+
+  return isPng ? "png" : null;
+}
+
+function signatureMatches(bytes: Uint8Array, extension: string) {
+  const expected = expectedFileType(extension);
+  return expected !== null && detectFileType(bytes) === expected;
+}
+
+function encodeStoragePath(storagePath: string) {
+  return storagePath
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
 }
 
 export async function middleware(request: NextRequest) {
@@ -136,8 +184,66 @@ export async function middleware(request: NextRequest) {
       ) {
         return jsonError("Sono ammessi solo file PDF, JPG e PNG.", 415);
       }
-    } catch {
-      return jsonError("Corpo JSON non valido.", 400);
+
+      const storageResponse = await fetch(
+        `${supabaseUrl}/storage/v1/object/authenticated/documents/${encodeStoragePath(storagePath)}`,
+        {
+          method: "GET",
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${token}`,
+            Range: "bytes=0-15",
+          },
+          cache: "no-store",
+        },
+      );
+
+      if (!storageResponse.ok) {
+        return jsonError("File non disponibile per la verifica.", 404);
+      }
+
+      const signatureBytes = new Uint8Array(await storageResponse.arrayBuffer()).slice(0, 16);
+
+      if (!signatureMatches(signatureBytes, fileExtension)) {
+        return jsonError(
+          "Il contenuto del file non corrisponde al formato dichiarato.",
+          415,
+        );
+      }
+    } catch (error) {
+      console.error("DocuMio JSON file validation error:", error);
+      return jsonError("Impossibile verificare il file.", 400);
+    }
+  }
+
+  if (isMultipart) {
+    try {
+      const formData = await request.clone().formData();
+      const incomingFile = formData.get("file");
+
+      if (!(incomingFile instanceof File)) {
+        return jsonError("File mancante.", 400);
+      }
+
+      const extension = getExtension(incomingFile.name);
+
+      if (!ALLOWED_FILE_EXTENSIONS.has(extension)) {
+        return jsonError("Sono ammessi solo file PDF, JPG e PNG.", 415);
+      }
+
+      const signatureBytes = new Uint8Array(
+        await incomingFile.slice(0, 16).arrayBuffer(),
+      );
+
+      if (!signatureMatches(signatureBytes, extension)) {
+        return jsonError(
+          "Il contenuto del file non corrisponde al formato dichiarato.",
+          415,
+        );
+      }
+    } catch (error) {
+      console.error("DocuMio multipart file validation error:", error);
+      return jsonError("Impossibile verificare il file.", 400);
     }
   }
 
