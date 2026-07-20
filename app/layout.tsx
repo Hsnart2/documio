@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./loading-fix.css";
+import PracticeVisibility from "./PracticeVisibility";
 
 export const metadata: Metadata = {
   title: "Documio",
@@ -10,7 +11,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="it">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PracticeVisibility />
+      </body>
     </html>
   );
 }
