@@ -11,16 +11,6 @@
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
     "@supabase/supabase-js": "latest",
+    "jszip": "^3.10.1",
     "lucide-react": "latest",
-    "next": "latest",
-    "openai": "latest",
-    "react": "latest",
-    "react-dom": "latest"
-  },
-  "devDependencies": {
-    "@types/node": "^22.20.1",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "typescript": "^5.9.3"
-  }
-}
+    "next": "latest
