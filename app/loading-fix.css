@@ -1,0 +1,27 @@
+.upload-submit[aria-label="Sto organizzando…"],
+.upload-submit[aria-label="Organizing…"] {
+  gap: 10px;
+}
+
+.upload-submit[aria-label="Sto organizzando…"]::before,
+.upload-submit[aria-label="Organizing…"]::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 3px solid rgba(255,255,255,.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: documio-upload-spin .8s linear infinite;
+}
+
+@keyframes documio-upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-submit[aria-label="Sto organizzando…"]::before,
+  .upload-submit[aria-label="Organizing…"]::before {
+    animation-duration: 1.6s;
+  }
+}
