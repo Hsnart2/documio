@@ -17,6 +17,12 @@ type SendPracticeBody = {
 type FileToSend = {
   storagePath: string;
   fileName: string;
+  folder: "Documenti" | "Allegati";
+};
+
+type ZipEntry = {
+  name: string;
+  data: Buffer;
 };
 
 function getBearerToken(request: Request) {
@@ -35,9 +41,23 @@ function cleanFileName(fileName: string) {
     "",
   );
 
-  return withoutUuid
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
-    .slice(0, 160) || "documento";
+  return (
+    withoutUuid
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160) || "documento"
+  );
+}
+
+function cleanZipName(value: string) {
+  return (
+    value
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120) || "Pratica-DocuMio"
+  );
 }
 
 function escapeHtml(value: string) {
@@ -73,6 +93,93 @@ function uniqueFileName(fileName: string, used: Set<string>) {
   const result = `${base}-${counter}${extension}`;
   used.add(result.toLowerCase());
   return result;
+}
+
+function crc32(buffer: Buffer) {
+  let crc = 0xffffffff;
+
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function getDosDateTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  const dosTime =
+    (date.getHours() << 11) |
+    (date.getMinutes() << 5) |
+    Math.floor(date.getSeconds() / 2);
+  const dosDate =
+    ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+
+  return { dosDate, dosTime };
+}
+
+function createZip(entries: ZipEntry[]) {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  const { dosDate, dosTime } = getDosDateTime();
+
+  for (const entry of entries) {
+    const nameBuffer = Buffer.from(entry.name, "utf8");
+    const checksum = crc32(entry.data);
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(dosTime, 10);
+    localHeader.writeUInt16LE(dosDate, 12);
+    localHeader.writeUInt32LE(checksum, 14);
+    localHeader.writeUInt32LE(entry.data.length, 18);
+    localHeader.writeUInt32LE(entry.data.length, 22);
+    localHeader.writeUInt16LE(nameBuffer.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+
+    localParts.push(localHeader, nameBuffer, entry.data);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(dosTime, 12);
+    centralHeader.writeUInt16LE(dosDate, 14);
+    centralHeader.writeUInt32LE(checksum, 16);
+    centralHeader.writeUInt32LE(entry.data.length, 20);
+    centralHeader.writeUInt32LE(entry.data.length, 24);
+    centralHeader.writeUInt16LE(nameBuffer.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+
+    centralParts.push(centralHeader, nameBuffer);
+    offset += localHeader.length + nameBuffer.length + entry.data.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const endRecord = Buffer.alloc(22);
+  endRecord.writeUInt32LE(0x06054b50, 0);
+  endRecord.writeUInt16LE(0, 4);
+  endRecord.writeUInt16LE(0, 6);
+  endRecord.writeUInt16LE(entries.length, 8);
+  endRecord.writeUInt16LE(entries.length, 10);
+  endRecord.writeUInt32LE(centralDirectory.length, 12);
+  endRecord.writeUInt32LE(offset, 16);
+  endRecord.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDirectory, endRecord]);
 }
 
 export async function POST(request: Request) {
@@ -125,14 +232,20 @@ export async function POST(request: Request) {
 
     if (!practiceId || !to || !subject) {
       return NextResponse.json(
-        { error: language === "it" ? "Dati email incompleti." : "Incomplete email data." },
+        {
+          error:
+            language === "it" ? "Dati email incompleti." : "Incomplete email data.",
+        },
         { status: 400 },
       );
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
       return NextResponse.json(
-        { error: language === "it" ? "Indirizzo email non valido." : "Invalid email address." },
+        {
+          error:
+            language === "it" ? "Indirizzo email non valido." : "Invalid email address.",
+        },
         { status: 400 },
       );
     }
@@ -151,7 +264,10 @@ export async function POST(request: Request) {
     if (practiceError) throw new Error(practiceError.message);
     if (!practice) {
       return NextResponse.json(
-        { error: language === "it" ? "Pratica non trovata." : "Case not found." },
+        {
+          error:
+            language === "it" ? "Pratica non trovata." : "Case not found.",
+        },
         { status: 404 },
       );
     }
@@ -188,12 +304,24 @@ export async function POST(request: Request) {
     const files: FileToSend[] = [
       ...documents.flatMap((document) =>
         document.storage_path
-          ? [{ storagePath: document.storage_path, fileName: document.file_name }]
+          ? [
+              {
+                storagePath: document.storage_path,
+                fileName: document.file_name,
+                folder: "Documenti" as const,
+              },
+            ]
           : [],
       ),
       ...(attachmentRows ?? []).flatMap((attachment) =>
         attachment.storage_path
-          ? [{ storagePath: attachment.storage_path, fileName: attachment.file_name }]
+          ? [
+              {
+                storagePath: attachment.storage_path,
+                fileName: attachment.file_name,
+                folder: "Allegati" as const,
+              },
+            ]
           : [],
       ),
     ];
@@ -210,9 +338,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const usedNames = new Set<string>();
-    const emailAttachments: Array<{ filename: string; content: string }> = [];
-    let totalBytes = 0;
+    const usedNames = {
+      Documenti: new Set<string>(),
+      Allegati: new Set<string>(),
+    };
+    const zipEntries: ZipEntry[] = [];
+    let originalBytes = 0;
 
     for (const file of files) {
       const { data, error } = await admin.storage
@@ -226,26 +357,41 @@ export async function POST(request: Request) {
       }
 
       const buffer = Buffer.from(await data.arrayBuffer());
-      totalBytes += buffer.byteLength;
+      originalBytes += buffer.byteLength;
 
-      if (totalBytes > MAX_EMAIL_BYTES) {
+      if (originalBytes > MAX_EMAIL_BYTES) {
         return NextResponse.json(
           {
             error:
               language === "it"
-                ? "La pratica supera 20 MB. Per ora riduci i file; nel prossimo passaggio aggiungeremo il link di download per le pratiche più pesanti."
-                : "The case exceeds 20 MB. Reduce the files for now; a download-link option for larger cases will be added next.",
+                ? "La pratica supera 20 MB. Riduci i file prima dell'invio."
+                : "The case exceeds 20 MB. Reduce the files before sending.",
           },
           { status: 413 },
         );
       }
 
-      emailAttachments.push({
-        filename: uniqueFileName(file.fileName, usedNames),
-        content: buffer.toString("base64"),
+      const uniqueName = uniqueFileName(file.fileName, usedNames[file.folder]);
+      zipEntries.push({
+        name: `${file.folder}/${uniqueName}`,
+        data: buffer,
       });
     }
 
+    const zipBuffer = createZip(zipEntries);
+    if (zipBuffer.byteLength > MAX_EMAIL_BYTES) {
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "Il file ZIP supera 20 MB. Riduci i documenti prima dell'invio."
+              : "The ZIP file exceeds 20 MB. Reduce the documents before sending.",
+        },
+        { status: 413 },
+      );
+    }
+
+    const zipFileName = `${cleanZipName(practice.title)}.zip`;
     const safeTitle = escapeHtml(practice.title);
     const safeMessage = escapeHtml(message).replace(/\n/g, "<br>");
     const html = `<!doctype html>
@@ -258,9 +404,9 @@ export async function POST(request: Request) {
       </div>
       <div style="background:white;padding:24px;border-radius:0 0 18px 18px">
         <h2 style="margin:0 0 12px">${safeTitle}</h2>
-        <p style="line-height:1.6;color:#4f5d75">${safeMessage || (language === "it" ? "In allegato trovi i documenti della pratica." : "The case documents are attached.")}</p>
+        <p style="line-height:1.6;color:#4f5d75">${safeMessage || (language === "it" ? "In allegato trovi la pratica completa in un unico file ZIP." : "The complete case is attached as a single ZIP file.")}</p>
         <p style="margin:20px 0 0;color:#73809a;font-size:13px">
-          ${language === "it" ? `File allegati: ${emailAttachments.length}` : `Attached files: ${emailAttachments.length}`}
+          ${language === "it" ? `Contenuto ZIP: ${zipEntries.length} file` : `ZIP contents: ${zipEntries.length} files`}
         </p>
       </div>
     </div>
@@ -278,7 +424,12 @@ export async function POST(request: Request) {
         to: [to],
         subject,
         html,
-        attachments: emailAttachments,
+        attachments: [
+          {
+            filename: zipFileName,
+            content: zipBuffer.toString("base64"),
+          },
+        ],
       }),
     });
 
@@ -299,8 +450,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      filesSent: emailAttachments.length,
-      bytesSent: totalBytes,
+      filesSent: zipEntries.length,
+      zipFileName,
+      bytesSent: zipBuffer.byteLength,
     });
   } catch (error) {
     console.error("Send practice route error:", error);
