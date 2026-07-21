@@ -1,0 +1,38 @@
+name: Optimize candidate filter
+
+on:
+  push:
+    paths:
+      - '.github/workflows/optimize-candidate-filter.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tighten candidate filter
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/page.tsx')
+          text = path.read_text()
+          old = '      return hasSpecificTextMatch || hasAmountMatch;'
+          new = '      return hasSpecificTextMatch || (hasAmountMatch && matchingTokens.length >= 1);'
+          if old not in text:
+              raise SystemExit('Target line not found; no changes applied.')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit optimization
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/page.tsx
+          git commit -m 'perf: skip weak second-pass attachment analysis'
+          git push
