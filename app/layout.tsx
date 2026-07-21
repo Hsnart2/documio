@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./loading-fix.css";
 import PracticeVisibility from "./PracticeVisibility";
-import PasskeyControls from "./PasskeyControls";
 
 export const metadata: Metadata = {
   title: "Documio",
@@ -15,7 +14,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         {children}
         <PracticeVisibility />
-        <PasskeyControls />
       </body>
     </html>
   );
