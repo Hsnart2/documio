@@ -1,0 +1,134 @@
+name: Add DocuMio passkeys
+
+on:
+  push:
+    paths:
+      - .github/workflows/add-passkeys.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch passkey actions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/page.tsx')
+          text = path.read_text()
+
+          signout_marker = '''  async function signOut() {
+'''
+          functions = '''  async function signInWithPasskey() {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    if (!("PublicKeyCredential" in window)) {
+      alert(
+        language === "it"
+          ? "Questo dispositivo o browser non supporta le passkey."
+          : "This device or browser does not support passkeys.",
+      );
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPasskey();
+    if (error) {
+      if (error.message.toLowerCase().includes("cancel")) return;
+      alert(error.message);
+    }
+  }
+
+  async function registerPasskey() {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    if (!("PublicKeyCredential" in window)) {
+      alert(
+        language === "it"
+          ? "Questo dispositivo o browser non supporta le passkey."
+          : "This device or browser does not support passkeys.",
+      );
+      return;
+    }
+
+    const { error } = await supabase.auth.registerPasskey();
+    if (error) {
+      if (error.message.toLowerCase().includes("cancel")) return;
+      alert(error.message);
+      return;
+    }
+
+    alert(
+      language === "it"
+        ? "Face ID attivato. Da ora puoi accedere senza password."
+        : "Face ID enabled. You can now sign in without a password.",
+    );
+  }
+
+'''
+          if 'async function signInWithPasskey()' not in text:
+              if signout_marker not in text:
+                  raise SystemExit('signOut marker not found')
+              text = text.replace(signout_marker, functions + signout_marker, 1)
+
+          login_marker = '''        <button onClick={signIn} style={{ width: "100%", padding: 12 }}>
+          {t.signIn}
+        </button>
+'''
+          login_button = login_marker + '''
+        <button
+          type="button"
+          onClick={() => void signInWithPasskey()}
+          style={{
+            width: "100%",
+            padding: 12,
+            marginTop: 10,
+            fontWeight: 800,
+            borderColor: "#111827",
+          }}
+        >
+          {language === "it" ? "🔐 Accedi con Face ID" : "🔐 Sign in with Face ID"}
+        </button>
+'''
+          if 'Accedi con Face ID' not in text:
+              if login_marker not in text:
+                  raise SystemExit('login marker not found')
+              text = text.replace(login_marker, login_button, 1)
+
+          logout_marker = '''          <button
+            className="topbar-logout"
+            type="button"
+            onClick={signOut}
+'''
+          register_button = '''          <button
+            type="button"
+            onClick={() => void registerPasskey()}
+            title={language === "it" ? "Attiva Face ID" : "Enable Face ID"}
+            aria-label={language === "it" ? "Attiva Face ID" : "Enable Face ID"}
+          >
+            <ShieldCheck size={18} />
+            <span>{language === "it" ? "Attiva Face ID" : "Enable Face ID"}</span>
+          </button>
+
+'''
+          if 'onClick={() => void registerPasskey()}' not in text:
+              if logout_marker not in text:
+                  raise SystemExit('logout marker not found')
+              text = text.replace(logout_marker, register_button + logout_marker, 1)
+
+          path.write_text(text)
+          Path('.github/workflows/add-passkeys.yml').unlink()
+          PY
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/page.tsx .github/workflows/add-passkeys.yml
+          git commit -m "feat: add Face ID passkey access"
+          git push
