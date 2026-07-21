@@ -25,12 +25,24 @@
 }
 
 .modal-backdrop:has(.upload-modal) .upload-modal .primary.full {
+  display: flex !important;
   width: 100% !important;
-  min-height: 50px;
-  margin-top: 20px !important;
-  justify-content: center;
-  font-size: 16px !important;
+  min-height: 62px !important;
+  margin-top: 24px !important;
+  padding: 16px 20px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 18px !important;
+  line-height: 1.2 !important;
+  font-weight: 800 !important;
   color: #fff !important;
+  opacity: 1;
+  white-space: normal !important;
+  text-align: center !important;
+}
+
+.modal-backdrop:has(.upload-modal) .upload-modal .primary.full:disabled {
+  opacity: 0.55 !important;
 }
 
 @media (max-width: 720px) {
