@@ -6143,7 +6143,7 @@ function UploadModal({
         documentAmount != null &&
         Math.abs(Number(paidAmount) - Number(documentAmount)) < 0.01;
 
-      return hasSpecificTextMatch || hasAmountMatch;
+      return hasSpecificTextMatch || (hasAmountMatch && matchingTokens.length >= 1);
     });
 
     return relevant;
