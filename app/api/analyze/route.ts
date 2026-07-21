@@ -464,6 +464,7 @@ User note: ${userNote || "none"}`;
       },
       body: JSON.stringify({
         model: "gpt-5-mini",
+        reasoning: { effort: "minimal" },
         input: [
           {
             role: "user",
