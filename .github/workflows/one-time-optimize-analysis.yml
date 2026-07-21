@@ -1,0 +1,35 @@
+name: One-time optimize analysis
+
+on:
+  push:
+    paths:
+      - ".github/workflows/one-time-optimize-analysis.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reduce OpenAI reasoning effort
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/api/analyze/route.ts")
+          text = path.read_text()
+          old = '        model: "gpt-5-mini",\n        input: ['
+          new = '        model: "gpt-5-mini",\n        reasoning: { effort: "minimal" },\n        input: ['
+          if old not in text:
+              raise SystemExit("Target block not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit optimization
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/analyze/route.ts
+          git commit -m "perf: reduce document analysis reasoning effort"
+          git push
