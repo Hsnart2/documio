@@ -1,0 +1,46 @@
+/* Mobile attachment modal: scroll the whole overlay like a page. */
+.modal-backdrop:has(.upload-modal) {
+  display: block !important;
+  position: fixed !important;
+  inset: 0 !important;
+  height: 100dvh !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  padding:
+    max(10px, env(safe-area-inset-top))
+    10px
+    calc(34px + env(safe-area-inset-bottom)) !important;
+}
+
+.modal-backdrop:has(.upload-modal) .upload-modal {
+  width: min(560px, 100%) !important;
+  max-height: none !important;
+  min-height: auto !important;
+  overflow: visible !important;
+  margin: 0 auto !important;
+  padding-bottom: calc(34px + env(safe-area-inset-bottom)) !important;
+}
+
+.modal-backdrop:has(.upload-modal) .upload-modal .primary.full {
+  width: 100% !important;
+  min-height: 50px;
+  margin-top: 20px !important;
+  justify-content: center;
+  font-size: 16px !important;
+  color: #fff !important;
+}
+
+@media (max-width: 720px) {
+  .modal-backdrop:has(.upload-modal) {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .modal-backdrop:has(.upload-modal) .upload-modal {
+    border-radius: 22px !important;
+    padding: 22px 18px calc(36px + env(safe-area-inset-bottom)) !important;
+  }
+}
