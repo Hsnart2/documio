@@ -4,6 +4,16 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function noStoreJson(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, max-age=0",
+      Pragma: "no-cache",
+    },
+  });
+}
+
 function getBearerToken(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const match = authorization.match(/^Bearer\s+(.+)$/i);
@@ -19,6 +29,26 @@ function uniqueStrings(values: Array<string | null | undefined>) {
       ),
     ),
   );
+}
+
+function keepUserOwnedPaths(paths: string[], userId: string) {
+  const expectedPrefix = `${userId}/`;
+  const owned: string[] = [];
+
+  for (const rawPath of paths) {
+    const path = rawPath.trim().replace(/^\/+/, "");
+
+    if (path.startsWith(expectedPrefix) && !path.includes("../")) {
+      owned.push(path);
+    } else {
+      console.error("Blocked non-owned storage path during account deletion", {
+        userId,
+        path,
+      });
+    }
+  }
+
+  return uniqueStrings(owned);
 }
 
 type SupabaseClientAny = ReturnType<typeof createClient<any>>;
@@ -49,25 +79,24 @@ export async function POST(request: Request) {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!supabaseUrl || !publishableKey || !serviceRoleKey) {
-      return NextResponse.json(
+      return noStoreJson(
         {
           error:
             "Configurazione server incompleta. Controlla le tre variabili Supabase su Vercel.",
         },
-        { status: 500 },
+        500,
       );
     }
 
     const accessToken = getBearerToken(request);
 
     if (!accessToken) {
-      return NextResponse.json(
+      return noStoreJson(
         { error: "Token di accesso mancante. Accedi nuovamente." },
-        { status: 401 },
+        401,
       );
     }
 
-    // Client pubblico: verifica il token dell'utente con la stessa chiave usata dall'app.
     const supabaseAuth = createClient(supabaseUrl, publishableKey, {
       auth: {
         autoRefreshToken: false,
@@ -82,16 +111,15 @@ export async function POST(request: Request) {
 
     if (userError || !user) {
       console.error("Delete account auth error:", userError?.message);
-      return NextResponse.json(
+      return noStoreJson(
         {
           error:
             "Sessione non valida o chiavi Supabase non appartenenti allo stesso progetto.",
         },
-        { status: 401 },
+        401,
       );
     }
 
-    // Client amministratore: usato solo sul server per eliminare dati e account.
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
         autoRefreshToken: false,
@@ -125,10 +153,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const storagePaths = uniqueStrings([
-      ...(documentRows ?? []).map((item) => item.storage_path),
-      ...(attachmentRows ?? []).map((item) => item.storage_path),
-    ]);
+    const storagePaths = keepUserOwnedPaths(
+      uniqueStrings([
+        ...(documentRows ?? []).map((item) => item.storage_path),
+        ...(attachmentRows ?? []).map((item) => item.storage_path),
+      ]),
+      user.id,
+    );
 
     if (storagePaths.length > 0) {
       await removeStorageFiles(supabaseAdmin, storagePaths);
@@ -161,21 +192,21 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({
+    return noStoreJson({
       success: true,
       message: "Account e dati eliminati definitivamente.",
     });
   } catch (error) {
     console.error("Delete account error:", error);
 
-    return NextResponse.json(
+    return noStoreJson(
       {
         error:
           error instanceof Error
             ? error.message
             : "Cancellazione non riuscita.",
       },
-      { status: 500 },
+      500,
     );
   }
 }
