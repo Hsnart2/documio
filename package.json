@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
-    "@supabase/supabase-js": "latest",
+    "@supabase/supabase-js": "^2.109.0",
     "lucide-react": "latest",
     "next": "latest",
     "openai": "latest",
