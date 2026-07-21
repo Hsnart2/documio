@@ -33,6 +33,57 @@ const allowedAttachmentTypes = [
   "Altro",
 ] as const;
 
+const allowedExtensions = new Set(["pdf", "jpg", "jpeg", "png"]);
+
+type DetectedFile = {
+  mimeType: "application/pdf" | "image/jpeg" | "image/png";
+  extension: "pdf" | "jpg" | "png";
+};
+
+function detectFileType(buffer: Buffer): DetectedFile | null {
+  if (
+    buffer.length >= 5 &&
+    buffer[0] === 0x25 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x44 &&
+    buffer[3] === 0x46 &&
+    buffer[4] === 0x2d
+  ) {
+    return { mimeType: "application/pdf", extension: "pdf" };
+  }
+
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return { mimeType: "image/jpeg", extension: "jpg" };
+  }
+
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return { mimeType: "image/png", extension: "png" };
+  }
+
+  return null;
+}
+
+function getExtension(fileName: string) {
+  const cleanName = fileName.split(/[?#]/, 1)[0].toLowerCase();
+  const dot = cleanName.lastIndexOf(".");
+  return dot >= 0 ? cleanName.slice(dot + 1) : "";
+}
+
 type OpenAIResponse = {
   output?: Array<{
     content?: Array<{
@@ -131,7 +182,7 @@ export async function POST(request: Request) {
 
     let sourceBuffer: Buffer;
     let sourceMimeType = file?.type || "application/pdf";
-    let sourceFileName = file?.name || suppliedFileName;
+    const sourceFileName = file?.name || suppliedFileName;
     let temporaryInputPath: string | null = null;
 
     if (storagePath) {
@@ -163,7 +214,10 @@ export async function POST(request: Request) {
 
       if (userError || !user || !storagePath.startsWith(`${user.id}/`)) {
         return NextResponse.json(
-          { error: language === "it" ? "Accesso non autorizzato." : "Unauthorized." },
+          {
+            error:
+              language === "it" ? "Accesso non autorizzato." : "Unauthorized.",
+          },
           { status: 401 },
         );
       }
@@ -207,9 +261,38 @@ export async function POST(request: Request) {
       sourceBuffer = Buffer.from(await file.arrayBuffer());
     }
 
-    const isPdf =
-      sourceMimeType === "application/pdf" ||
-      sourceFileName.toLowerCase().endsWith(".pdf");
+    const detectedFile = detectFileType(sourceBuffer);
+    const suppliedExtension = getExtension(sourceFileName);
+
+    if (!detectedFile || !allowedExtensions.has(suppliedExtension)) {
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "Il file non è un PDF, JPG o PNG valido."
+              : "The file is not a valid PDF, JPG, or PNG.",
+        },
+        { status: 415 },
+      );
+    }
+
+    const normalizedSuppliedExtension =
+      suppliedExtension === "jpeg" ? "jpg" : suppliedExtension;
+
+    if (normalizedSuppliedExtension !== detectedFile.extension) {
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "Il contenuto del file non corrisponde alla sua estensione."
+              : "The file content does not match its extension.",
+        },
+        { status: 415 },
+      );
+    }
+
+    sourceMimeType = detectedFile.mimeType;
+    const isPdf = detectedFile.extension === "pdf";
 
     if (isPdf && sourceBuffer.length > 4 * 1024 * 1024) {
       const publicKey = process.env.ILOVEPDF_PUBLIC_KEY;
@@ -429,7 +512,10 @@ User note: ${userNote || "none"}`;
                 },
                 appointmentTime: {
                   anyOf: [
-                    { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+                    {
+                      type: "string",
+                      pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+                    },
                     { type: "null" },
                   ],
                 },
@@ -551,8 +637,6 @@ User note: ${userNote || "none"}`;
 
     const analysis = JSON.parse(outputText) as AnalysisResult;
 
-    // Alcuni modelli possono restituire la confidenza come 0-1 anziché 0-100.
-    // La normalizziamo per evitare casi come "1%" quando in realtà significa 100%.
     if (analysis.matchConfidence > 0 && analysis.matchConfidence <= 1) {
       analysis.matchConfidence = analysis.matchConfidence * 100;
     }
