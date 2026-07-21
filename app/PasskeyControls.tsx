@@ -4,13 +4,21 @@ import { useEffect, useState } from "react";
 import { Fingerprint } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 
+type PasskeyResult = Promise<{ error: { message: string } | null }>;
+type PasskeyAuth = {
+  registerPasskey: () => PasskeyResult;
+  signInWithPasskey: () => PasskeyResult;
+};
+
 export default function PasskeyControls() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [supported, setSupported] = useState(false);
 
   useEffect(() => {
-    setSupported(typeof window !== "undefined" && "PublicKeyCredential" in window);
+    setSupported(
+      typeof window !== "undefined" && "PublicKeyCredential" in window,
+    );
 
     const supabase = getSupabaseClient();
     if (!supabase) {
@@ -35,23 +43,25 @@ export default function PasskeyControls() {
     const supabase = getSupabaseClient();
     if (!supabase || busy) return;
 
+    const passkeyAuth = supabase.auth as unknown as PasskeyAuth;
     setBusy(true);
-    try {
-      if (signedIn) {
-        const { error } = await supabase.auth.registerPasskey();
-        if (error) {
-          if (!error.message.toLowerCase().includes("cancel")) {
-            window.alert(error.message);
-          }
-          return;
-        }
 
-        window.alert("Face ID attivato. Da ora puoi accedere senza password.");
-      } else {
-        const { error } = await supabase.auth.signInWithPasskey();
-        if (error && !error.message.toLowerCase().includes("cancel")) {
+    try {
+      const { error } = signedIn
+        ? await passkeyAuth.registerPasskey()
+        : await passkeyAuth.signInWithPasskey();
+
+      if (error) {
+        if (!error.message.toLowerCase().includes("cancel")) {
           window.alert(error.message);
         }
+        return;
+      }
+
+      if (signedIn) {
+        window.alert(
+          "Face ID attivato. Da ora puoi accedere senza password.",
+        );
       }
     } finally {
       setBusy(false);
