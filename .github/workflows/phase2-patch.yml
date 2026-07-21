@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - security/phase2-delete-document
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -86,13 +85,11 @@ jobs:
           path.write_text(updated)
           PY
 
-          rm -f .github/workflows/phase2-patch.yml
-
-      - name: Commit patch
+      - name: Commit client patch
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/page.tsx .github/workflows/phase2-patch.yml
+          git add app/page.tsx
           git commit -m "Connect secure document deletion [secure-delete-client]"
           git push origin HEAD:security/phase2-delete-document
