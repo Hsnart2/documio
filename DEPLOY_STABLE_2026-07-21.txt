@@ -1,0 +1,1 @@
+Forza il deploy Vercel della versione stabile di DocuMio senza timeout OpenAI lato server.
