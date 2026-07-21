@@ -1,0 +1,97 @@
+name: Apply secure delete client patch
+
+on:
+  push:
+    branches:
+      - security/phase2-delete-document
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[secure-delete-client]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/phase2-delete-document
+          fetch-depth: 0
+
+      - name: Patch deleteDocument
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('app/page.tsx')
+          text = path.read_text()
+          pattern = re.compile(r"  async function deleteDocument\(id: string\) \{.*?\n  \}\n\n  async function updatePaymentStatusOverride", re.S)
+          replacement = '''  async function deleteDocument(id: string) {
+    const confirmed = window.confirm(t.deleteConfirm);
+    if (!confirmed) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert(t.notConfigured);
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError || !session?.access_token) {
+      alert(t.invalidSession);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/delete-document", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ documentId: id }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        alert(data.error || t.deleteFailed);
+        return;
+      }
+
+      setDocuments((current) => current.filter((doc) => doc.id !== id));
+      setAttachments((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+
+      if (data.storageCleanupPending) {
+        console.warn("Document deleted; Storage cleanup requires retry.", { id });
+      }
+    } catch (error) {
+      console.error("Secure document deletion failed:", error);
+      alert(t.deleteFailed);
+    }
+  }
+
+  async function updatePaymentStatusOverride'''
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected one deleteDocument function, found {count}')
+          path.write_text(updated)
+          PY
+
+          rm -f .github/workflows/phase2-patch.yml
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/page.tsx .github/workflows/phase2-patch.yml
+          git commit -m "Connect secure document deletion [secure-delete-client]"
+          git push origin HEAD:security/phase2-delete-document
