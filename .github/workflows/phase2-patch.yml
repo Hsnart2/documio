@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - security/phase2-delete-document
+  workflow_dispatch:
 
 permissions:
   contents: write
