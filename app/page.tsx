@@ -2195,46 +2195,47 @@ export default function Home() {
     if (!supabase) return alert(t.notConfigured);
 
     const {
-      data: { user: currentUser },
-      error: userError,
-    } = await supabase.auth.getUser();
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
 
-    if (userError || !currentUser) {
+    if (sessionError || !session?.access_token) {
       alert(t.invalidSession);
       return;
     }
 
-    const documentToDelete = documents.find((document) => document.id === id);
+    try {
+      const response = await fetch("/api/delete-document", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ documentId: id }),
+      });
 
-    if (documentToDelete?.storagePath) {
-      const { error: storageError } = await supabase.storage
-        .from("documents")
-        .remove([documentToDelete.storagePath]);
+      const data = await response.json().catch(() => ({}));
 
-      if (storageError) {
-        alert(storageError.message);
+      if (!response.ok || !data.success) {
+        alert(data.error || t.deleteFailed);
         return;
       }
-    }
 
-    const { data: deletedRows, error } = await supabase
-      .from("documents")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", currentUser.id)
-      .select("id");
+      setDocuments((current) => current.filter((doc) => doc.id !== id));
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
+      setAttachments((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
 
-    if (!deletedRows || deletedRows.length === 0) {
+      if (data.storageCleanupPending) {
+        console.warn("Pulizia Storage da riprovare", { documentId: id });
+      }
+    } catch (error) {
+      console.error("Errore eliminazione documento:", error);
       alert(t.deleteFailed);
-      return;
     }
-
-    setDocuments((current) => current.filter((doc) => doc.id !== id));
   }
 
   async function updatePaymentStatusOverride(
