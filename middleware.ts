@@ -33,6 +33,12 @@ function hasUnsafeCharacters(value: string) {
 }
 
 export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname === "/api/assistant") {
+    const destination = request.nextUrl.clone();
+    destination.pathname = "/api/assistant-clean";
+    return NextResponse.rewrite(destination);
+  }
+
   if (!PROTECTED_API_PATHS.has(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
@@ -147,5 +153,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/analyze"],
+  matcher: ["/api/analyze", "/api/assistant"],
 };
