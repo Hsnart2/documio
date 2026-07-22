@@ -60,6 +60,11 @@ export default function PasskeyControls() {
 
   if (!supported || signedIn === null) return null;
 
+  function markPasskeyEnabled() {
+    window.localStorage.setItem(STORAGE_KEY, "1");
+    setEnabled(true);
+  }
+
   async function activatePasskey() {
     const supabase = getSupabaseClient();
     if (!supabase || busy) return;
@@ -69,14 +74,24 @@ export default function PasskeyControls() {
       const { error } = await supabase.auth.registerPasskey();
       if (error) {
         const message = error.message.toLowerCase();
+        const alreadyRegistered =
+          message.includes("previously registered") ||
+          message.includes("already registered") ||
+          message.includes("authenticator was registered");
+
+        if (alreadyRegistered) {
+          markPasskeyEnabled();
+          window.alert("Face ID era già registrato ed è stato riattivato su questo dispositivo.");
+          return;
+        }
+
         if (!message.includes("cancel") && !message.includes("abort")) {
           window.alert(error.message);
         }
         return;
       }
 
-      window.localStorage.setItem(STORAGE_KEY, "1");
-      setEnabled(true);
+      markPasskeyEnabled();
       window.alert("Face ID attivato. Da ora comparirà nella schermata di accesso su questo dispositivo.");
     } finally {
       setBusy(false);
