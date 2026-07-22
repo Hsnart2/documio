@@ -8,17 +8,6 @@ const MAX_FILES = 4;
 const MAX_FILE_BYTES = 6 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 14 * 1024 * 1024;
 
-type ArchiveFile = {
-  documentId: string;
-  practiceId: string | null;
-  kind: "document" | "attachment";
-  title: string;
-  fileName: string;
-  storagePath: string | null;
-  metadataText: string;
-  score: number;
-};
-
 type PracticeRow = {
   id: string;
   title: string | null;
@@ -57,12 +46,21 @@ type AttachmentRow = {
   notes: string | null;
 };
 
+type ArchiveFile = {
+  documentId: string;
+  practiceId: string | null;
+  title: string;
+  fileName: string;
+  storagePath: string | null;
+  score: number;
+};
+
 type OpenAIResponse = {
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
   error?: { message?: string };
 };
 
-function bearerToken(request: Request) {
+function getBearerToken(request: Request) {
   const match = (request.headers.get("authorization") ?? "").match(
     /^Bearer\s+(.+)$/i,
   );
@@ -78,21 +76,37 @@ function normalize(value: unknown) {
     .trim();
 }
 
-function termsFrom(question: string) {
+function isSummaryRequest(question: string) {
+  const normalized = normalize(question);
+  return [
+    "riepilogo",
+    "riassunto pratica",
+    "sintesi pratica",
+    "stato pratica",
+    "prepara pratica",
+    "commercialista",
+    "caf",
+    "dossier",
+  ].some((term) => normalized.includes(term));
+}
+
+function getTerms(question: string) {
   const ignored = new Set([
     "cerca", "cercami", "trova", "trovami", "fammi", "vedere", "aprimi",
     "apri", "pratica", "pratiche", "documento", "documenti", "allegato",
-    "allegati", "quella", "quello", "che", "della", "dello", "delle",
-    "degli", "del", "di", "la", "il", "lo", "le", "i", "un", "una",
-    "the", "find", "show", "open", "case", "document", "documents",
-    "attachment", "attachments",
+    "allegati", "riepilogo", "riassunto", "sintesi", "stato", "prepara",
+    "commercialista", "caf", "dossier", "quella", "quello", "che", "della",
+    "dello", "delle", "degli", "del", "di", "la", "il", "lo", "le", "i",
+    "un", "una", "the", "find", "show", "open", "case", "document",
+    "documents", "attachment", "attachments",
   ]);
+
   return normalize(question)
     .split(/\s+/)
     .filter((term) => term.length > 1 && !ignored.has(term));
 }
 
-function score(text: string, terms: string[]) {
+function scoreText(text: string, terms: string[]) {
   const source = normalize(text);
   return terms.reduce((total, term) => {
     if (!source.includes(term)) return total;
@@ -101,7 +115,7 @@ function score(text: string, terms: string[]) {
   }, 0);
 }
 
-function mimeType(fileName: string, fallback?: string) {
+function getMimeType(fileName: string, fallback?: string) {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".png")) return "image/png";
@@ -111,6 +125,13 @@ function mimeType(fileName: string, fallback?: string) {
 
 function safeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120) || "file.pdf";
+}
+
+function isDecorativeDocument(title: string, fileName: string) {
+  const value = normalize(`${title} ${fileName}`);
+  return ["logo", "icona", "icon", "immagine grafica"].some((term) =>
+    value.includes(term),
+  );
 }
 
 export async function POST(request: Request) {
@@ -130,7 +151,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const token = bearerToken(request);
+    const token = getBearerToken(request);
     if (!token) {
       return NextResponse.json({ error: "Token mancante." }, { status: 401 });
     }
@@ -212,21 +233,23 @@ export async function POST(request: Request) {
     const documents = (documentResult.data ?? []) as DocumentRow[];
     const attachments = (attachmentResult.data ?? []) as AttachmentRow[];
     const practiceMap = new Map(practices.map((item) => [item.id, item]));
-    const terms = termsFrom(question);
+    const attachmentsByDocument = new Map<string, AttachmentRow[]>();
 
-    const attachmentMap = new Map<string, AttachmentRow[]>();
     for (const attachment of attachments) {
-      const current = attachmentMap.get(attachment.document_id) ?? [];
-      current.push(attachment);
-      attachmentMap.set(attachment.document_id, current);
+      const list = attachmentsByDocument.get(attachment.document_id) ?? [];
+      list.push(attachment);
+      attachmentsByDocument.set(attachment.document_id, list);
     }
 
+    const terms = getTerms(question);
+    const summaryMode = isSummaryRequest(question);
     const archiveFiles: ArchiveFile[] = [];
+
     const structuredDocuments = documents.map((document) => {
       const practice = document.practice_id
         ? practiceMap.get(document.practice_id)
         : undefined;
-      const linkedAttachments = attachmentMap.get(document.id) ?? [];
+      const linkedAttachments = attachmentsByDocument.get(document.id) ?? [];
       const keywords = Array.isArray(document.keywords) ? document.keywords : [];
       const documentText = [
         document.title,
@@ -237,18 +260,18 @@ export async function POST(request: Request) {
         practice?.title,
         practice?.description,
       ].join(" ");
-      const documentScore = score(documentText, terms);
+      const documentScore = scoreText(documentText, terms);
 
-      archiveFiles.push({
-        documentId: document.id,
-        practiceId: document.practice_id,
-        kind: "document",
-        title: document.title ?? document.file_name ?? "Documento",
-        fileName: document.file_name ?? "documento.pdf",
-        storagePath: document.storage_path,
-        metadataText: documentText,
-        score: documentScore + (document.storage_path ? 1 : 0),
-      });
+      if (!isDecorativeDocument(document.title ?? "", document.file_name ?? "")) {
+        archiveFiles.push({
+          documentId: document.id,
+          practiceId: document.practice_id,
+          title: document.title ?? document.file_name ?? "Documento",
+          fileName: document.file_name ?? "documento.pdf",
+          storagePath: document.storage_path,
+          score: documentScore + (document.storage_path ? 1 : 0),
+        });
+      }
 
       const structuredAttachments = linkedAttachments.map((attachment) => {
         const attachmentText = [
@@ -259,20 +282,25 @@ export async function POST(request: Request) {
           practice?.title,
           document.title,
         ].join(" ");
-        archiveFiles.push({
-          documentId: document.id,
-          practiceId: document.practice_id,
-          kind: "attachment",
-          title: attachment.title ?? attachment.file_name ?? "Allegato",
-          fileName: attachment.file_name ?? "allegato.pdf",
-          storagePath: attachment.storage_path,
-          metadataText: attachmentText,
-          score: score(attachmentText, terms) + (attachment.storage_path ? 1 : 0),
-        });
+        if (
+          !isDecorativeDocument(
+            attachment.title ?? "",
+            attachment.file_name ?? "",
+          )
+        ) {
+          archiveFiles.push({
+            documentId: document.id,
+            practiceId: document.practice_id,
+            title: attachment.title ?? attachment.file_name ?? "Allegato",
+            fileName: attachment.file_name ?? "allegato.pdf",
+            storagePath: attachment.storage_path,
+            score: scoreText(attachmentText, terms) +
+              (attachment.storage_path ? 1 : 0),
+          });
+        }
         return {
           title: attachment.title,
           type: attachment.attachment_type,
-          fileName: attachment.file_name,
           paymentDate: attachment.payment_date,
           amount: attachment.amount,
           paymentMethod: attachment.payment_method,
@@ -285,7 +313,6 @@ export async function POST(request: Request) {
         practiceId: document.practice_id,
         practiceTitle: practice?.title ?? null,
         title: document.title,
-        fileName: document.file_name,
         category: document.category,
         summary: document.summary,
         keywords,
@@ -300,26 +327,35 @@ export async function POST(request: Request) {
       };
     });
 
-    const rankedDocuments = structuredDocuments
-      .filter((item) => item.score > 0 || terms.length === 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 50);
-
     const rankedPractices = practices
       .map((practice) => {
         const linked = structuredDocuments.filter(
           (document) => document.practiceId === practice.id,
         );
-        const primary = score(
-          [practice.title, practice.practice_type, practice.description, practice.status].join(" "),
+        const primaryScore = scoreText(
+          [
+            practice.title,
+            practice.practice_type,
+            practice.description,
+            practice.status,
+          ].join(" "),
           terms,
         );
         const linkedScore = Math.max(0, ...linked.map((item) => item.score));
-        return { practice, linked, score: primary * 3 + linkedScore };
+        return {
+          practice,
+          linked,
+          score: primaryScore * 3 + linkedScore,
+        };
       })
       .filter((item) => item.score > 0 || terms.length === 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
+      .slice(0, summaryMode ? 5 : 20);
+
+    const rankedDocuments = structuredDocuments
+      .filter((item) => item.score > 0 || terms.length === 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, summaryMode ? 30 : 50);
 
     const candidateFiles = archiveFiles
       .filter(
@@ -344,32 +380,21 @@ export async function POST(request: Request) {
       const { data, error } = await admin.storage
         .from("documents")
         .download(candidate.storagePath);
-      if (error || !data) {
-        console.warn("Assistant skipped unreadable file", {
-          userId: user.id,
-          storagePath: candidate.storagePath,
-          message: error?.message,
-        });
-        continue;
-      }
+      if (error || !data) continue;
 
       const bytes = Buffer.from(await data.arrayBuffer());
       if (!bytes.length || bytes.length > MAX_FILE_BYTES) continue;
       if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
 
-      const detectedMime = mimeType(candidate.fileName, data.type);
-      if (![
-        "application/pdf",
-        "image/jpeg",
-        "image/png",
-      ].includes(detectedMime)) {
+      const mime = getMimeType(candidate.fileName, data.type);
+      if (!["application/pdf", "image/jpeg", "image/png"].includes(mime)) {
         continue;
       }
 
       selectedFiles.push({
         info: candidate,
-        mime: detectedMime,
-        dataUrl: `data:${detectedMime};base64,${bytes.toString("base64")}`,
+        mime,
+        dataUrl: `data:${mime};base64,${bytes.toString("base64")}`,
       });
       totalBytes += bytes.length;
     }
@@ -382,22 +407,28 @@ export async function POST(request: Request) {
         description: practice.description,
         status: practice.status,
         openedAt: practice.opened_at,
-        documents: linked.slice(0, 20).map(({ score: _score, ...document }) => document),
+        documents: linked.slice(0, 30).map(({ score: _score, ...document }) =>
+          document,
+        ),
       })),
       documents: rankedDocuments.map(({ score: _score, ...document }) => document),
       filesRead: selectedFiles.map(({ info }) => ({
         documentId: info.documentId,
         practiceId: info.practiceId,
-        kind: info.kind,
         title: info.title,
-        fileName: info.fileName,
       })),
     };
 
+    const summaryRules = summaryMode
+      ? language === "it"
+        ? `\nMODALITÀ RIEPILOGO PRATICA:\n- Scegli una sola pratica, quella più pertinente.\n- Usa questo ordine: Pratica; Stato; Documenti presenti; Pagamenti e importi; Scadenze; Allegati o prove mancanti; Controlli consigliati.\n- Elenca massimo 6 documenti importanti.\n- Calcola i totali solo quando i dati sono chiaramente disponibili.\n- Segnala come mancante una ricevuta o prova di pagamento solo per documenti che risultano pagati o che normalmente la richiedono.\n- Non dichiarare incompleto un documento puramente informativo, una visura, un certificato o una comunicazione solo perché non ha ricevute.\n- Evidenzia incongruenze tra importo totale, pagato e residuo.\n- Scrivi come un riepilogo professionale destinato a commercialista o CAF.\n- Massimo 180 parole.`
+        : `\nCASE SUMMARY MODE:\n- Choose only the most relevant case.\n- Use this order: Case; Status; Available documents; Payments and amounts; Deadlines; Missing attachments or proofs; Recommended checks.\n- List at most 6 important documents.\n- Compute totals only when clearly supported.\n- Mark a receipt or payment proof as missing only when the document is paid or normally requires one.\n- Do not mark informational records, certificates, or notices incomplete merely because they lack receipts.\n- Highlight inconsistencies between total, paid, and remaining amounts.\n- Write for an accountant or tax assistance office.\n- Maximum 180 words.`
+      : "";
+
     const instructions =
       language === "it"
-        ? `Sei DocuMio Assistant, un assistente amministrativo personale.\nRispondi usando esclusivamente l'archivio strutturato e il contenuto dei file allegati a questa richiesta.\n\nRegole:\n- Cerca nelle pratiche, nei documenti, negli allegati e nel testo reale dei file forniti.\n- I file forniti sono una selezione privata dei risultati più pertinenti dell'utente autenticato.\n- Se trovi una parola, un nome, un codice o una frase dentro un file, indica il titolo del documento o allegato in cui compare.\n- Se l'utente chiede una pratica, indica nome esatto, stato e documenti collegati rilevanti.\n- Non inventare informazioni e segnala chiaramente ciò che non è disponibile.\n- Sii breve, concreto e prudente.\n- Restituisci solo ID realmente utili.\n- Non dare consulenza legale, medica o finanziaria definitiva.\n\nDomanda:\n${question}\n\nArchivio:\n${JSON.stringify(archive)}`
-        : `You are DocuMio Assistant, a personal administrative assistant.\nAnswer only from the structured archive and the actual contents of files attached to this request.\n\nRules:\n- Search cases, documents, attachments, and the actual text inside supplied files.\n- Supplied files are a private selection of the authenticated user's most relevant results.\n- When a word, name, code, or phrase is found inside a file, name that document or attachment.\n- For case questions, state the exact case title, status, and relevant linked documents.\n- Never invent missing information.\n- Be brief, concrete, and careful.\n- Return only genuinely useful IDs.\n- Do not provide definitive legal, medical, or financial advice.\n\nQuestion:\n${question}\n\nArchive:\n${JSON.stringify(archive)}`;
+        ? `Sei DocuMio Assistant, un assistente amministrativo personale.\nRispondi esclusivamente usando l'archivio e il contenuto reale dei file forniti.\n\nRegole:\n- Cerca in pratiche, documenti, allegati e testo interno dei file.\n- Non mostrare mai UUID, ID tecnici, percorsi Storage o nomi file casuali.\n- Cita solo titoli leggibili delle pratiche e dei documenti.\n- Non includere logo, icone o immagini decorative salvo richiesta esplicita.\n- Restituisci soltanto ID utili nei campi strutturati, mai nel testo.\n- Non inventare dati.\n- Sii concreto e leggibile.\n- Non dare consulenza legale, medica o finanziaria definitiva.${summaryRules}\n\nDomanda:\n${question}\n\nArchivio:\n${JSON.stringify(archive)}`
+        : `You are DocuMio Assistant, a personal administrative assistant.\nAnswer only from the archive and actual supplied file contents.\n\nRules:\n- Search cases, documents, attachments, and text inside files.\n- Never display UUIDs, technical IDs, Storage paths, or random file names.\n- Mention only readable case and document titles.\n- Ignore logos, icons, and decorative images unless explicitly requested.\n- Return useful IDs only in structured fields, never in the answer text.\n- Never invent data.\n- Be concrete and readable.\n- Do not provide definitive legal, medical, or financial advice.${summaryRules}\n\nQuestion:\n${question}\n\nArchive:\n${JSON.stringify(archive)}`;
 
     const content: Array<Record<string, unknown>> = [
       { type: "input_text", text: instructions },
@@ -425,7 +456,7 @@ export async function POST(request: Request) {
         text: {
           format: {
             type: "json_schema",
-            name: "documio_assistant_fulltext_answer",
+            name: "documio_assistant_answer",
             strict: true,
             schema: {
               type: "object",
@@ -440,7 +471,7 @@ export async function POST(request: Request) {
                 practiceIds: {
                   type: "array",
                   items: { type: "string" },
-                  maxItems: 10,
+                  maxItems: 3,
                 },
               },
               required: ["answer", "documentIds", "practiceIds"],
@@ -468,6 +499,7 @@ export async function POST(request: Request) {
     const outputText = result.output
       ?.flatMap((item) => item.content ?? [])
       .find((part) => part.type === "output_text")?.text;
+
     if (!outputText) {
       return NextResponse.json(
         {
@@ -489,7 +521,7 @@ export async function POST(request: Request) {
     const validPracticeIds = new Set(practices.map((item) => item.id));
     const practiceIds = (parsed.practiceIds ?? [])
       .filter((id) => validPracticeIds.has(id))
-      .slice(0, 10);
+      .slice(0, summaryMode ? 1 : 3);
     const linkedIds = structuredDocuments
       .filter((document) => practiceIds.includes(document.practiceId ?? ""))
       .map((document) => document.id);
@@ -505,6 +537,7 @@ export async function POST(request: Request) {
       documentIds,
       practiceIds,
       filesInspected: selectedFiles.length,
+      mode: summaryMode ? "practice-summary" : "search",
     });
   } catch (error) {
     console.error("Assistant route error:", error);
