@@ -46,6 +46,31 @@ type AttachmentRow = {
   notes: string | null;
 };
 
+type RankedDocument = {
+  id: string;
+  practiceId: string | null;
+  practiceTitle: string | null;
+  title: string | null;
+  category: string | null;
+  summary: string | null;
+  keywords: unknown[];
+  expiryDate: string | null;
+  paymentStatus: string | null;
+  totalAmount: number | null;
+  paidAmount: number | null;
+  remainingAmount: number | null;
+  paymentMethod: string | null;
+  attachments: Array<{
+    title: string | null;
+    type: string | null;
+    paymentDate: string | null;
+    amount: number | null;
+    paymentMethod: string | null;
+    notes: string | null;
+  }>;
+  score: number;
+};
+
 type ArchiveFile = {
   documentId: string;
   practiceId: string | null;
@@ -132,6 +157,14 @@ function isDecorativeDocument(title: string, fileName: string) {
   return ["logo", "icona", "icon", "immagine grafica"].some((term) =>
     value.includes(term),
   );
+}
+
+function stripTechnicalIds(answer: string) {
+  return answer
+    .replace(/\s*[—-]?\s*ID\s*:\s*[0-9a-f]{8}-[0-9a-f-]{27,36}/gi, "")
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
 }
 
 export async function POST(request: Request) {
@@ -232,26 +265,24 @@ export async function POST(request: Request) {
     const practices = (practiceResult.data ?? []) as PracticeRow[];
     const documents = (documentResult.data ?? []) as DocumentRow[];
     const attachments = (attachmentResult.data ?? []) as AttachmentRow[];
+    const terms = getTerms(question);
+    const summaryMode = isSummaryRequest(question);
+
     const practiceMap = new Map(practices.map((item) => [item.id, item]));
     const attachmentsByDocument = new Map<string, AttachmentRow[]>();
-
     for (const attachment of attachments) {
       const list = attachmentsByDocument.get(attachment.document_id) ?? [];
       list.push(attachment);
       attachmentsByDocument.set(attachment.document_id, list);
     }
 
-    const terms = getTerms(question);
-    const summaryMode = isSummaryRequest(question);
-    const archiveFiles: ArchiveFile[] = [];
-
-    const structuredDocuments = documents.map((document) => {
+    const structuredDocuments: RankedDocument[] = documents.map((document) => {
       const practice = document.practice_id
         ? practiceMap.get(document.practice_id)
         : undefined;
       const linkedAttachments = attachmentsByDocument.get(document.id) ?? [];
       const keywords = Array.isArray(document.keywords) ? document.keywords : [];
-      const documentText = [
+      const searchableText = [
         document.title,
         document.file_name,
         document.category,
@@ -259,54 +290,13 @@ export async function POST(request: Request) {
         keywords.join(" "),
         practice?.title,
         practice?.description,
-      ].join(" ");
-      const documentScore = scoreText(documentText, terms);
-
-      if (!isDecorativeDocument(document.title ?? "", document.file_name ?? "")) {
-        archiveFiles.push({
-          documentId: document.id,
-          practiceId: document.practice_id,
-          title: document.title ?? document.file_name ?? "Documento",
-          fileName: document.file_name ?? "documento.pdf",
-          storagePath: document.storage_path,
-          score: documentScore + (document.storage_path ? 1 : 0),
-        });
-      }
-
-      const structuredAttachments = linkedAttachments.map((attachment) => {
-        const attachmentText = [
+        ...linkedAttachments.flatMap((attachment) => [
           attachment.title,
           attachment.attachment_type,
           attachment.file_name,
           attachment.notes,
-          practice?.title,
-          document.title,
-        ].join(" ");
-        if (
-          !isDecorativeDocument(
-            attachment.title ?? "",
-            attachment.file_name ?? "",
-          )
-        ) {
-          archiveFiles.push({
-            documentId: document.id,
-            practiceId: document.practice_id,
-            title: attachment.title ?? attachment.file_name ?? "Allegato",
-            fileName: attachment.file_name ?? "allegato.pdf",
-            storagePath: attachment.storage_path,
-            score: scoreText(attachmentText, terms) +
-              (attachment.storage_path ? 1 : 0),
-          });
-        }
-        return {
-          title: attachment.title,
-          type: attachment.attachment_type,
-          paymentDate: attachment.payment_date,
-          amount: attachment.amount,
-          paymentMethod: attachment.payment_method,
-          notes: attachment.notes,
-        };
-      });
+        ]),
+      ].join(" ");
 
       return {
         id: document.id,
@@ -322,8 +312,15 @@ export async function POST(request: Request) {
         paidAmount: document.paid_amount,
         remainingAmount: document.remaining_amount,
         paymentMethod: document.payment_method,
-        attachments: structuredAttachments,
-        score: documentScore,
+        attachments: linkedAttachments.map((attachment) => ({
+          title: attachment.title,
+          type: attachment.attachment_type,
+          paymentDate: attachment.payment_date,
+          amount: attachment.amount,
+          paymentMethod: attachment.payment_method,
+          notes: attachment.notes,
+        })),
+        score: scoreText(searchableText, terms),
       };
     });
 
@@ -332,7 +329,7 @@ export async function POST(request: Request) {
         const linked = structuredDocuments.filter(
           (document) => document.practiceId === practice.id,
         );
-        const primaryScore = scoreText(
+        const practiceScore = scoreText(
           [
             practice.title,
             practice.practice_type,
@@ -345,24 +342,73 @@ export async function POST(request: Request) {
         return {
           practice,
           linked,
-          score: primaryScore * 3 + linkedScore,
+          score: practiceScore * 3 + linkedScore,
         };
       })
       .filter((item) => item.score > 0 || terms.length === 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, summaryMode ? 5 : 20);
+      .sort((a, b) => b.score - a.score);
 
-    const rankedDocuments = structuredDocuments
-      .filter((item) => item.score > 0 || terms.length === 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, summaryMode ? 30 : 50);
+    const selectedPractice = summaryMode ? rankedPractices[0] ?? null : null;
+    const selectedPracticeId = selectedPractice?.practice.id ?? null;
+
+    const scopedDocuments = summaryMode
+      ? selectedPractice?.linked ?? []
+      : structuredDocuments
+          .filter((item) => item.score > 0 || terms.length === 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 50);
+
+    const scopedDocumentIds = new Set(scopedDocuments.map((document) => document.id));
+    const archiveFiles: ArchiveFile[] = [];
+
+    for (const document of documents) {
+      if (!scopedDocumentIds.has(document.id)) continue;
+      const documentScore = structuredDocuments.find((item) => item.id === document.id)?.score ?? 0;
+
+      if (!isDecorativeDocument(document.title ?? "", document.file_name ?? "")) {
+        archiveFiles.push({
+          documentId: document.id,
+          practiceId: document.practice_id,
+          title: document.title ?? document.file_name ?? "Documento",
+          fileName: document.file_name ?? "documento.pdf",
+          storagePath: document.storage_path,
+          score: documentScore + (document.storage_path ? 1 : 0),
+        });
+      }
+
+      for (const attachment of attachmentsByDocument.get(document.id) ?? []) {
+        if (isDecorativeDocument(attachment.title ?? "", attachment.file_name ?? "")) {
+          continue;
+        }
+        const attachmentScore = scoreText(
+          [
+            attachment.title,
+            attachment.attachment_type,
+            attachment.file_name,
+            attachment.notes,
+            document.title,
+            practiceMap.get(document.practice_id ?? "")?.title,
+          ].join(" "),
+          terms,
+        );
+        archiveFiles.push({
+          documentId: document.id,
+          practiceId: document.practice_id,
+          title: attachment.title ?? attachment.file_name ?? "Allegato",
+          fileName: attachment.file_name ?? "allegato.pdf",
+          storagePath: attachment.storage_path,
+          score: attachmentScore + (attachment.storage_path ? 1 : 0),
+        });
+      }
+    }
 
     const candidateFiles = archiveFiles
       .filter(
         (file) =>
           file.storagePath &&
           file.storagePath.startsWith(`${user.id}/`) &&
-          (file.score > 0 || terms.length === 0),
+          (!summaryMode || file.practiceId === selectedPracticeId) &&
+          (summaryMode || file.score > 0 || terms.length === 0),
       )
       .sort((a, b) => b.score - a.score);
 
@@ -399,30 +445,54 @@ export async function POST(request: Request) {
       totalBytes += bytes.length;
     }
 
-    const archive = {
-      practices: rankedPractices.map(({ practice, linked }) => ({
-        id: practice.id,
-        title: practice.title,
-        practiceType: practice.practice_type,
-        description: practice.description,
-        status: practice.status,
-        openedAt: practice.opened_at,
-        documents: linked.slice(0, 30).map(({ score: _score, ...document }) =>
-          document,
-        ),
-      })),
-      documents: rankedDocuments.map(({ score: _score, ...document }) => document),
-      filesRead: selectedFiles.map(({ info }) => ({
-        documentId: info.documentId,
-        practiceId: info.practiceId,
-        title: info.title,
-      })),
-    };
+    const archive = summaryMode
+      ? {
+          practices: selectedPractice
+            ? [
+                {
+                  id: selectedPractice.practice.id,
+                  title: selectedPractice.practice.title,
+                  practiceType: selectedPractice.practice.practice_type,
+                  description: selectedPractice.practice.description,
+                  status: selectedPractice.practice.status,
+                  openedAt: selectedPractice.practice.opened_at,
+                  documents: scopedDocuments
+                    .slice(0, 30)
+                    .map(({ score: _score, ...document }) => document),
+                },
+              ]
+            : [],
+          documents: scopedDocuments.map(({ score: _score, ...document }) => document),
+          filesRead: selectedFiles.map(({ info }) => ({
+            documentId: info.documentId,
+            practiceId: info.practiceId,
+            title: info.title,
+          })),
+        }
+      : {
+          practices: rankedPractices.slice(0, 20).map(({ practice, linked }) => ({
+            id: practice.id,
+            title: practice.title,
+            practiceType: practice.practice_type,
+            description: practice.description,
+            status: practice.status,
+            openedAt: practice.opened_at,
+            documents: linked
+              .slice(0, 20)
+              .map(({ score: _score, ...document }) => document),
+          })),
+          documents: scopedDocuments.map(({ score: _score, ...document }) => document),
+          filesRead: selectedFiles.map(({ info }) => ({
+            documentId: info.documentId,
+            practiceId: info.practiceId,
+            title: info.title,
+          })),
+        };
 
     const summaryRules = summaryMode
       ? language === "it"
-        ? `\nMODALITÀ RIEPILOGO PRATICA:\n- Scegli una sola pratica, quella più pertinente.\n- Usa questo ordine: Pratica; Stato; Documenti presenti; Pagamenti e importi; Scadenze; Allegati o prove mancanti; Controlli consigliati.\n- Elenca massimo 6 documenti importanti.\n- Calcola i totali solo quando i dati sono chiaramente disponibili.\n- Segnala come mancante una ricevuta o prova di pagamento solo per documenti che risultano pagati o che normalmente la richiedono.\n- Non dichiarare incompleto un documento puramente informativo, una visura, un certificato o una comunicazione solo perché non ha ricevute.\n- Evidenzia incongruenze tra importo totale, pagato e residuo.\n- Scrivi come un riepilogo professionale destinato a commercialista o CAF.\n- Massimo 180 parole.`
-        : `\nCASE SUMMARY MODE:\n- Choose only the most relevant case.\n- Use this order: Case; Status; Available documents; Payments and amounts; Deadlines; Missing attachments or proofs; Recommended checks.\n- List at most 6 important documents.\n- Compute totals only when clearly supported.\n- Mark a receipt or payment proof as missing only when the document is paid or normally requires one.\n- Do not mark informational records, certificates, or notices incomplete merely because they lack receipts.\n- Highlight inconsistencies between total, paid, and remaining amounts.\n- Write for an accountant or tax assistance office.\n- Maximum 180 words.`
+        ? `\nMODALITÀ RIEPILOGO PRATICA:\n- Nell'archivio è presente una sola pratica: usa esclusivamente quella.\n- Usa esclusivamente documenti, allegati, importi e scadenze presenti nella pratica fornita.\n- Non citare o dedurre mai documenti, polizze, scadenze o pagamenti esterni alla pratica.\n- Usa questo ordine: Pratica; Stato; Documenti presenti; Pagamenti e importi; Scadenze; Allegati o prove mancanti; Controlli consigliati.\n- Elenca massimo 6 documenti importanti.\n- Calcola i totali solo quando i dati sono chiaramente disponibili.\n- Segnala come mancante una ricevuta o prova di pagamento solo per documenti che risultano pagati o che normalmente la richiedono.\n- Non dichiarare incompleto un documento informativo, una visura, un certificato o una comunicazione solo perché non ha ricevute.\n- Se la pratica non contiene una certa informazione, scrivi che non risulta disponibile.\n- Massimo 180 parole.`
+        : `\nCASE SUMMARY MODE:\n- The archive contains only one case: use that case exclusively.\n- Use only documents, attachments, amounts, payments, and deadlines contained in the supplied case.\n- Never mention or infer documents, policies, deadlines, or payments outside the case.\n- Use this order: Case; Status; Available documents; Payments and amounts; Deadlines; Missing attachments or proofs; Recommended checks.\n- List at most 6 important documents.\n- Compute totals only when clearly supported.\n- Mark a receipt or payment proof as missing only when normally required.\n- If information is absent, say it is not available.\n- Maximum 180 words.`
       : "";
 
     const instructions =
@@ -517,23 +587,31 @@ export async function POST(request: Request) {
       documentIds?: string[];
       practiceIds?: string[];
     };
-    const validDocumentIds = new Set(documents.map((item) => item.id));
-    const validPracticeIds = new Set(practices.map((item) => item.id));
+
+    const allowedPracticeIds = summaryMode
+      ? new Set(selectedPracticeId ? [selectedPracticeId] : [])
+      : new Set(practices.map((practice) => practice.id));
+    const allowedDocumentIds = summaryMode
+      ? new Set(scopedDocuments.map((document) => document.id))
+      : new Set(documents.map((document) => document.id));
+
     const practiceIds = (parsed.practiceIds ?? [])
-      .filter((id) => validPracticeIds.has(id))
+      .filter((id) => allowedPracticeIds.has(id))
       .slice(0, summaryMode ? 1 : 3);
-    const linkedIds = structuredDocuments
-      .filter((document) => practiceIds.includes(document.practiceId ?? ""))
-      .map((document) => document.id);
+
+    if (summaryMode && selectedPracticeId && !practiceIds.includes(selectedPracticeId)) {
+      practiceIds.unshift(selectedPracticeId);
+    }
+
     const documentIds = Array.from(
       new Set([
-        ...(parsed.documentIds ?? []).filter((id) => validDocumentIds.has(id)),
-        ...linkedIds,
+        ...(parsed.documentIds ?? []).filter((id) => allowedDocumentIds.has(id)),
+        ...(summaryMode ? scopedDocuments.map((document) => document.id) : []),
       ]),
     ).slice(0, 10);
 
     return NextResponse.json({
-      answer: parsed.answer || "",
+      answer: stripTechnicalIds(parsed.answer || ""),
       documentIds,
       practiceIds,
       filesInspected: selectedFiles.length,
