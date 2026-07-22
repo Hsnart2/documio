@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/apply-smart-upload-20mb.mjs",
+    "predev": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/apply-smart-upload-20mb.mjs",
+    "prebuild": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
