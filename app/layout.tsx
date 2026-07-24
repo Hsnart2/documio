@@ -4,6 +4,7 @@ import "./loading-fix.css";
 import "./attachment-scroll-fix.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
+import GmailSettingsLink from "./GmailSettingsLink";
 
 export const metadata: Metadata = {
   title: "Documio",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         {children}
         <PracticeVisibility />
         <PasskeyControls />
+        <GmailSettingsLink />
       </body>
     </html>
   );
