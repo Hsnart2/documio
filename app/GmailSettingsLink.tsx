@@ -5,22 +5,22 @@ import { useEffect } from "react";
 const LINK_ID = "documio-gmail-settings-link";
 
 function installGmailLink() {
-  if (document.getElementById(LINK_ID)) return;
+  const existing = document.getElementById(LINK_ID);
+  if (existing?.isConnected) return;
 
-  const settingsTitle = Array.from(document.querySelectorAll("h2")).find((element) => {
-    const text = element.textContent?.trim().toLowerCase();
-    return text === "impostazioni" || text === "settings";
-  });
-
-  const panel = settingsTitle?.closest("section");
-  if (!panel) return;
-
-  const deleteButton = Array.from(panel.querySelectorAll("button")).find((button) => {
+  const deleteButton = Array.from(document.querySelectorAll("button")).find((button) => {
     const text = button.textContent?.trim().toLowerCase() ?? "";
     return text.includes("cancella account") || text.includes("delete account");
   });
 
-  const languageIsItalian = settingsTitle?.textContent?.trim().toLowerCase() === "impostazioni";
+  if (!deleteButton?.parentElement) return;
+
+  const panel = deleteButton.parentElement;
+  const languageIsItalian = deleteButton.textContent
+    ?.trim()
+    .toLowerCase()
+    .includes("cancella account");
+
   const card = document.createElement("div");
   card.id = LINK_ID;
   card.style.border = "1px solid #c7d2fe";
@@ -47,24 +47,20 @@ function installGmailLink() {
   const link = document.createElement("a");
   link.href = "/email";
   link.textContent = languageIsItalian ? "Collega Gmail" : "Connect Gmail";
-  link.style.display = "inline-flex";
+  link.style.display = "flex";
+  link.style.width = "100%";
   link.style.alignItems = "center";
   link.style.justifyContent = "center";
-  link.style.gap = "8px";
-  link.style.padding = "10px 14px";
+  link.style.padding = "11px 14px";
   link.style.borderRadius = "12px";
   link.style.background = "#4f46e5";
   link.style.color = "#ffffff";
   link.style.fontWeight = "700";
   link.style.textDecoration = "none";
+  link.style.boxSizing = "border-box";
 
   card.append(heading, description, link);
-
-  if (deleteButton?.parentElement === panel) {
-    panel.insertBefore(card, deleteButton);
-  } else {
-    panel.appendChild(card);
-  }
+  panel.insertBefore(card, deleteButton);
 }
 
 export default function GmailSettingsLink() {
@@ -74,7 +70,12 @@ export default function GmailSettingsLink() {
     const observer = new MutationObserver(() => installGmailLink());
     observer.observe(document.body, { childList: true, subtree: true });
 
-    return () => observer.disconnect();
+    const interval = window.setInterval(installGmailLink, 500);
+
+    return () => {
+      observer.disconnect();
+      window.clearInterval(interval);
+    };
   }, []);
 
   return null;
