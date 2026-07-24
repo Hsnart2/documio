@@ -1,207 +1,198 @@
-export const metadata = {
-  title: "Termini e Condizioni | DocuMio",
+import type { Metadata } from "next";
+import { LegalDocument, Section } from "@/app/components/LegalDocument";
+
+export const metadata: Metadata = {
+  title: "Termini e condizioni | DocuMio",
   description: "Termini e condizioni di utilizzo di DocuMio.",
 };
 
-
-const pageStyle = {
-  maxWidth: 920,
-  margin: "0 auto",
-  padding: "44px 22px 90px",
-  lineHeight: 1.72,
-  color: "#172033",
-} as const;
-
-const cardStyle = {
-  padding: "18px 20px",
-  border: "1px solid #dfe5ee",
-  borderRadius: 16,
-  background: "#f8fafc",
-} as const;
-
-const noteStyle = {
-  padding: "16px 18px",
-  borderLeft: "4px solid #4f46e5",
-  background: "#eef2ff",
-  borderRadius: 10,
-} as const;
-
-
 export default function TermsPage() {
   return (
-    <main style={pageStyle}>
-      <a href="/" style={{ fontWeight: 750 }}>← Torna a DocuMio</a>
-      <h1 style={{ marginTop: 26, marginBottom: 6 }}>Termini e Condizioni di utilizzo</h1>
-      <p><strong>Ultimo aggiornamento:</strong> 19 luglio 2026</p>
+    <LegalDocument
+      title="Termini e condizioni"
+      subtitle="Versione 1.0 · Ultimo aggiornamento: 24 luglio 2026"
+    >
+      <p>
+        I presenti Termini regolano l’accesso e l’utilizzo di DocuMio, servizio di
+        organizzazione, archiviazione, ricerca e analisi assistita di documenti personali
+        e professionali.
+      </p>
 
-      <div style={cardStyle}>
-        <p><strong>Fornitore del servizio</strong></p>
+      <Section title="1. Fornitore del servizio">
         <p>
-          [RAGIONE SOCIALE / NOME E COGNOME], con sede in [INDIRIZZO COMPLETO],
-          P. IVA/C.F. [DATI], email [EMAIL ASSISTENZA], PEC [PEC].
+          Il servizio è fornito da <strong>NEXTMIND SOFTWARE DI DE BELLIS DANIELE</strong>,
+          impresa individuale, P. IVA 14827340960, REA MB-2809698, con sede in Via Trento
+          e Trieste 24, 20822 Seveso (MB), Italia. PEC:
+          <a href="mailto:debellisdaniele91@pec.it"> debellisdaniele91@pec.it</a>.
         </p>
-      </div>
+      </Section>
 
-      <h2>1. Oggetto</h2>
-      <p>
-        I presenti Termini regolano l’accesso e l’utilizzo di DocuMio, servizio
-        destinato all’organizzazione, archiviazione, ricerca e analisi assistita di
-        documenti personali o professionali.
-      </p>
+      <Section title="2. Accettazione e requisiti">
+        <p>
+          Creando un account, l’utente dichiara di avere almeno 18 anni, capacità di
+          agire e di aver letto e accettato i presenti Termini e la Privacy Policy.
+          L’utente è responsabile dell’esattezza dei dati forniti, della sicurezza delle
+          proprie credenziali e delle attività effettuate tramite l’account.
+        </p>
+      </Section>
 
-      <h2>2. Accettazione</h2>
-      <p>
-        Creando un account, l’utente dichiara di aver letto e accettato i presenti
-        Termini, la Privacy Policy, la Cookie Policy e l’Informativa IA. Chi non
-        accetta tali documenti non deve utilizzare il servizio.
-      </p>
+      <Section title="3. Funzioni di DocuMio">
+        <p>
+          DocuMio consente, a seconda del piano disponibile, di caricare e organizzare
+          documenti, creare pratiche, associare allegati, gestire scadenze, appuntamenti,
+          pagamenti e rate, ricevere promemoria e interrogare l’archivio tramite funzioni
+          di intelligenza artificiale.
+        </p>
+      </Section>
 
-      <h2>3. Requisiti dell’utente</h2>
-      <p>
-        L’utente deve avere almeno 18 anni e la capacità di concludere un contratto.
-        È responsabile dell’esattezza dei dati forniti, della riservatezza delle
-        credenziali e delle attività svolte tramite il proprio account.
-      </p>
+      <Section title="4. Prova gratuita e abbonamenti">
+        <p>
+          Durata della prova, prezzo, periodicità, funzioni incluse, limiti e data del
+          primo addebito sono mostrati chiaramente prima dell’attivazione. Salvo diversa
+          indicazione, al termine della prova l’abbonamento si rinnova automaticamente
+          secondo il piano scelto fino alla disdetta.
+        </p>
+        <p>
+          Gli acquisti effettuati tramite App Store o Google Play sono gestiti dal
+          relativo store e soggetti anche alle sue condizioni. L’utente può annullare
+          dalle impostazioni dello store o dal canale indicato al momento dell’acquisto.
+          L’annullamento impedisce il rinnovo successivo ma non interrompe il periodo già
+          pagato o la prova già iniziata, salvo diversa previsione obbligatoria.
+        </p>
+        <p>
+          Prezzi e imposte possono variare per nuovi periodi contrattuali previa
+          comunicazione adeguata. Nessun addebito viene effettuato senza un ordine o una
+          conferma tramite il sistema di pagamento applicabile.
+        </p>
+      </Section>
 
-      <h2>4. Versione gratuita, prova e piani futuri</h2>
-      <p>
-        DocuMio può essere reso disponibile gratuitamente, in beta, in prova o con
-        piani a pagamento. Durata, limiti, prezzi e funzioni applicabili saranno
-        mostrati prima dell’adesione. L’introduzione futura di un piano a pagamento
-        non comporterà addebiti senza il consenso espresso dell’utente.
-      </p>
-      <p>
-        Prima dell’attivazione di abbonamenti verranno indicati prezzo, periodicità,
-        rinnovo, modalità di disdetta, imposte applicabili ed eventuale diritto di
-        recesso. Per acquisti effettuati tramite store si applicano anche le
-        condizioni di Apple o Google.
-      </p>
+      <Section title="5. Diritto di recesso e rimborsi">
+        <p>
+          Restano fermi i diritti inderogabili del consumatore. Per contenuti o servizi
+          digitali la disciplina del recesso può variare in base all’esecuzione immediata,
+          al consenso espresso e al canale d’acquisto. Per acquisti tramite Apple o Google,
+          richieste e rimborsi sono gestiti secondo le procedure dello store. Eventuali
+          condizioni più favorevoli mostrate durante l’acquisto prevalgono.
+        </p>
+      </Section>
 
-      <h2>5. Licenza d’uso</h2>
-      <p>
-        Il fornitore concede una licenza personale, limitata, revocabile, non
-        esclusiva e non trasferibile per utilizzare DocuMio secondo i presenti
-        Termini. Non è consentito copiare, rivendere, decompilare, aggirare misure di
-        sicurezza o utilizzare il servizio per creare prodotti concorrenti, salvo
-        quanto inderogabilmente consentito dalla legge.
-      </p>
+      <Section title="6. Licenza d’uso">
+        <p>
+          NextMind Software concede una licenza personale, limitata, non esclusiva, non
+          trasferibile e revocabile per utilizzare DocuMio secondo questi Termini. Non è
+          consentito copiare, rivendere, decompilare, aggirare misure di sicurezza,
+          effettuare scraping massivo o utilizzare il servizio per realizzare prodotti
+          concorrenti, salvo quanto inderogabilmente consentito dalla legge.
+        </p>
+      </Section>
 
-      <h2>6. Contenuti dell’utente</h2>
-      <p>
-        L’utente mantiene i diritti sui documenti e contenuti caricati. Concede al
-        fornitore e ai suoi responsabili tecnici esclusivamente i diritti necessari
-        per archiviare, elaborare, analizzare, trasmettere e mostrare tali contenuti
-        al fine di erogare il servizio.
-      </p>
-      <p>
-        L’utente garantisce di avere il diritto di caricare i contenuti e di non
-        violare privacy, proprietà intellettuale o altri diritti di terzi.
-      </p>
+      <Section title="7. Contenuti dell’utente">
+        <p>
+          L’utente conserva i diritti sui contenuti caricati e concede al fornitore e ai
+          responsabili tecnici soltanto le facoltà necessarie a conservarli, elaborarli,
+          analizzarli, trasmetterli e mostrarli per erogare il servizio.
+        </p>
+        <p>
+          L’utente garantisce di essere autorizzato a caricare i contenuti e di non
+          violare privacy, proprietà intellettuale, segreto professionale o altri diritti.
+          È vietato caricare materiale illecito, malware o dati acquisiti abusivamente.
+        </p>
+      </Section>
 
-      <h2>7. Utilizzi vietati</h2>
-      <ul>
-        <li>attività illecite, fraudolente o dannose;</li>
-        <li>caricamento di malware o contenuti che violano diritti di terzi;</li>
-        <li>accesso non autorizzato ad account, dati o sistemi;</li>
-        <li>uso massivo o automatizzato non autorizzato;</li>
-        <li>tentativi di eludere limiti, controlli o misure di sicurezza;</li>
-        <li>uso del servizio come unico archivio di documenti indispensabili.</li>
-      </ul>
+      <Section title="8. Dati sanitari e dati di terzi">
+        <p>
+          L’utente decide autonomamente se caricare documenti contenenti dati sanitari o
+          altre categorie particolari. Con il caricamento conferma di essere autorizzato
+          e richiede il trattamento necessario alla funzione scelta. Per dati di terzi,
+          l’utente resta responsabile della relativa base giuridica e degli obblighi di
+          informazione applicabili.
+        </p>
+      </Section>
 
-      <h2>8. Funzioni di intelligenza artificiale</h2>
-      <p>
-        Classificazioni, riepiloghi, estrazioni, collegamenti e risposte generate
-        automaticamente possono essere inesatti, incompleti o non aggiornati.
-        L’utente deve verificare ogni risultato prima di utilizzarlo.
-      </p>
-      <p>
-        DocuMio non fornisce consulenza legale, fiscale, medica, assicurativa o
-        finanziaria e non sostituisce professionisti qualificati.
-      </p>
+      <Section title="9. Intelligenza artificiale">
+        <p>
+          Classificazioni, riepiloghi, estrazioni, collegamenti, importi, scadenze e
+          risposte generate automaticamente possono essere inesatti, incompleti o non
+          aggiornati. L’utente deve verificare ogni risultato e il documento originale.
+        </p>
+        <p>
+          DocuMio non fornisce consulenza legale, fiscale, contabile, medica, assicurativa
+          o finanziaria e non sostituisce professionisti qualificati.
+        </p>
+      </Section>
 
-      <h2>9. Backup e disponibilità</h2>
-      <p>
-        L’utente deve conservare una copia indipendente dei documenti importanti.
-        Nonostante siano adottate misure ragionevoli, il servizio può essere
-        temporaneamente indisponibile per manutenzione, guasti, aggiornamenti,
-        eventi di forza maggiore o problemi di fornitori terzi.
-      </p>
+      <Section title="10. Obblighi e utilizzi vietati">
+        <ul>
+          <li>non compromettere sicurezza, disponibilità o prestazioni del servizio;</li>
+          <li>non tentare accessi non autorizzati ad account, dati o infrastrutture;</li>
+          <li>non aggirare limiti di piano, controlli o sistemi di pagamento;</li>
+          <li>non utilizzare DocuMio per attività illecite, fraudolente o lesive;</li>
+          <li>non condividere l’account in modo incompatibile con il piano acquistato.</li>
+        </ul>
+      </Section>
 
-      <h2>10. Modifiche al servizio</h2>
-      <p>
-        Funzioni, limiti e interfaccia possono essere aggiornati, sostituiti o
-        rimossi. Durante la beta possono verificarsi errori e modifiche frequenti.
-        Le variazioni contrattuali rilevanti saranno comunicate con congruo preavviso,
-        salvo urgenze di sicurezza o obblighi di legge.
-      </p>
+      <Section title="11. Disponibilità, backup e modifiche">
+        <p>
+          Il servizio può essere temporaneamente indisponibile per manutenzione, guasti,
+          aggiornamenti, sicurezza, forza maggiore o problemi di fornitori terzi.
+          L’utente deve conservare una copia indipendente dei documenti indispensabili.
+        </p>
+        <p>
+          Funzioni e interfaccia possono evolvere. Modifiche contrattuali sostanziali
+          saranno comunicate con congruo preavviso, salvo urgenze di sicurezza o obblighi
+          di legge. Se richiesto, l’uso successivo sarà subordinato all’accettazione della
+          nuova versione.
+        </p>
+      </Section>
 
-      <h2>11. Sospensione e chiusura</h2>
-      <p>
-        L’accesso può essere sospeso in caso di violazione dei Termini, rischio per
-        la sicurezza, abuso o richiesta dell’autorità. L’utente può cessare l’uso e
-        cancellare l’account dalle Impostazioni.
-      </p>
+      <Section title="12. Sospensione e cessazione">
+        <p>
+          L’accesso può essere sospeso in caso di violazione dei Termini, rischio per la
+          sicurezza, mancato pagamento, abuso o richiesta dell’autorità. Ove possibile,
+          sarà fornita comunicazione e possibilità di regolarizzare.
+        </p>
+        <p>
+          L’utente può cancellare l’account dalle Impostazioni. Prima della cancellazione
+          deve scaricare i contenuti che intende conservare. Gli effetti sui dati sono
+          descritti nella Privacy Policy.
+        </p>
+      </Section>
 
-      <h2>12. Effetti della cancellazione</h2>
-      <p>
-        La cancellazione comporta la perdita dell’accesso ai contenuti e la rimozione
-        dei dati associati, salvo eventuali obblighi legali di conservazione. Prima
-        di cancellare l’account l’utente deve scaricare ciò che intende conservare.
-      </p>
+      <Section title="13. Proprietà intellettuale">
+        <p>
+          Software, marchi, interfaccia, testi, grafica, database e componenti di DocuMio
+          appartengono a NextMind Software o ai rispettivi licenzianti e sono protetti
+          dalla normativa applicabile. Nessun diritto viene trasferito oltre alla licenza
+          d’uso espressamente concessa.
+        </p>
+      </Section>
 
-      <h2>13. Proprietà intellettuale</h2>
-      <p>
-        Software, marchio, interfaccia, testi, grafica e componenti di DocuMio sono
-        protetti dalla normativa applicabile e appartengono al fornitore o ai
-        rispettivi licenzianti.
-      </p>
+      <Section title="14. Responsabilità">
+        <p>
+          Restano impregiudicati i diritti inderogabili dei consumatori e le responsabilità
+          che non possono essere escluse per legge. Nei limiti consentiti, il fornitore non
+          risponde di danni causati da dati errati inseriti dall’utente, risultati IA non
+          verificati, uso improprio, perdita di credenziali, mancata conservazione di copie
+          autonome o servizi di terzi fuori dal proprio ragionevole controllo.
+        </p>
+      </Section>
 
-      <h2>14. Garanzie e responsabilità</h2>
-      <p>
-        Nei limiti consentiti dalla legge, il servizio è fornito “così com’è” e
-        secondo disponibilità. Restano impregiudicati i diritti inderogabili dei
-        consumatori. Il fornitore non risponde di errori derivanti da dati inseriti
-        dall’utente, risultati IA non verificati, uso improprio o mancata
-        conservazione di copie autonome.
-      </p>
-      <p>
-        Nessuna clausola esclude responsabilità che non possa essere esclusa per
-        legge, inclusa quella per dolo o colpa grave ove applicabile.
-      </p>
+      <Section title="15. Legge applicabile e controversie">
+        <p>
+          I Termini sono regolati dalla legge italiana. Per l’utente consumatore resta
+          competente il giudice del luogo di residenza o domicilio e restano applicabili
+          tutte le tutele inderogabili europee e nazionali. Prima di agire, le parti sono
+          invitate a tentare una soluzione bonaria contattando la PEC del fornitore.
+        </p>
+      </Section>
 
-      <h2>15. Servizi di terzi</h2>
-      <p>
-        DocuMio utilizza infrastrutture e servizi di terzi. Il loro funzionamento può
-        essere soggetto a condizioni e limitazioni indipendenti dal fornitore.
-      </p>
-
-      <h2>16. Assistenza</h2>
-      <p>
-        Le richieste possono essere inviate a <strong>[EMAIL ASSISTENZA]</strong>.
-        Durante la beta non è garantito un tempo minimo di risposta, salvo diverso
-        accordo scritto.
-      </p>
-
-      <h2>17. Legge applicabile e controversie</h2>
-      <p>
-        I Termini sono regolati dalla legge italiana. Per gli utenti consumatori
-        resta competente il giudice del luogo di residenza o domicilio del
-        consumatore e restano applicabili le tutele inderogabili previste dalla
-        normativa europea e nazionale.
-      </p>
-
-      <h2>18. Clausole finali</h2>
-      <p>
-        L’eventuale invalidità di una clausola non pregiudica le altre. Il mancato
-        esercizio di un diritto non costituisce rinuncia. I titoli hanno funzione
-        descrittiva.
-      </p>
-
-      <p style={{ marginTop: 42, color: "#697386" }}>
-        Completare tutti i campi tra parentesi quadre e sottoporre il documento a
-        revisione professionale prima dell’avvio di abbonamenti o del lancio
-        commerciale.
-      </p>
-    </main>
+      <Section title="16. Clausole finali">
+        <p>
+          L’eventuale invalidità di una clausola non pregiudica le altre. Il mancato
+          esercizio di un diritto non costituisce rinuncia. Privacy Policy e Cookie Policy
+          sono richiamate per gli aspetti di rispettiva competenza.
+        </p>
+      </Section>
+    </LegalDocument>
   );
 }
