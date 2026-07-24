@@ -88,9 +88,9 @@ export async function GET(request: Request) {
     }, { onConflict: "user_id,provider" });
 
     if (error) throw error;
-    return NextResponse.redirect(`${appUrl}/?gmail=connected`);
+    return NextResponse.redirect(`${appUrl}/email?gmail=connected`);
   } catch (error) {
     console.error("Gmail callback failed", error);
-    return NextResponse.redirect(`${appUrl}/?gmail=error`);
+    return NextResponse.redirect(`${appUrl}/email?gmail=error`);
   }
 }
