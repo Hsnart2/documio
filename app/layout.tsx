@@ -8,6 +8,7 @@ import "./ui-mode.css";
 import "./automation-controls.css";
 import "./activity-center.css";
 import "./automation-run-now.css";
+import "./smart-practice.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
@@ -18,6 +19,7 @@ import AdvancedEmailAutomation from "./AdvancedEmailAutomation";
 import PostUploadPracticePrompt from "./PostUploadPracticePrompt";
 import AutomationActivityCenter from "./AutomationActivityCenter";
 import AutomationRunNowButton from "./AutomationRunNowButton";
+import SmartPracticeCenter from "./SmartPracticeCenter";
 
 export const metadata: Metadata = {
   title: "Documio",
@@ -46,6 +48,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <PostUploadPracticePrompt />
         <AutomationActivityCenter />
         <AutomationRunNowButton />
+        <SmartPracticeCenter />
         <PracticeVisibility />
         <PasskeyControls />
         <GmailSettingsLink />
