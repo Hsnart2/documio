@@ -58,6 +58,36 @@ async function patchDailyAutomation() {
     );
   }
 
+  const legacyWindow = `  const today = romeDate();
+  const limitDate = addDays(today, 7);`;
+  const milestoneWindow = `  const today = romeDate();
+  const reminderMilestones = new Set([30, 7, 1, 0]);`;
+  if (source.includes(legacyWindow)) {
+    source = source.replace(legacyWindow, milestoneWindow);
+  }
+
+  const legacyDateFilter = `    if (!dueDate || dueDate < today || dueDate > limitDate) continue;
+    const days = daysBetween(today, dueDate);`;
+  const milestoneDateFilter = `    if (!dueDate || dueDate < today) continue;
+    const days = daysBetween(today, dueDate);
+    if (!reminderMilestones.has(days)) continue;`;
+  if (source.includes(legacyDateFilter)) {
+    source = source.replace(legacyDateFilter, milestoneDateFilter);
+  }
+
+  source = source.replace(
+    '      severity: days <= 1 ? "urgent" : "warning",',
+    '      severity: days <= 1 ? "urgent" : days <= 7 ? "warning" : "info",',
+  );
+  source = source.replace(
+    '      dedupeKey: `deadline:${document.id}:${dueDate}`,',
+    '      dedupeKey: `scheduled-reminder:${document.id}:${dueDate}:d${days}`,',
+  );
+  source = source.replace(
+    "      metadata: { dueDate },",
+    "      metadata: { dueDate, days, source: \"daily-automation\" },",
+  );
+
   await writeFile(routePath, source, "utf8");
 }
 
