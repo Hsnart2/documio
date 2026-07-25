@@ -25,6 +25,7 @@ import SmartPracticeCenter from "./SmartPracticeCenter";
 import PracticeAttentionCard from "./PracticeAttentionCard";
 import PushNotificationControls from "./PushNotificationControls";
 import PushDeepLinkHandler from "./PushDeepLinkHandler";
+import PushForegroundDeduper from "./PushForegroundDeduper";
 
 export const metadata: Metadata = {
   title: "DocuMio",
@@ -74,6 +75,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <AdvancedEmailAutomation />
         <PostUploadPracticePrompt />
         <PushNotificationControls />
+        <PushForegroundDeduper />
         <AutomationActivityCenter />
         <AutomationRunNowButton />
         <SmartPracticeCenter />
