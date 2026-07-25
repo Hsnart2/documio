@@ -14,6 +14,17 @@ function getBearerToken(request: NextRequest) {
   );
 }
 
+function permissionMessage(message: string) {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("permission denied") &&
+    normalized.includes("automation_preferences")
+  ) {
+    return "I permessi Supabase dell’automazione non sono ancora aggiornati. Esegui la migrazione dei permessi e riprova.";
+  }
+  return message;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const token = getBearerToken(request);
@@ -21,30 +32,27 @@ export async function POST(request: NextRequest) {
     const publishableKey =
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
     const cronSecret = process.env.CRON_SECRET;
 
-    if (
-      !token ||
-      !supabaseUrl ||
-      !publishableKey ||
-      !serviceRoleKey ||
-      !cronSecret
-    ) {
+    if (!token || !supabaseUrl || !publishableKey || !cronSecret) {
       return NextResponse.json(
         { error: "Configurazione o sessione mancante." },
         { status: 401 },
       );
     }
 
-    const authClient = createClient(supabaseUrl, publishableKey, {
+    const userClient = createClient(supabaseUrl, publishableKey, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
     });
     const {
       data: { user },
       error: userError,
-    } = await authClient.auth.getUser(token);
+    } = await userClient.auth.getUser(token);
 
     if (userError || !user) {
       return NextResponse.json({ error: "Sessione non valida." }, { status: 401 });
@@ -63,11 +71,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-
-    const { error: preferenceError } = await admin
+    // La preferenza viene salvata con la sessione dell'utente e le policy RLS,
+    // non con privilegi amministrativi.
+    const { error: preferenceError } = await userClient
       .from("automation_preferences")
       .upsert(
         {
@@ -80,7 +86,7 @@ export async function POST(request: NextRequest) {
 
     if (preferenceError) {
       return NextResponse.json(
-        { error: preferenceError.message },
+        { error: permissionMessage(preferenceError.message) },
         { status: 500 },
       );
     }
@@ -115,7 +121,11 @@ export async function POST(request: NextRequest) {
 
     if (!cronResponse.ok) {
       return NextResponse.json(
-        { error: result?.error ?? "Controllo automatico non riuscito." },
+        {
+          error: permissionMessage(
+            result?.error ?? "Controllo automatico non riuscito.",
+          ),
+        },
         { status: cronResponse.status },
       );
     }
@@ -141,7 +151,7 @@ export async function POST(request: NextRequest) {
       {
         error:
           error instanceof Error
-            ? error.message
+            ? permissionMessage(error.message)
             : "Controllo automatico non riuscito.",
       },
       { status: 500 },
