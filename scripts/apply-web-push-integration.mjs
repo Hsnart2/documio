@@ -74,6 +74,17 @@ async function patchPracticeAnchors() {
   await writeFile(pagePath, source, "utf8");
 }
 
+async function patchPushControls() {
+  const controlsPath = path.join(root, "app", "PushNotificationControls.tsx");
+  let source = await readFile(controlsPath, "utf8");
+  source = source.replace(
+    "if (!config.configured || !config.publicKey) {",
+    "if (!config || !config.configured || !config.publicKey) {",
+  );
+  await writeFile(controlsPath, source, "utf8");
+}
+
 await patchDailyAutomation();
 await patchPracticeAnchors();
+await patchPushControls();
 console.log("Applied web push integration.");
