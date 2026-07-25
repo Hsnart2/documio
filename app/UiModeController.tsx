@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Bot, LayoutDashboard, Sparkles } from "lucide-react";
+import { getSupabaseClient } from "@/lib/supabase";
 
 type UiMode = "advanced" | "standard";
 
@@ -26,22 +27,68 @@ export default function UiModeController() {
   const [mode, setMode] = useState<UiMode>("advanced");
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [isItalian, setIsItalian] = useState(true);
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  const syncPreference = useCallback(
+    async (nextMode: UiMode, changeAutomation: boolean) => {
+      const supabase = getSupabaseClient();
+      if (!supabase) return;
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      setSyncState("saving");
+      const payload: Record<string, unknown> = {
+        user_id: user.id,
+        ui_mode: nextMode,
+      };
+      if (changeAutomation) {
+        payload.daily_email_enabled = nextMode === "advanced";
+      }
+
+      const { error } = await supabase
+        .from("automation_preferences")
+        .upsert(payload, { onConflict: "user_id" });
+
+      if (error) {
+        // La modalità locale continua a funzionare anche prima dell'applicazione della migrazione SQL.
+        console.warn("Preferenza automazione non sincronizzata:", error.message);
+        setSyncState("error");
+        return;
+      }
+
+      setSyncState("saved");
+    },
+    [],
+  );
 
   useEffect(() => {
     const initialMode = readMode();
     setMode(initialMode);
     applyMode(initialMode);
+    void syncPreference(initialMode, false);
+
+    const supabase = getSupabaseClient();
+    const subscription = supabase?.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) void syncPreference(readMode(), false);
+    }).data.subscription;
 
     const onStorage = (event: StorageEvent) => {
       if (event.key !== STORAGE_KEY) return;
       const nextMode: UiMode = event.newValue === "standard" ? "standard" : "advanced";
       setMode(nextMode);
       applyMode(nextMode);
+      void syncPreference(nextMode, true);
     };
 
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      subscription?.unsubscribe();
+    };
+  }, [syncPreference]);
 
   useEffect(() => {
     let currentMount: HTMLDivElement | null = null;
@@ -94,6 +141,7 @@ export default function UiModeController() {
       // The visual change still works for the current session.
     }
     applyMode(nextMode);
+    void syncPreference(nextMode, true);
     window.dispatchEvent(
       new CustomEvent("documio-ui-mode-changed", { detail: { mode: nextMode } }),
     );
@@ -112,6 +160,8 @@ export default function UiModeController() {
               ? "La scelta cambia il livello di autonomia, non i tuoi dati: archivio, pratiche e documenti restano identici."
               : "The choice changes the level of autonomy, not your data: archive, cases and documents stay the same."}
           </p>
+          {syncState === "saving" && <small>{isItalian ? "Salvataggio preferenza…" : "Saving preference…"}</small>}
+          {syncState === "saved" && <small>{isItalian ? "Preferenza sincronizzata" : "Preference synced"}</small>}
         </div>
       </div>
 
@@ -130,8 +180,8 @@ export default function UiModeController() {
             </span>
             <span>
               {isItalian
-                ? "Gestisce la posta collegata: analizza, importa gli allegati utili e cestina solo pubblicità a basso rischio. Il cestino resta recuperabile."
-                : "Manages connected mail: analyzes, imports useful attachments and trashes only low-risk advertising. Trash remains recoverable."}
+                ? "Gestisce ogni giorno la posta collegata, importa allegati utili e cestina soltanto pubblicità a basso rischio."
+                : "Manages connected mail every day, imports useful attachments and only trashes low-risk advertising."}
             </span>
           </span>
           <span className="documio-mode-check" aria-hidden="true">✓</span>
