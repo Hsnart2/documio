@@ -3,6 +3,7 @@ import "./globals.css";
 import "./loading-fix.css";
 import "./attachment-scroll-fix.css";
 import "./smart-home.css";
+import "./smart-home-auth.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
