@@ -5,6 +5,7 @@ import "./attachment-scroll-fix.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
+import SmartHome from "./SmartHome";
 
 export const metadata: Metadata = {
   title: "Documio",
@@ -16,6 +17,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="it">
       <body>
         {children}
+        <SmartHome />
         <PracticeVisibility />
         <PasskeyControls />
         <GmailSettingsLink />
