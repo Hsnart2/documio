@@ -32,10 +32,6 @@ export const metadata: Metadata = {
   description: "Il tuo archivio intelligente di documenti",
   applicationName: "DocuMio",
   manifest: "/manifest.webmanifest",
-  icons: {
-    icon: "/documio-icon.svg",
-    apple: "/documio-icon.svg",
-  },
   appleWebApp: {
     capable: true,
     title: "DocuMio",
