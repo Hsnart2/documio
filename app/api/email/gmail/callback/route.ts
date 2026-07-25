@@ -47,9 +47,9 @@ export async function GET(request: Request) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
+        client_id: clientId!,
+        client_secret: clientSecret!,
+        redirect_uri: redirectUri!,
         grant_type: "authorization_code",
       }),
     });
@@ -71,7 +71,7 @@ export async function GET(request: Request) {
     });
     const profile = await profileResponse.json() as { emailAddress?: string };
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, {
+    const admin = createClient(supabaseUrl!, serviceRoleKey!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
