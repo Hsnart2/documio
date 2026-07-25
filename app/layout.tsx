@@ -7,6 +7,7 @@ import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
 import SmartHomeV2 from "./SmartHomeV2";
+import SmartHomeAuthGuard from "./SmartHomeAuthGuard";
 
 export const metadata: Metadata = {
   title: "Documio",
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="it">
       <body>
         {children}
+        <SmartHomeAuthGuard />
         <SmartHomeV2 />
         <PracticeVisibility />
         <PasskeyControls />
