@@ -1,12 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { sendPendingPushNotifications } from "@/lib/push-server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
 type PreferenceRow = {
   user_id: string;
   email_enabled: boolean | null;
+};
+
+type PushUserRow = {
+  user_id: string;
 };
 
 type DocumentRow = {
@@ -26,13 +32,19 @@ type DocumentRow = {
   paid_installments: number | null;
 };
 
+type ReminderKind = "installment" | "appointment" | "deadline";
+
 type Reminder = {
+  documentId: string;
+  kind: ReminderKind;
   title: string;
   message: string;
   dueDate: string;
+  days: number;
 };
 
 const DAY_MS = 86_400_000;
+const PUSH_MILESTONES = new Set([30, 7, 1, 0]);
 
 function romeDate() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -99,9 +111,12 @@ function remindersFor(document: DocumentRow, today: string): Reminder[] {
           currency: "EUR",
         }).format(document.installment_amount);
         reminders.push({
+          documentId: document.id,
+          kind: "installment",
           title: `Rata: ${document.title}`,
           message: `Rata ${paid + 1}/${document.installment_count} da ${amount}: ${timing(days, false)}.`,
           dueDate,
+          days,
         });
       }
     }
@@ -129,9 +144,12 @@ function remindersFor(document: DocumentRow, today: string): Reminder[] {
         ? ` alle ${String(document.appointment_time).slice(0, 5)}`
         : "";
     reminders.push({
+      documentId: document.id,
+      kind: appointment ? "appointment" : "deadline",
       title: `${appointment ? "Appuntamento" : "Scadenza"}: ${document.title}`,
       message: `${document.title}${time}: ${timing(days, appointment)}.`,
       dueDate: document.expiry_date,
+      days,
     });
   }
 
@@ -177,6 +195,25 @@ function emailHtml(reminders: Reminder[]) {
   </body></html>`;
 }
 
+function pushNotificationFor(userId: string, reminder: Reminder) {
+  const severity = reminder.days <= 1 ? "urgent" : reminder.days <= 7 ? "warning" : "info";
+  return {
+    user_id: userId,
+    type: `${reminder.kind}_reminder`,
+    severity,
+    title: reminder.title,
+    body: reminder.message,
+    document_id: reminder.documentId,
+    dedupe_key: `scheduled-reminder:${reminder.documentId}:${reminder.dueDate}:d${reminder.days}`,
+    metadata: {
+      dueDate: reminder.dueDate,
+      days: reminder.days,
+      reminderKind: reminder.kind,
+      source: "reminders-cron",
+    },
+  };
+}
+
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
@@ -189,9 +226,9 @@ export async function GET(request: NextRequest) {
   const resendKey = process.env.RESEND_API_KEY;
   const emailFrom = process.env.REMINDER_EMAIL_FROM;
 
-  if (!supabaseUrl || !supabaseSecret || !resendKey || !emailFrom) {
+  if (!supabaseUrl || !supabaseSecret) {
     return NextResponse.json(
-      { error: "Missing server environment variables" },
+      { error: "Missing Supabase server environment variables" },
       { status: 500 },
     );
   }
@@ -201,57 +238,118 @@ export async function GET(request: NextRequest) {
   });
   const today = romeDate();
 
-  const { data: preferences, error: preferenceError } = await supabase
-    .from("notification_preferences")
-    .select("user_id, email_enabled")
-    .eq("email_enabled", true);
+  const [preferenceResult, pushUserResult] = await Promise.all([
+    supabase
+      .from("notification_preferences")
+      .select("user_id, email_enabled")
+      .eq("email_enabled", true),
+    supabase
+      .from("push_subscriptions")
+      .select("user_id")
+      .eq("enabled", true),
+  ]);
 
-  if (preferenceError) {
-    return NextResponse.json({ error: preferenceError.message }, { status: 500 });
+  if (preferenceResult.error || pushUserResult.error) {
+    return NextResponse.json(
+      {
+        error:
+          preferenceResult.error?.message ??
+          pushUserResult.error?.message ??
+          "Unable to load notification users",
+      },
+      { status: 500 },
+    );
   }
 
-  const enabledUsers = (preferences ?? []) as PreferenceRow[];
+  const emailUsers = new Set(
+    ((preferenceResult.data ?? []) as PreferenceRow[]).map((item) => item.user_id),
+  );
+  const pushUsers = new Set(
+    ((pushUserResult.data ?? []) as PushUserRow[]).map((item) => item.user_id),
+  );
+  const userIds = Array.from(new Set([...emailUsers, ...pushUsers]));
+
   let sent = 0;
   let skipped = 0;
+  let createdPushNotifications = 0;
+  let pushDeliveries = 0;
   const errors: string[] = [];
 
-  for (const preference of enabledUsers) {
-    const { data: previous } = await supabase
-      .from("email_notification_deliveries")
-      .select("id")
-      .eq("user_id", preference.user_id)
-      .eq("delivery_date", today)
-      .maybeSingle();
+  for (const userId of userIds) {
+    const { data: documents, error: documentError } = await supabase
+      .from("documents")
+      .select(
+        "id,user_id,title,category,expiry_date,appointment_time,appointment_completed_at,reminder_snoozed_until,payment_status,installment_count,installment_amount,first_installment_date,is_financing,paid_installments",
+      )
+      .eq("user_id", userId);
 
-    if (previous) {
-      skipped += 1;
+    if (documentError) {
+      errors.push(documentError.message);
       continue;
     }
-
-    const [{ data: documents, error: documentError }, userResult] =
-      await Promise.all([
-        supabase
-          .from("documents")
-          .select(
-            "id,user_id,title,category,expiry_date,appointment_time,appointment_completed_at,reminder_snoozed_until,payment_status,installment_count,installment_amount,first_installment_date,is_financing,paid_installments",
-          )
-          .eq("user_id", preference.user_id),
-        supabase.auth.admin.getUserById(preference.user_id),
-      ]);
-
-    if (documentError || userResult.error) {
-      errors.push(documentError?.message ?? userResult.error?.message ?? "User error");
-      continue;
-    }
-
-    const email = userResult.data.user?.email;
-    if (!email) continue;
 
     const reminders = ((documents ?? []) as DocumentRow[])
       .flatMap((document) => remindersFor(document, today))
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
+    const pushRows = reminders
+      .filter((reminder) => PUSH_MILESTONES.has(reminder.days))
+      .map((reminder) => pushNotificationFor(userId, reminder));
+
+    if (pushRows.length) {
+      const { data: inserted, error: notificationError } = await supabase
+        .from("automation_notifications")
+        .upsert(pushRows, {
+          onConflict: "user_id,dedupe_key",
+          ignoreDuplicates: true,
+        })
+        .select("id");
+
+      if (notificationError) errors.push(notificationError.message);
+      else createdPushNotifications += inserted?.length ?? 0;
+    }
+
+    const pushResult = await sendPendingPushNotifications(supabase, userId);
+    pushDeliveries += pushResult.deviceDeliveries;
+    if (pushResult.errors.length) {
+      errors.push(...pushResult.errors.map((message) => `Push: ${message}`));
+    }
+
+    if (!emailUsers.has(userId)) continue;
+
+    if (!resendKey || !emailFrom) {
+      errors.push("Variabili email dei promemoria mancanti.");
+      continue;
+    }
+
+    const { data: previous, error: previousError } = await supabase
+      .from("email_notification_deliveries")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("delivery_date", today)
+      .maybeSingle();
+
+    if (previousError) {
+      errors.push(previousError.message);
+      continue;
+    }
+    if (previous) {
+      skipped += 1;
+      continue;
+    }
     if (reminders.length === 0) {
+      skipped += 1;
+      continue;
+    }
+
+    const userResult = await supabase.auth.admin.getUserById(userId);
+    if (userResult.error) {
+      errors.push(userResult.error.message);
+      continue;
+    }
+
+    const email = userResult.data.user?.email;
+    if (!email) {
       skipped += 1;
       continue;
     }
@@ -278,7 +376,7 @@ export async function GET(request: NextRequest) {
     const { error: deliveryError } = await supabase
       .from("email_notification_deliveries")
       .insert({
-        user_id: preference.user_id,
+        user_id: userId,
         delivery_date: today,
         reminder_count: reminders.length,
       });
@@ -291,5 +389,12 @@ export async function GET(request: NextRequest) {
     sent += 1;
   }
 
-  return NextResponse.json({ ok: errors.length === 0, sent, skipped, errors });
+  return NextResponse.json({
+    ok: errors.length === 0,
+    sent,
+    skipped,
+    createdPushNotifications,
+    pushDeliveries,
+    errors,
+  });
 }
