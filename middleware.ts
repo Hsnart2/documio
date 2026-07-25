@@ -32,10 +32,43 @@ function hasUnsafeCharacters(value: string) {
   return /[\u0000-\u001f\u007f\\]/.test(value);
 }
 
+function needsAuthoritativePaymentState(question: unknown) {
+  const normalized = String(question ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return [
+    "scad",
+    "questa settimana",
+    "prossimi 7 giorni",
+    "prossimi 30 giorni",
+    "devo fare",
+    "cosa fare",
+    "quanto devo pagare",
+    "da pagare",
+    "debito",
+    "saldo dovuto",
+    "ricevut",
+    "quietanz",
+    "pagat",
+    "saldat",
+    "ho pagato",
+  ].some((term) => normalized.includes(term));
+}
+
 export async function middleware(request: NextRequest) {
   if (request.nextUrl.pathname === "/api/assistant") {
     const destination = request.nextUrl.clone();
-    destination.pathname = "/api/assistant-clean";
+    const body = (await request.clone().json().catch(() => null)) as {
+      question?: unknown;
+      language?: unknown;
+    } | null;
+    const usePaymentGuard =
+      body?.language !== "en" && needsAuthoritativePaymentState(body?.question);
+    destination.pathname = usePaymentGuard
+      ? "/api/assistant-safe"
+      : "/api/assistant-clean";
     return NextResponse.rewrite(destination);
   }
 
