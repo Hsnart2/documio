@@ -14,8 +14,10 @@ type GmailStatus = {
 function installGmailLink(status: GmailStatus) {
   if (!status.checked) return;
 
+  // Important: do not remove and recreate the card here. The MutationObserver
+  // would detect that DOM change and call this function forever, freezing Settings.
   const existing = document.getElementById(LINK_ID);
-  if (existing?.isConnected) existing.remove();
+  if (existing?.isConnected) return;
 
   const deleteButton = Array.from(document.querySelectorAll("button")).find((button) => {
     const text = button.textContent?.trim().toLowerCase() ?? "";
