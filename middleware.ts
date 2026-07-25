@@ -32,11 +32,69 @@ function hasUnsafeCharacters(value: string) {
   return /[\u0000-\u001f\u007f\\]/.test(value);
 }
 
-function needsAuthoritativePaymentState(question: unknown) {
-  const normalized = String(question ?? "")
+function normalizedQuestion(question: unknown) {
+  return String(question ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function needsAssistantContext(question: unknown) {
+  const normalized = normalizedQuestion(question);
+  const capabilityQuestion = [
+    "cosa sai fare",
+    "cosa puoi fare",
+    "come mi puoi aiutare",
+    "come puoi aiutarmi",
+    "a cosa servi",
+    "che funzioni hai",
+  ].some((term) => normalized.includes(term));
+
+  if (capabilityQuestion) return true;
+  if (!normalized.includes("pratic")) return false;
+
+  const asksForSpecificWork = [
+    "riepilogo",
+    "riassunto",
+    "sintesi",
+    "stato pratica",
+    "prepara pratica",
+    "apri pratica",
+    "dettagli pratica",
+    "parlami della pratica",
+    "controlla pratica",
+  ].some((term) => normalized.includes(term));
+  if (asksForSpecificWork) return false;
+
+  return (
+    normalized === "pratiche" ||
+    normalized.startsWith("pratica ") ||
+    [
+      "quali pratic",
+      "quante pratic",
+      "qualche pratic",
+      "che pratic",
+      "elenco pratic",
+      "lista pratic",
+      "mostra pratic",
+      "fammi vedere le pratic",
+      "pratiche ho",
+      "pratica ho",
+      "ho una pratica",
+      "ho delle pratic",
+      "ci sono pratic",
+      "pratiche disponibili",
+      "pratiche risultano",
+      "pratica la ho",
+      "sbaglio",
+    ].some((term) => normalized.includes(term))
+  );
+}
+
+function needsAuthoritativePaymentState(question: unknown) {
+  const normalized = normalizedQuestion(question);
 
   return [
     "scad",
@@ -64,11 +122,15 @@ export async function middleware(request: NextRequest) {
       question?: unknown;
       language?: unknown;
     } | null;
+    const italian = body?.language !== "en";
+    const useContext = italian && needsAssistantContext(body?.question);
     const usePaymentGuard =
-      body?.language !== "en" && needsAuthoritativePaymentState(body?.question);
-    destination.pathname = usePaymentGuard
-      ? "/api/assistant-safe"
-      : "/api/assistant-clean";
+      italian && !useContext && needsAuthoritativePaymentState(body?.question);
+    destination.pathname = useContext
+      ? "/api/assistant-context"
+      : usePaymentGuard
+        ? "/api/assistant-safe"
+        : "/api/assistant-clean";
     return NextResponse.rewrite(destination);
   }
 
