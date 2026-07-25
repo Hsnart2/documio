@@ -14,7 +14,12 @@ export type DocumentCategory =
 export type PaymentStatus =
   "Da pagare" | "Parzialmente pagato" | "Pagato" | "Scaduto" | "Contestato";
 
-export type PracticeStatus = "In corso" | "Aperta" | "Chiusa";
+export type PracticeStatus =
+  | "In corso"
+  | "Aperta"
+  | "Completata"
+  | "Sospesa"
+  | "Chiusa";
 
 export type Practice = {
   id: string;
