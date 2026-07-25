@@ -109,8 +109,8 @@ export default function UiModeController() {
           <strong>{isItalian ? "Versione di DocuMio" : "DocuMio version"}</strong>
           <p>
             {isItalian
-              ? "Puoi cambiare versione in qualsiasi momento senza perdere documenti o impostazioni."
-              : "Switch versions at any time without losing documents or settings."}
+              ? "La scelta cambia il livello di autonomia, non i tuoi dati: archivio, pratiche e documenti restano identici."
+              : "The choice changes the level of autonomy, not your data: archive, cases and documents stay the same."}
           </p>
         </div>
       </div>
@@ -126,12 +126,12 @@ export default function UiModeController() {
           <span className="documio-mode-option-copy">
             <span className="documio-mode-option-title">
               {isItalian ? "IA avanzata" : "Advanced AI"}
-              <small>{isItalian ? "Consigliata" : "Recommended"}</small>
+              <small>{isItalian ? "Automatica" : "Automatic"}</small>
             </span>
             <span>
               {isItalian
-                ? "Nuova Home, consigli intelligenti, riepiloghi e chat centrale."
-                : "New Home, smart advice, summaries and central chat."}
+                ? "Gestisce la posta collegata: analizza, importa gli allegati utili e cestina solo pubblicità a basso rischio. Il cestino resta recuperabile."
+                : "Manages connected mail: analyzes, imports useful attachments and trashes only low-risk advertising. Trash remains recoverable."}
             </span>
           </span>
           <span className="documio-mode-check" aria-hidden="true">✓</span>
@@ -147,11 +147,12 @@ export default function UiModeController() {
           <span className="documio-mode-option-copy">
             <span className="documio-mode-option-title">
               {isItalian ? "Standard" : "Standard"}
+              <small>{isItalian ? "Con conferma" : "With confirmation"}</small>
             </span>
             <span>
               {isItalian
-                ? "La versione classica di DocuMio con archivio e riquadri tradizionali."
-                : "The classic DocuMio archive with the traditional dashboard."}
+                ? "Mostra la versione classica e chiede sempre il consenso prima di importare, archiviare, collegare o cestinare."
+                : "Shows the classic version and always asks before importing, archiving, linking or trashing."}
             </span>
           </span>
           <span className="documio-mode-check" aria-hidden="true">✓</span>
