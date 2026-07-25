@@ -8,6 +8,7 @@ import "./email.css";
 
 type EmailCategory = "pagamenti" | "documenti" | "appuntamenti" | "pubblicita" | "altro";
 type EmailImportance = "high" | "medium" | "low";
+type HistoryRange = "14d" | "90d" | "1y" | "all";
 
 type SmartEmail = {
   id: string;
@@ -27,6 +28,9 @@ type InboxResponse = {
   emailAddress?: string;
   summary?: { total: number; important: number; documents: number; advertising: number };
   messages: SmartEmail[];
+  nextPageToken?: string | null;
+  resultSizeEstimate?: number;
+  range?: HistoryRange;
   error?: string;
 };
 
@@ -38,14 +42,23 @@ const categoryLabels: Record<EmailCategory, string> = {
   altro: "Altre email",
 };
 
+const rangeLabels: Record<HistoryRange, string> = {
+  "14d": "Ultimi 14 giorni",
+  "90d": "Ultimi 3 mesi",
+  "1y": "Ultimo anno",
+  all: "Tutta la posta",
+};
+
 export default function SmartEmailPage() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [actingIds, setActingIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [filter, setFilter] = useState<EmailCategory | "tutte">("tutte");
+  const [range, setRange] = useState<HistoryRange>("14d");
 
   const getToken = useCallback(async () => {
     const supabase = getSupabaseClient();
@@ -55,24 +68,42 @@ export default function SmartEmailPage() {
     return sessionData.session?.access_token ?? null;
   }, []);
 
-  const loadInbox = useCallback(async () => {
-    setLoading(true);
+  const loadInbox = useCallback(async (pageToken?: string) => {
+    const append = Boolean(pageToken);
+    append ? setLoadingMore(true) : setLoading(true);
     setError("");
     try {
       const token = await getToken();
       if (!token) throw new Error("Accedi a DocuMio prima di aprire la Posta intelligente.");
-      const response = await fetch("/api/email/gmail/inbox", {
+      const params = new URLSearchParams({ range });
+      if (pageToken) params.set("pageToken", pageToken);
+      const response = await fetch(`/api/email/gmail/inbox?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const result = (await response.json()) as InboxResponse;
       if (!response.ok) throw new Error(result.error ?? "Non riesco a leggere Gmail.");
-      setData(result);
+      setData((current) => {
+        if (!append || !current) return result;
+        const knownIds = new Set(current.messages.map((message) => message.id));
+        const newMessages = result.messages.filter((message) => !knownIds.has(message.id));
+        const messages = [...current.messages, ...newMessages];
+        return {
+          ...result,
+          messages,
+          summary: {
+            total: messages.length,
+            important: messages.filter((item) => item.importance === "high").length,
+            documents: messages.filter((item) => item.category === "documenti" || item.category === "pagamenti").length,
+            advertising: messages.filter((item) => item.category === "pubblicita").length,
+          },
+        };
+      });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Errore durante la lettura della posta.");
     } finally {
-      setLoading(false);
+      append ? setLoadingMore(false) : setLoading(false);
     }
-  }, [getToken]);
+  }, [getToken, range]);
 
   useEffect(() => {
     void loadInbox();
@@ -150,7 +181,7 @@ export default function SmartEmailPage() {
         <section className="smart-mail-hero">
           <div className="smart-mail-badge"><ShieldCheck size={16} /> Azioni sempre sotto il tuo controllo</div>
           <h1>Posta intelligente</h1>
-          <p>DocuMio legge le email recenti, individua documenti, pagamenti, appuntamenti e pubblicità. Non elimina mai definitivamente nulla.</p>
+          <p>DocuMio può analizzare anche la posta vecchia, individuando documenti, pagamenti, appuntamenti e pubblicità. Non elimina mai definitivamente nulla.</p>
         </section>
 
         {error && <div className="smart-mail-error">{error}</div>}
@@ -169,6 +200,14 @@ export default function SmartEmailPage() {
           </section>
         ) : (
           <>
+            <div className="smart-mail-filters" aria-label="Periodo da analizzare">
+              {(Object.keys(rangeLabels) as HistoryRange[]).map((item) => (
+                <button key={item} onClick={() => setRange(item)} className={`smart-mail-filter ${range === item ? "active" : ""}`}>
+                  {rangeLabels[item]}
+                </button>
+              ))}
+            </div>
+
             <div className="smart-mail-summary">
               {[
                 ["Email analizzate", data.summary?.total ?? 0],
@@ -180,7 +219,7 @@ export default function SmartEmailPage() {
               ))}
             </div>
 
-            <div className="smart-mail-filters">
+            <div className="smart-mail-filters" aria-label="Categoria email">
               {(["tutte", "pagamenti", "documenti", "appuntamenti", "pubblicita", "altro"] as const).map((item) => (
                 <button key={item} onClick={() => setFilter(item)} className={`smart-mail-filter ${filter === item ? "active" : ""}`}>
                   {item === "tutte" ? "Tutte" : categoryLabels[item]}
@@ -214,6 +253,17 @@ export default function SmartEmailPage() {
                 );
               })}
             </section>
+
+            {data.nextPageToken && (
+              <button
+                onClick={() => void loadInbox(data.nextPageToken ?? undefined)}
+                disabled={loadingMore}
+                className="smart-mail-refresh"
+                style={{ width: "100%", marginTop: 14 }}
+              >
+                {loadingMore ? <Loader2 size={17} /> : <RefreshCw size={17} />} Carica altre email più vecchie
+              </button>
+            )}
           </>
         )}
       </div>
