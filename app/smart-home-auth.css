@@ -1,0 +1,3 @@
+body:not(.documio-authenticated) .smart-home {
+  display: none !important;
+}
