@@ -50,8 +50,9 @@ function queryTerms(question: string) {
     "quanti", "elenco", "lista", "mostra", "mostrami", "fammi", "vedere",
     "tutte", "tutti", "disponibili", "risultano", "risulta", "archivio",
     "sbaglio", "sono", "delle", "della", "degli", "dello", "dei", "del",
-    "che", "una", "uno", "nel", "mia", "mie", "miei", "io", "ci",
-    "oppure", "anche",
+    "che", "una", "uno", "nel", "nella", "nelle", "mia", "mie", "miei",
+    "io", "ci", "oppure", "anche", "la", "le", "il", "lo", "gli", "un",
+    "e", "o", "ma", "se", "per", "con", "da", "in", "su", "mi", "me",
   ]);
 
   return normalize(question)
@@ -76,7 +77,7 @@ function statusLabel(value: string | null) {
   if (normalized.includes("complet")) return "Completata";
   if (normalized.includes("sospes")) return "Sospesa";
   if (normalized.includes("archiv")) return "Archiviata";
-  if (normalized.includes("cors") || normalized.includes("attiv")) return "In corso";
+  if (normalized.includes("cors") || normalized.includes("attiv") || normalized.includes("apert")) return "In corso";
   return String(value);
 }
 
