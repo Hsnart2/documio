@@ -54,6 +54,9 @@ async function refreshAccessToken(refreshToken: string) {
 
 export async function GET(request: Request) {
   try {
+    const requestUrl = new URL(request.url);
+    const range = requestUrl.searchParams.get("range") ?? "14d";
+    const pageToken = requestUrl.searchParams.get("pageToken") ?? "";
     const token = getBearerToken(request);
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -92,10 +95,12 @@ export async function GET(request: Request) {
     }
 
     const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-    listUrl.searchParams.set("maxResults", "30");
-    listUrl.searchParams.set("q", "newer_than:14d");
+    listUrl.searchParams.set("maxResults", "50");
+    if (range !== "all") listUrl.searchParams.set("q", `newer_than:${range}`);
+    if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
+
     const listResponse = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-    const listData = await listResponse.json() as { messages?: Array<{ id: string }> };
+    const listData = await listResponse.json() as { messages?: Array<{ id: string }>; nextPageToken?: string; resultSizeEstimate?: number };
     if (!listResponse.ok) throw new Error("Lettura Gmail non riuscita");
 
     const messages = await Promise.all((listData.messages ?? []).map(async ({ id }) => {
@@ -136,7 +141,15 @@ export async function GET(request: Request) {
       advertising: messages.filter((item) => item.category === "pubblicita").length,
     };
 
-    return NextResponse.json({ connected: true, emailAddress: connection.email_address, summary, messages });
+    return NextResponse.json({
+      connected: true,
+      emailAddress: connection.email_address,
+      summary,
+      messages,
+      nextPageToken: listData.nextPageToken ?? null,
+      resultSizeEstimate: listData.resultSizeEstimate ?? messages.length,
+      range,
+    });
   } catch (error) {
     console.error("Gmail inbox failed", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Errore Gmail." }, { status: 500 });
