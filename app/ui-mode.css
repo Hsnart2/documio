@@ -1,0 +1,160 @@
+html[data-documio-mode="standard"] #documio-smart-home-root,
+body.documio-standard-mode #documio-smart-home-root {
+  display: none !important;
+}
+
+html[data-documio-mode="standard"] body.smart-home-active .hero,
+body.documio-standard-mode.smart-home-active .hero {
+  display: flex !important;
+}
+
+html[data-documio-mode="standard"] body.smart-home-active .legacy-dashboard-hidden,
+body.documio-standard-mode.smart-home-active .legacy-dashboard-hidden {
+  display: block !important;
+}
+
+.documio-mode-settings {
+  border: 1px solid #c7d2fe;
+  border-radius: 18px;
+  padding: 15px;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #f5f3ff, #ffffff 72%);
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.07);
+}
+
+.documio-mode-settings-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.documio-mode-settings-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #4338ca;
+  color: #fff;
+}
+
+.documio-mode-settings-heading strong {
+  display: block;
+  color: #172033;
+  font-size: 16px;
+}
+
+.documio-mode-settings-heading p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.documio-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.documio-mode-options > button {
+  position: relative;
+  min-width: 0;
+  min-height: 126px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 38px 13px 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 15px;
+  background: #fff;
+  color: #172033;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.documio-mode-options > button.selected {
+  border-color: #6366f1;
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.11);
+}
+
+.documio-mode-option-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: #f1f5f9;
+  color: #4338ca;
+}
+
+.documio-mode-options > button.selected .documio-mode-option-icon {
+  background: #4338ca;
+  color: #fff;
+}
+
+.documio-mode-option-copy,
+.documio-mode-option-copy > span {
+  display: block;
+  min-width: 0;
+}
+
+.documio-mode-option-copy > span:last-child {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.documio-mode-option-title {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.documio-mode-option-title small {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 9px;
+  vertical-align: middle;
+}
+
+.documio-mode-check {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  color: transparent;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.documio-mode-options > button.selected .documio-mode-check {
+  border-color: #4338ca;
+  background: #4338ca;
+  color: #fff;
+}
+
+@media (max-width: 560px) {
+  .documio-mode-options {
+    grid-template-columns: 1fr;
+  }
+
+  .documio-mode-options > button {
+    min-height: 104px;
+  }
+}
