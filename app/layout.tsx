@@ -11,6 +11,7 @@ import "./automation-run-now.css";
 import "./smart-practice.css";
 import "./practice-attention.css";
 import "./push-notifications.css";
+import "./today-action-center.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
@@ -26,6 +27,7 @@ import PracticeAttentionCard from "./PracticeAttentionCard";
 import PushNotificationControls from "./PushNotificationControls";
 import PushDeepLinkHandler from "./PushDeepLinkHandler";
 import PushForegroundDeduper from "./PushForegroundDeduper";
+import TodayActionCenter from "./TodayActionCenter";
 
 export const metadata: Metadata = {
   title: "DocuMio",
@@ -67,6 +69,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <UiModeController />
         <SmartHomeAuthGuard />
         <SmartHomeV2 />
+        <TodayActionCenter />
         <PracticeAttentionCard />
         <AdvancedEmailAutomation />
         <PostUploadPracticePrompt />
