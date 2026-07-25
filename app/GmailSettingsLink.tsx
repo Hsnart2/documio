@@ -106,30 +106,39 @@ function installOrUpdateGmailLink(status: GmailStatus) {
   card.replaceChildren(heading, description, link);
 }
 
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 export default function GmailSettingsLink() {
   const [status, setStatus] = useState<GmailStatus>({ state: "loading" });
 
   useEffect(() => {
     let cancelled = false;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 8000);
 
     async function checkConnection() {
       try {
         const supabase = getSupabaseClient();
-        const { data } = supabase
-          ? await supabase.auth.getSession()
-          : { data: { session: null } };
-        const token = data.session?.access_token;
+        if (!supabase) {
+          if (!cancelled) setStatus({ state: "unknown" });
+          return;
+        }
 
+        let token: string | null = null;
+        for (let attempt = 0; attempt < 5 && !token && !cancelled; attempt += 1) {
+          const { data } = await supabase.auth.getSession();
+          token = data.session?.access_token ?? null;
+          if (!token) await wait(500);
+        }
+
+        if (cancelled) return;
         if (!token) {
-          if (!cancelled) setStatus({ state: "disconnected" });
+          setStatus({ state: "unknown" });
           return;
         }
 
         const response = await fetch("/api/email/gmail/status", {
           headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
           cache: "no-store",
         });
         const result = await response.json() as {
@@ -149,16 +158,12 @@ export default function GmailSettingsLink() {
         });
       } catch {
         if (!cancelled) setStatus({ state: "unknown" });
-      } finally {
-        window.clearTimeout(timeout);
       }
     }
 
     void checkConnection();
     return () => {
       cancelled = true;
-      controller.abort();
-      window.clearTimeout(timeout);
     };
   }, []);
 
