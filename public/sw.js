@@ -54,6 +54,17 @@ self.addEventListener("push", (event) => {
         actions: [{ action: "open", title: "Apri DocuMio" }],
       });
 
+      const openClients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of openClients) {
+        client.postMessage({
+          type: "documio-push-shown",
+          notificationId: payload.id || null,
+        });
+      }
+
       if (navigator.setAppBadge) {
         try {
           await navigator.setAppBadge(1);
