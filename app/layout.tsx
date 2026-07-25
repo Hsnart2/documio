@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./loading-fix.css";
 import "./attachment-scroll-fix.css";
@@ -10,6 +10,7 @@ import "./activity-center.css";
 import "./automation-run-now.css";
 import "./smart-practice.css";
 import "./practice-attention.css";
+import "./push-notifications.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
@@ -22,10 +23,33 @@ import AutomationActivityCenter from "./AutomationActivityCenter";
 import AutomationRunNowButton from "./AutomationRunNowButton";
 import SmartPracticeCenter from "./SmartPracticeCenter";
 import PracticeAttentionCard from "./PracticeAttentionCard";
+import PushNotificationControls from "./PushNotificationControls";
+import PushDeepLinkHandler from "./PushDeepLinkHandler";
 
 export const metadata: Metadata = {
-  title: "Documio",
+  title: "DocuMio",
   description: "Il tuo archivio intelligente di documenti",
+  applicationName: "DocuMio",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/documio-icon.svg",
+    apple: "/documio-icon.svg",
+  },
+  appleWebApp: {
+    capable: true,
+    title: "DocuMio",
+    statusBarStyle: "default",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#4f46e5",
 };
 
 const uiModeBootstrap = `
@@ -49,9 +73,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <PracticeAttentionCard />
         <AdvancedEmailAutomation />
         <PostUploadPracticePrompt />
+        <PushNotificationControls />
         <AutomationActivityCenter />
         <AutomationRunNowButton />
         <SmartPracticeCenter />
+        <PushDeepLinkHandler />
         <PracticeVisibility />
         <PasskeyControls />
         <GmailSettingsLink />
