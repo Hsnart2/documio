@@ -43,14 +43,14 @@ async function patchDailyAutomation() {
         userId,
         runId,
         actionType: "push_notifications_sent",
-        title: \\`${"${pushResult.sent}"} notifiche push inviate\\`,
-        detail: \\`${"${pushResult.deviceDeliveries}"} consegne ai dispositivi registrati.\\`,
+        title: pushResult.sent + " notifiche push inviate",
+        detail: pushResult.deviceDeliveries + " consegne ai dispositivi registrati.",
         metadata: pushResult,
       });
     }
     if (pushResult.errors.length) {
       summary.warnings.push(
-        ...pushResult.errors.slice(0, 3).map((message) => \\`Push: ${"${message}"}\\`),
+        ...pushResult.errors.slice(0, 3).map((message) => "Push: " + message),
       );
     }
 
