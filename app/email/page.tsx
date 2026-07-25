@@ -6,6 +6,8 @@ import {
   Archive,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Inbox,
   Loader2,
   Mail,
@@ -71,6 +73,13 @@ type AnalyzeResponse = {
   error?: string;
 };
 
+type CleanupGroup = {
+  key: string;
+  label: string;
+  reason: string;
+  messages: SmartEmail[];
+};
+
 const categoryLabels: Record<EmailCategory, string> = {
   pagamenti: "Pagamenti e scadenze",
   documenti: "Documenti",
@@ -116,6 +125,51 @@ function getAnalysisDetails(message: SmartEmail) {
   return details;
 }
 
+function senderIdentity(message: SmartEmail) {
+  const emailMatch = message.from.match(/<([^>]+)>/) ?? message.from.match(/[\w.+-]+@[\w.-]+/);
+  const email = (emailMatch?.[1] ?? emailMatch?.[0] ?? "").trim().toLowerCase();
+  const domain = email.includes("@") ? email.split("@").pop() ?? email : email;
+  const displayName = message.senderName?.trim() || message.from.replace(/<[^>]+>/g, "").replace(/^\s*["']|["']\s*$/g, "").trim();
+  return {
+    key: domain || displayName.toLowerCase() || "mittente-sconosciuto",
+    label: displayName || domain || "Mittente sconosciuto",
+  };
+}
+
+function buildCleanupGroups(messages: SmartEmail[]): CleanupGroup[] {
+  const safeCandidates = messages.filter((message) => {
+    if (!message.analyzedByAi) return false;
+    if (message.importance !== "low") return false;
+    if (message.suggestedAction !== "review_trash") return false;
+    if (message.category !== "pubblicita" && message.category !== "altro") return false;
+    if (message.labelIds.includes("STARRED") || message.labelIds.includes("IMPORTANT")) return false;
+    if (message.documentType || message.amount || message.dueDate || message.appointmentDate) return false;
+    return true;
+  });
+
+  const grouped = new Map<string, CleanupGroup>();
+  for (const message of safeCandidates) {
+    const sender = senderIdentity(message);
+    const current = grouped.get(sender.key);
+    if (current) {
+      current.messages.push(message);
+    } else {
+      grouped.set(sender.key, {
+        key: sender.key,
+        label: sender.label,
+        reason: message.category === "pubblicita"
+          ? "Pubblicità o newsletter senza informazioni importanti"
+          : "Notifiche ripetitive o email considerate poco utili",
+        messages: [message],
+      });
+    }
+  }
+
+  return [...grouped.values()]
+    .filter((group) => group.messages.length >= 2)
+    .sort((a, b) => b.messages.length - a.messages.length || a.label.localeCompare(b.label));
+}
+
 export default function SmartEmailPage() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,6 +178,9 @@ export default function SmartEmailPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<{ done: number; total: number } | null>(null);
   const [actingIds, setActingIds] = useState<string[]>([]);
+  const [cleaningGroupKey, setCleaningGroupKey] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+  const [cleanupSelections, setCleanupSelections] = useState<Record<string, string[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [filter, setFilter] = useState<EmailCategory | "tutte">("tutte");
@@ -156,11 +213,7 @@ export default function SmartEmailPage() {
         const knownIds = new Set(current.messages.map((message) => message.id));
         const newMessages = result.messages.filter((message) => !knownIds.has(message.id));
         const messages = [...current.messages, ...newMessages];
-        return {
-          ...result,
-          messages,
-          summary: buildSummary(messages),
-        };
+        return { ...result, messages, summary: buildSummary(messages) };
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Errore durante la lettura della posta.");
@@ -196,7 +249,6 @@ export default function SmartEmailPage() {
 
   async function analyzeEmails() {
     if (!data?.connected || data.messages.length === 0 || analyzing) return;
-
     const pendingMessages = data.messages.filter((message) => !message.analyzedByAi);
     const targets = pendingMessages.length > 0 ? pendingMessages : data.messages;
     const batchSize = 15;
@@ -209,16 +261,13 @@ export default function SmartEmailPage() {
     try {
       const token = await getToken();
       if (!token) throw new Error("Sessione DocuMio non disponibile.");
-
       let completed = 0;
+
       for (let index = 0; index < targets.length; index += batchSize) {
         const batch = targets.slice(index, index + batchSize);
         const response = await fetch("/api/email/gmail/analyze", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             messages: batch.map((message) => ({
               id: message.id,
@@ -238,24 +287,17 @@ export default function SmartEmailPage() {
         } catch {
           throw new Error("La risposta dell'analisi non era leggibile.");
         }
-
-        if (!response.ok) {
-          throw new Error(result.error ?? "Analisi email non riuscita.");
-        }
+        if (!response.ok) throw new Error(result.error ?? "Analisi email non riuscita.");
 
         const analyses = result.results ?? [];
-        if (analyses.length === 0) {
-          throw new Error("L'IA non ha restituito risultati per queste email.");
-        }
-
+        if (analyses.length === 0) throw new Error("L'IA non ha restituito risultati per queste email.");
         const analysisById = new Map(analyses.map((analysis) => [analysis.id, analysis]));
+
         setData((current) => {
           if (!current) return current;
           const messages = current.messages.map((message) => {
             const analysis = analysisById.get(message.id);
-            return analysis
-              ? { ...message, ...analysis, analyzedByAi: true }
-              : message;
+            return analysis ? { ...message, ...analysis, analyzedByAi: true } : message;
           });
           return { ...current, messages, summary: buildSummary(messages) };
         });
@@ -264,17 +306,32 @@ export default function SmartEmailPage() {
         setAnalysisProgress({ done: Math.min(completed, targets.length), total: targets.length });
       }
 
-      setNotice(`${completed} email analizzate con l'IA. Controlla sempre i dati importanti prima di usarli.`);
+      setNotice(`${completed} email analizzate con l'IA. Le proposte di pulizia sono pronte qui sotto.`);
     } catch (analysisError) {
-      setError(
-        analysisError instanceof Error
-          ? analysisError.message
-          : "Errore durante l'analisi delle email.",
-      );
+      setError(analysisError instanceof Error ? analysisError.message : "Errore durante l'analisi delle email.");
     } finally {
       setAnalyzing(false);
       setAnalysisProgress(null);
     }
+  }
+
+  async function sendGmailAction(messageIds: string[], action: "archive" | "trash") {
+    const token = await getToken();
+    if (!token) throw new Error("Sessione DocuMio non disponibile.");
+    let changed = 0;
+
+    for (let index = 0; index < messageIds.length; index += 50) {
+      const batch = messageIds.slice(index, index + 50);
+      const response = await fetch("/api/email/gmail/action", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ messageIds: batch, action, confirmed: true }),
+      });
+      const result = (await response.json()) as { changed?: number; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Azione non completata.");
+      changed += result.changed ?? 0;
+    }
+    return changed;
   }
 
   async function applyAction(message: SmartEmail, action: "archive" | "trash") {
@@ -285,28 +342,14 @@ export default function SmartEmailPage() {
     setError("");
     setNotice("");
     try {
-      const token = await getToken();
-      if (!token) throw new Error("Sessione DocuMio non disponibile.");
-      const response = await fetch("/api/email/gmail/action", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ messageIds: [message.id], action, confirmed: true }),
-      });
-      const result = (await response.json()) as { changed?: number; error?: string };
-      if (!response.ok || !result.changed) throw new Error(result.error ?? "Azione non completata.");
+      const changed = await sendGmailAction([message.id], action);
+      if (!changed) throw new Error("Azione non completata.");
       setData((current) => {
         if (!current) return current;
         const messages = current.messages.filter((item) => item.id !== message.id);
         return { ...current, messages, summary: buildSummary(messages) };
       });
-      setNotice(
-        action === "trash"
-          ? "Email spostata nel cestino. Puoi ancora recuperarla da Gmail."
-          : "Email archiviata.",
-      );
+      setNotice(action === "trash" ? "Email spostata nel cestino Gmail." : "Email archiviata.");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Azione non riuscita.");
     } finally {
@@ -314,22 +357,76 @@ export default function SmartEmailPage() {
     }
   }
 
+  const cleanupGroups = useMemo(() => buildCleanupGroups(data?.messages ?? []), [data?.messages]);
+
+  useEffect(() => {
+    setCleanupSelections((current) => {
+      const next: Record<string, string[]> = {};
+      for (const group of cleanupGroups) {
+        const validIds = new Set(group.messages.map((message) => message.id));
+        const previous = current[group.key]?.filter((id) => validIds.has(id));
+        next[group.key] = previous?.length ? previous : [...validIds];
+      }
+      return next;
+    });
+  }, [cleanupGroups]);
+
+  function toggleCleanupMessage(groupKey: string, messageId: string) {
+    setCleanupSelections((current) => {
+      const selected = current[groupKey] ?? [];
+      return {
+        ...current,
+        [groupKey]: selected.includes(messageId)
+          ? selected.filter((id) => id !== messageId)
+          : [...selected, messageId],
+      };
+    });
+  }
+
+  async function trashCleanupGroup(group: CleanupGroup) {
+    const selectedIds = cleanupSelections[group.key] ?? [];
+    if (selectedIds.length === 0) {
+      setError("Seleziona almeno una email da cestinare.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Spostare ${selectedIds.length} email di “${group.label}” nel cestino Gmail? Potrai recuperarle dal cestino.`,
+    );
+    if (!confirmed) return;
+
+    setCleaningGroupKey(group.key);
+    setError("");
+    setNotice("");
+    try {
+      const changed = await sendGmailAction(selectedIds, "trash");
+      if (!changed) throw new Error("Nessuna email è stata spostata.");
+      const removedIds = new Set(selectedIds);
+      setData((current) => {
+        if (!current) return current;
+        const messages = current.messages.filter((message) => !removedIds.has(message.id));
+        return { ...current, messages, summary: buildSummary(messages) };
+      });
+      setNotice(`${changed} email spostate nel cestino Gmail. Non sono state eliminate definitivamente.`);
+    } catch (cleanupError) {
+      setError(cleanupError instanceof Error ? cleanupError.message : "Pulizia non riuscita.");
+    } finally {
+      setCleaningGroupKey(null);
+    }
+  }
+
   const visibleMessages = useMemo(
     () => (data?.messages ?? []).filter((message) => filter === "tutte" || message.category === filter),
     [data?.messages, filter],
   );
-
   const pendingAiCount = data?.messages.filter((message) => !message.analyzedByAi).length ?? 0;
 
   return (
     <main className="smart-mail-page">
       <div className="smart-mail-shell">
         <div className="smart-mail-top">
-          <Link href="/" className="smart-mail-back">
-            <ArrowLeft size={17} /> Torna a DocuMio
-          </Link>
+          <Link href="/" className="smart-mail-back"><ArrowLeft size={17} /> Torna a DocuMio</Link>
           {data?.connected && (
-            <button onClick={() => void loadInbox()} disabled={loading || analyzing} className="smart-mail-refresh">
+            <button onClick={() => void loadInbox()} disabled={loading || analyzing || Boolean(cleaningGroupKey)} className="smart-mail-refresh">
               <RefreshCw size={17} /> Aggiorna posta
             </button>
           )}
@@ -338,7 +435,7 @@ export default function SmartEmailPage() {
         <section className="smart-mail-hero">
           <div className="smart-mail-badge"><ShieldCheck size={16} /> Azioni sempre sotto il tuo controllo</div>
           <h1>Posta intelligente</h1>
-          <p>Le email si aprono subito. L’analisi intelligente parte soltanto quando premi il pulsante dedicato.</p>
+          <p>DocuMio analizza le email soltanto quando glielo chiedi e propone la pulizia senza cancellare nulla da solo.</p>
         </section>
 
         {error && <div className="smart-mail-error">{error}</div>}
@@ -359,18 +456,14 @@ export default function SmartEmailPage() {
           <>
             <div className="smart-mail-filters" aria-label="Periodo da caricare">
               {(Object.keys(rangeLabels) as HistoryRange[]).map((item) => (
-                <button key={item} onClick={() => setRange(item)} disabled={analyzing} className={`smart-mail-filter ${range === item ? "active" : ""}`}>
+                <button key={item} onClick={() => setRange(item)} disabled={analyzing || Boolean(cleaningGroupKey)} className={`smart-mail-filter ${range === item ? "active" : ""}`}>
                   {rangeLabels[item]}
                 </button>
               ))}
             </div>
 
             <section className="smart-mail-ai-panel">
-              <button
-                onClick={() => void analyzeEmails()}
-                disabled={analyzing || data.messages.length === 0}
-                className="smart-mail-analyze"
-              >
+              <button onClick={() => void analyzeEmails()} disabled={analyzing || data.messages.length === 0 || Boolean(cleaningGroupKey)} className="smart-mail-analyze">
                 {analyzing ? <Loader2 size={19} /> : <Sparkles size={19} />}
                 {analyzing && analysisProgress
                   ? `Analisi ${analysisProgress.done} di ${analysisProgress.total}`
@@ -378,7 +471,7 @@ export default function SmartEmailPage() {
                     ? `Analizza ${pendingAiCount} email con l’IA`
                     : "Rianalizza le email con l’IA"}
               </button>
-              <p>DocuMio analizzerà soltanto le email già caricate in questa pagina, a gruppi sicuri di 15.</p>
+              <p>Al termine DocuMio raggruppa le email poco utili e te le propone per la pulizia.</p>
             </section>
 
             <div className="smart-mail-summary">
@@ -391,6 +484,85 @@ export default function SmartEmailPage() {
                 <div key={String(label)} className="smart-mail-stat"><span>{label}</span><strong>{value}</strong></div>
               ))}
             </div>
+
+            {cleanupGroups.length > 0 && (
+              <section className="smart-mail-cleanup">
+                <div className="smart-mail-cleanup-heading">
+                  <div>
+                    <span className="smart-mail-cleanup-kicker"><Sparkles size={15} /> Pulizia consigliata</span>
+                    <h2>{cleanupGroups.reduce((sum, group) => sum + group.messages.length, 0)} email raggruppate da controllare</h2>
+                    <p>Solo pubblicità o email poco utili classificate dall’IA come non importanti.</p>
+                  </div>
+                </div>
+
+                <div className="smart-mail-cleanup-groups">
+                  {cleanupGroups.map((group) => {
+                    const expanded = expandedGroups.includes(group.key);
+                    const selectedIds = cleanupSelections[group.key] ?? [];
+                    const cleaning = cleaningGroupKey === group.key;
+                    return (
+                      <article key={group.key} className="smart-mail-cleanup-group">
+                        <div className="smart-mail-cleanup-group-top">
+                          <div>
+                            <h3>{group.label}</h3>
+                            <p>{group.reason}</p>
+                            <strong>{selectedIds.length} di {group.messages.length} selezionate</strong>
+                          </div>
+                          <div className="smart-mail-cleanup-buttons">
+                            <button
+                              type="button"
+                              className="smart-mail-cleanup-show"
+                              onClick={() => setExpandedGroups((current) => current.includes(group.key) ? current.filter((key) => key !== group.key) : [...current, group.key])}
+                            >
+                              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                              {expanded ? "Nascondi" : "Controlla"}
+                            </button>
+                            <button
+                              type="button"
+                              className="smart-mail-cleanup-trash"
+                              disabled={cleaning || selectedIds.length === 0 || analyzing}
+                              onClick={() => void trashCleanupGroup(group)}
+                            >
+                              {cleaning ? <Loader2 size={16} /> : <Trash2 size={16} />}
+                              Cestina {selectedIds.length}
+                            </button>
+                          </div>
+                        </div>
+
+                        {expanded && (
+                          <div className="smart-mail-cleanup-list">
+                            <label className="smart-mail-cleanup-select-all">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.length === group.messages.length}
+                                onChange={(event) => setCleanupSelections((current) => ({
+                                  ...current,
+                                  [group.key]: event.target.checked ? group.messages.map((message) => message.id) : [],
+                                }))}
+                              />
+                              Seleziona tutte
+                            </label>
+                            {group.messages.map((message) => (
+                              <label key={message.id} className="smart-mail-cleanup-item">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.includes(message.id)}
+                                  onChange={() => toggleCleanupMessage(group.key, message.id)}
+                                />
+                                <span>
+                                  <strong>{message.subject || "Senza oggetto"}</strong>
+                                  <small>{message.reason || message.snippet}</small>
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
 
             <div className="smart-mail-filters" aria-label="Categoria email">
               {(["tutte", "pagamenti", "documenti", "appuntamenti", "pubblicita", "altro"] as const).map((item) => (
@@ -418,18 +590,12 @@ export default function SmartEmailPage() {
                         <h3>{message.subject || "Senza oggetto"}</h3>
                         <div className="smart-mail-from">{message.from}</div>
                         <p className="smart-mail-snippet">{message.snippet}</p>
-                        {message.analyzedByAi && message.reason && (
-                          <div className="smart-mail-ai-reason"><Sparkles size={15} /> {message.reason}</div>
-                        )}
-                        {analysisDetails.length > 0 && (
-                          <div className="smart-mail-ai-details">
-                            {analysisDetails.map((detail) => <span key={detail}>{detail}</span>)}
-                          </div>
-                        )}
+                        {message.analyzedByAi && message.reason && <div className="smart-mail-ai-reason"><Sparkles size={15} /> {message.reason}</div>}
+                        {analysisDetails.length > 0 && <div className="smart-mail-ai-details">{analysisDetails.map((detail) => <span key={detail}>{detail}</span>)}</div>}
                       </div>
                       <div className="smart-mail-actions">
-                        <button disabled={acting || analyzing} onClick={() => void applyAction(message, "archive")} className="smart-mail-action"><Archive size={16} /> Archivia</button>
-                        <button disabled={acting || analyzing} onClick={() => void applyAction(message, "trash")} className="smart-mail-action trash"><Trash2 size={16} /> Cestina</button>
+                        <button disabled={acting || analyzing || Boolean(cleaningGroupKey)} onClick={() => void applyAction(message, "archive")} className="smart-mail-action"><Archive size={16} /> Archivia</button>
+                        <button disabled={acting || analyzing || Boolean(cleaningGroupKey)} onClick={() => void applyAction(message, "trash")} className="smart-mail-action trash"><Trash2 size={16} /> Cestina</button>
                       </div>
                     </div>
                   </article>
@@ -438,12 +604,7 @@ export default function SmartEmailPage() {
             </section>
 
             {data.nextPageToken && (
-              <button
-                onClick={() => void loadInbox(data.nextPageToken ?? undefined)}
-                disabled={loadingMore || analyzing}
-                className="smart-mail-refresh"
-                style={{ width: "100%", marginTop: 14 }}
-              >
+              <button onClick={() => void loadInbox(data.nextPageToken ?? undefined)} disabled={loadingMore || analyzing || Boolean(cleaningGroupKey)} className="smart-mail-refresh" style={{ width: "100%", marginTop: 14 }}>
                 {loadingMore ? <Loader2 size={17} /> : <RefreshCw size={17} />} Carica altre email più vecchie
               </button>
             )}
