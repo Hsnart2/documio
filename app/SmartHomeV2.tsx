@@ -57,17 +57,46 @@ function firstName(user: any) {
   const value = metadata.full_name || metadata.name || metadata.given_name;
   if (typeof value === "string" && value.trim()) return value.trim().split(/\s+/)[0];
   const emailPart = String(user?.email ?? "").split("@")[0].split(/[._-]/)[0];
-  return emailPart ? emailPart.charAt(0).toUpperCase() + emailPart.slice(1).toLowerCase() : "";
+  return emailPart
+    ? emailPart.charAt(0).toUpperCase() + emailPart.slice(1).toLowerCase()
+    : "";
 }
 
-function normalizedTitle(value: unknown) {
+function normalize(value: unknown) {
   return String(value ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/\b202\d\b/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function normalizedTitle(value: unknown) {
+  return normalize(value).replace(/\b202\d\b/g, "").trim();
+}
+
+function hasActionableExpiry(document: any, tracked: boolean) {
+  if (tracked) return true;
+  const value = normalize(`${document.title ?? ""} ${document.category ?? ""}`);
+  return [
+    "scadenza",
+    "rinnovo",
+    "assicurazione",
+    "polizza",
+    "bolletta",
+    "multa",
+    "tari",
+    "imu",
+    "appuntamento",
+    "visita",
+    "contratto",
+    "canone",
+    "rata",
+    "pagamento",
+    "patente",
+    "passaporto",
+    "carta identita",
+  ].some((term) => value.includes(term));
 }
 
 export default function SmartHomeV2() {
@@ -84,15 +113,32 @@ export default function SmartHomeV2() {
 
   useEffect(() => {
     if (window.location.pathname !== "/") return;
-    let mount: HTMLDivElement | null = null;
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
+    let active = true;
     let observer: MutationObserver | null = null;
 
-    const install = () => {
+    const removeHome = () => {
+      observer?.disconnect();
+      observer = null;
+      document.body.classList.remove("smart-home-active");
+      document.querySelectorAll(".legacy-dashboard-hidden").forEach((element) =>
+        element.classList.remove("legacy-dashboard-hidden"),
+      );
+      document.getElementById("documio-smart-home-root")?.remove();
+      setTarget(null);
+    };
+
+    const installHome = () => {
       const main = document.querySelector("main");
       const hero = main?.querySelector(":scope > .hero");
       if (!(main instanceof HTMLElement) || !(hero instanceof HTMLElement)) return false;
 
-      mount = document.getElementById("documio-smart-home-root") as HTMLDivElement | null;
+      let mount = document.getElementById("documio-smart-home-root") as HTMLDivElement | null;
       if (!mount) {
         mount = document.createElement("div");
         mount.id = "documio-smart-home-root";
@@ -113,41 +159,37 @@ export default function SmartHomeV2() {
       return true;
     };
 
-    if (!install()) {
-      observer = new MutationObserver(() => {
-        if (install()) observer?.disconnect();
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-    }
-
-    return () => {
-      observer?.disconnect();
-      document.body.classList.remove("smart-home-active");
-      document.querySelectorAll(".legacy-dashboard-hidden").forEach((element) =>
-        element.classList.remove("legacy-dashboard-hidden"),
-      );
-      mount?.remove();
+    const installWhenReady = () => {
+      if (installHome()) {
+        observer?.disconnect();
+        observer = null;
+        return;
+      }
+      if (!observer) {
+        observer = new MutationObserver(() => {
+          if (installHome()) {
+            observer?.disconnect();
+            observer = null;
+          }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
     };
-  }, []);
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-    let active = true;
 
     const load = async (user: any) => {
       if (!active) return;
       if (!user) {
+        setName("");
         setDocuments([]);
         setAttachments([]);
+        setMessages([]);
         setLoading(false);
+        removeHome();
         return;
       }
 
       setName(firstName(user));
+      installWhenReady();
       setLoading(true);
       const [docs, files] = await Promise.all([
         supabase
@@ -163,6 +205,7 @@ export default function SmartHomeV2() {
           .order("uploaded_at", { ascending: false })
           .limit(2500),
       ]);
+
       if (!active) return;
       if (docs.error) console.error("Smart Home documents:", docs.error.message);
       if (files.error) console.error("Smart Home attachments:", files.error.message);
@@ -178,7 +221,9 @@ export default function SmartHomeV2() {
 
     return () => {
       active = false;
+      observer?.disconnect();
       data.subscription.unsubscribe();
+      removeHome();
     };
   }, []);
 
@@ -187,6 +232,7 @@ export default function SmartHomeV2() {
     const thirtyDays = new Date(today.getTime() + 30 * DAY);
     const sevenDaysAgo = new Date(today.getTime() - 7 * DAY);
     const byDocument = new Map<string, any[]>();
+
     attachments.forEach((attachment) => {
       const list = byDocument.get(attachment.document_id) ?? [];
       list.push(attachment);
@@ -218,7 +264,10 @@ export default function SmartHomeV2() {
     documents.forEach((document) => {
       const linked = byDocument.get(document.id) ?? [];
       const receipts = linked.filter((item) => paymentTypes.has(item.attachment_type));
-      const receiptPaid = receipts.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      const receiptPaid = receipts.reduce(
+        (sum, item) => sum + (Number(item.amount) || 0),
+        0,
+      );
       const paid = Math.max(Number(document.paid_amount) || 0, receiptPaid);
       const count = Number(document.installment_count) || 0;
       const installment = Number(document.installment_amount) || 0;
@@ -228,17 +277,26 @@ export default function SmartHomeV2() {
       const remaining = total > 0
         ? Math.max(0, total - paid)
         : Math.max(0, Number(document.remaining_amount) || 0);
-      const tracked = Boolean(total || remaining || installment || document.is_financing || receipts.length);
-      const paidInstallments = Math.max(Number(document.paid_installments) || 0, receipts.length);
-      const nextInstallment = count > paidInstallments
+      const tracked = Boolean(
+        total || remaining || installment || document.is_financing || receipts.length,
+      );
+      const paidInstallments = Math.max(
+        Number(document.paid_installments) || 0,
+        receipts.length,
+      );
+      const paidStatus =
+        document.payment_status === "Pagato" || (total > 0 && remaining <= 0.01);
+      const disputed = document.payment_status === "Contestato";
+      const nextInstallment = !paidStatus && count > paidInstallments
         ? addMonths(document.first_installment_date, paidInstallments)
         : null;
-      const expiry = document.appointment_completed_at ? null : toDate(document.expiry_date);
-      const nextDate = [nextInstallment, expiry]
+      const expiry = document.appointment_completed_at
+        ? null
+        : toDate(document.expiry_date);
+      const relevantExpiry = hasActionableExpiry(document, tracked) ? expiry : null;
+      const nextDate = [nextInstallment, relevantExpiry]
         .filter(Boolean)
         .sort((a: any, b: any) => a.getTime() - b.getTime())[0] ?? null;
-      const paidStatus = document.payment_status === "Pagato" || (total > 0 && remaining <= 0.01);
-      const disputed = document.payment_status === "Contestato";
 
       if (tracked && !paidStatus && !disputed && remaining > 0) {
         const dueNow = installment ? Math.min(installment, remaining) : remaining;
@@ -281,8 +339,12 @@ export default function SmartHomeV2() {
           text: "Risulta pagato, ma manca una ricevuta o quietanza collegata.",
         });
       }
+
       if (nextDate && nextDate < today && !paidStatus && !disputed) {
-        const days = Math.max(1, Math.ceil((today.getTime() - nextDate.getTime()) / DAY));
+        const days = Math.max(
+          1,
+          Math.ceil((today.getTime() - nextDate.getTime()) / DAY),
+        );
         advice.push({
           id: `late:${document.id}`,
           documentId: document.id,
@@ -311,29 +373,74 @@ export default function SmartHomeV2() {
     if (!document?.storage_path) return;
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    const { data } = await supabase.storage.from("documents").createSignedUrl(document.storage_path, 60);
+    const { data } = await supabase.storage
+      .from("documents")
+      .createSignedUrl(document.storage_path, 60);
     if (data?.signedUrl) window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const explainAdvice = () => {
+    const items = summary.advice.slice(0, 5);
+    if (!items.length) return;
+
+    const explanation = items
+      .map((item) => {
+        const action = item.id.startsWith("duplicate:")
+          ? "Apri i documenti simili e conserva una sola copia se il contenuto è identico."
+          : item.id.startsWith("receipt:")
+            ? "Collega la ricevuta o la quietanza, oppure correggi lo stato se non è stato pagato."
+            : "Apri il documento e verifica la data: se è una vera scadenza ancora attiva va gestita; se è soltanto la data della comunicazione, non serve alcuna azione.";
+        return `- ${item.title}: ${item.text} ${action}`;
+      })
+      .join("\n");
+
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        text: "Spiegami i Consigli AI visualizzati.",
+      },
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: `Questi controlli riguardano esclusivamente gli elementi mostrati nei Consigli AI:\n${explanation}`,
+        documentIds: items.map((item) => item.documentId),
+      },
+    ]);
+    setError("");
   };
 
   const ask = async (question?: string) => {
     const clean = String(question ?? input).trim();
     if (!clean || asking) return;
-    setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", text: clean }]);
+    setMessages((current) => [
+      ...current,
+      { id: crypto.randomUUID(), role: "user", text: clean },
+    ]);
     setInput("");
     setAsking(true);
     setError("");
+
     try {
       const supabase = getSupabaseClient();
-      const { data } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+      const { data } = supabase
+        ? await supabase.auth.getSession()
+        : { data: { session: null } };
       const token = data.session?.access_token;
       if (!token) throw new Error("Sessione non disponibile.");
+
       const response = await fetch("/api/assistant", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ question: clean, language: "it" }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Risposta non disponibile.");
+
       setMessages((current) => [
         ...current,
         {
@@ -344,7 +451,11 @@ export default function SmartHomeV2() {
         },
       ]);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Non riesco a rispondere.");
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Non riesco a rispondere.",
+      );
     } finally {
       setAsking(false);
     }
@@ -357,14 +468,18 @@ export default function SmartHomeV2() {
       key: "payments",
       label: "Da pagare",
       value: summary.payments.length,
-      caption: summary.payments.length ? `${money(summary.dueNowTotal)} da gestire` : "Nessun pagamento urgente",
+      caption: summary.payments.length
+        ? `${money(summary.dueNowTotal)} da gestire`
+        : "Nessun pagamento urgente",
       icon: WalletCards,
     },
     {
       key: "deadlines",
       label: "Prossime scadenze",
       value: summary.deadlines.length,
-      caption: summary.deadlines[0]?.date ? `La prima è il ${dateLabel(summary.deadlines[0].date)}` : "Nessuna nei prossimi 30 giorni",
+      caption: summary.deadlines[0]?.date
+        ? `La prima è il ${dateLabel(summary.deadlines[0].date)}`
+        : "Nessuna nei prossimi 30 giorni",
       icon: CalendarDays,
     },
     {
@@ -378,7 +493,9 @@ export default function SmartHomeV2() {
       key: "advice",
       label: "Consigli AI",
       value: summary.advice.length,
-      caption: summary.advice.length ? "Controlli consigliati" : "Nessuna anomalia evidente",
+      caption: summary.advice.length
+        ? "Controlli consigliati"
+        : "Nessuna anomalia evidente",
       icon: Sparkles,
     },
   ];
@@ -387,18 +504,34 @@ export default function SmartHomeV2() {
     <section className="smart-home">
       <div className="smart-home-welcome">
         <div>
-          <span className="smart-home-kicker"><Sparkles size={16} /> La tua giornata amministrativa</span>
+          <span className="smart-home-kicker">
+            <Sparkles size={16} /> La tua giornata amministrativa
+          </span>
           <h1>Buongiorno{name ? ` ${name}` : ""}</h1>
-          <p>Qui trovi subito cosa richiede attenzione. L’archivio completo rimane disponibile più sotto.</p>
+          <p>
+            Qui trovi subito cosa richiede attenzione. L’archivio completo rimane
+            disponibile più sotto.
+          </p>
         </div>
-        <div className="smart-home-status"><Bot size={24} /><span><strong>DocuMio è pronto</strong> a controllare documenti, pagamenti e scadenze.</span></div>
+        <div className="smart-home-status">
+          <Bot size={24} />
+          <span>
+            <strong>DocuMio è pronto</strong> a controllare documenti, pagamenti e
+            scadenze.
+          </span>
+        </div>
       </div>
 
       <div className="smart-home-cards">
         {cards.map((card) => {
           const Icon = card.icon;
           return (
-            <button type="button" key={card.key} className={`smart-home-card ${activeCard === card.key ? "active" : ""}`} onClick={() => setActiveCard(card.key)}>
+            <button
+              type="button"
+              key={card.key}
+              className={`smart-home-card ${activeCard === card.key ? "active" : ""}`}
+              onClick={() => setActiveCard(card.key)}
+            >
               <span className="smart-home-card-icon"><Icon size={22} /></span>
               <span className="smart-home-card-label">{card.label}</span>
               <strong>{loading ? "—" : card.value}</strong>
@@ -410,18 +543,34 @@ export default function SmartHomeV2() {
 
       <div className="smart-home-insights">
         <div className="smart-home-insights-heading">
-          <div><span>{cards.find((item) => item.key === activeCard)?.label}</span><strong>{details.length ? `${details.length} elementi da vedere` : "Tutto tranquillo"}</strong></div>
+          <div>
+            <span>{cards.find((item) => item.key === activeCard)?.label}</span>
+            <strong>{details.length ? `${details.length} elementi da vedere` : "Tutto tranquillo"}</strong>
+          </div>
           {activeCard === "advice" && details.length > 0 && (
-            <button type="button" onClick={() => void ask("Controlla il mio archivio e spiegami cosa devo sistemare questa settimana.")}>Chiedi spiegazione <ArrowRight size={16} /></button>
+            <button type="button" onClick={explainAdvice}>
+              Chiedi spiegazione <ArrowRight size={16} />
+            </button>
           )}
         </div>
+
         {details.length === 0 ? (
-          <div className="smart-home-insights-empty">Non risultano elementi urgenti in questa sezione.</div>
+          <div className="smart-home-insights-empty">
+            Non risultano elementi urgenti in questa sezione.
+          </div>
         ) : (
           <div className="smart-home-insights-list">
             {details.slice(0, 5).map((item: any) => (
-              <button type="button" key={item.id} onClick={() => void openDocument(item.documentId)}>
-                <span><strong>{item.title}</strong><small>{item.text}</small></span><ArrowRight size={17} />
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => void openDocument(item.documentId)}
+              >
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.text}</small>
+                </span>
+                <ArrowRight size={17} />
               </button>
             ))}
           </div>
@@ -429,29 +578,87 @@ export default function SmartHomeV2() {
       </div>
 
       <section className="smart-home-chat">
-        <div className="smart-home-chat-heading"><span className="smart-home-chat-icon"><Bot size={25} /></span><div><h2>Che devo fare questa settimana?</h2><p>Scrivi normalmente: DocuMio risponde usando il tuo archivio reale.</p></div></div>
+        <div className="smart-home-chat-heading">
+          <span className="smart-home-chat-icon"><Bot size={25} /></span>
+          <div>
+            <h2>Che devo fare questa settimana?</h2>
+            <p>Scrivi normalmente: DocuMio risponde usando il tuo archivio reale.</p>
+          </div>
+        </div>
+
         <div className="smart-home-suggestions">
-          {["Che devo fare questa settimana?", "Quanto devo pagare adesso?", "Quali ricevute mancano?", "Cosa scade nei prossimi 30 giorni?"].map((suggestion) => (
-            <button type="button" key={suggestion} disabled={asking} onClick={() => void ask(suggestion)}>{suggestion}</button>
+          {[
+            "Che devo fare questa settimana?",
+            "Quanto devo pagare adesso?",
+            "Quali ricevute mancano?",
+            "Cosa scade nei prossimi 30 giorni?",
+          ].map((suggestion) => (
+            <button
+              type="button"
+              key={suggestion}
+              disabled={asking}
+              onClick={() => void ask(suggestion)}
+            >
+              {suggestion}
+            </button>
           ))}
         </div>
+
         <div className="smart-home-conversation">
-          {messages.length === 0 && <div className="smart-home-welcome-message"><Sparkles size={18} /> Posso cercare nei documenti e negli allegati e prepararti un riepilogo pratico.</div>}
+          {messages.length === 0 && (
+            <div className="smart-home-welcome-message">
+              <Sparkles size={18} /> Posso cercare nei documenti e negli allegati e
+              prepararti un riepilogo pratico.
+            </div>
+          )}
+
           {messages.map((message) => (
             <div key={message.id} className={`smart-home-message ${message.role}`}>
               <div>{message.text}</div>
-              {message.role === "assistant" && (message.documentIds ?? []).map((documentId: string) => {
-                const document = documents.find((item) => item.id === documentId);
-                return document ? <button type="button" key={documentId} onClick={() => void openDocument(documentId)}><FileText size={15} /> {document.title}</button> : null;
-              })}
+              {message.role === "assistant" &&
+                (message.documentIds ?? []).map((documentId: string) => {
+                  const document = documents.find((item) => item.id === documentId);
+                  return document ? (
+                    <button
+                      type="button"
+                      key={documentId}
+                      onClick={() => void openDocument(documentId)}
+                    >
+                      <FileText size={15} /> {document.title}
+                    </button>
+                  ) : null;
+                })}
             </div>
           ))}
-          {asking && <div className="smart-home-message assistant loading"><Loader2 size={17} /> Sto controllando il tuo archivio…</div>}
+
+          {asking && (
+            <div className="smart-home-message assistant loading">
+              <Loader2 size={17} /> Sto controllando il tuo archivio…
+            </div>
+          )}
           {error && <div className="smart-home-chat-error">{error}</div>}
         </div>
-        <form className="smart-home-chat-form" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-          <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Es. Che devo fare questa settimana?" disabled={asking} />
-          <button type="submit" disabled={!input.trim() || asking} aria-label="Invia domanda">{asking ? <Loader2 size={20} /> : <Send size={20} />}</button>
+
+        <form
+          className="smart-home-chat-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void ask();
+          }}
+        >
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder="Es. Che devo fare questa settimana?"
+            disabled={asking}
+          />
+          <button
+            type="submit"
+            disabled={!input.trim() || asking}
+            aria-label="Invia domanda"
+          >
+            {asking ? <Loader2 size={20} /> : <Send size={20} />}
+          </button>
         </form>
       </section>
     </section>,
