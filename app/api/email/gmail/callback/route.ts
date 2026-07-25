@@ -28,10 +28,18 @@ export async function GET(request: Request) {
     const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
     const redirectUri = process.env.GOOGLE_EMAIL_REDIRECT_URI;
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
 
-    if (!clientId || !clientSecret || !redirectUri || !supabaseUrl || !serviceRoleKey) {
-      throw new Error("Configurazione server incompleta");
+    const missingConfiguration = [
+      ["GOOGLE_EMAIL_CLIENT_ID", clientId],
+      ["GOOGLE_EMAIL_CLIENT_SECRET", clientSecret],
+      ["GOOGLE_EMAIL_REDIRECT_URI", redirectUri],
+      ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
+      ["SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY", serviceRoleKey],
+    ].filter(([, value]) => !value).map(([name]) => name);
+
+    if (missingConfiguration.length > 0) {
+      throw new Error(`Configurazione server incompleta: ${missingConfiguration.join(", ")}`);
     }
 
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
