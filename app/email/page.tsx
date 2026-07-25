@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Archive, ArrowLeft, CheckCircle2, Inbox, Loader2, Mail, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArrowLeft,
+  CheckCircle2,
+  Inbox,
+  Loader2,
+  Mail,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 import "./email.css";
 
@@ -21,6 +32,14 @@ type SmartEmail = {
   category: EmailCategory;
   importance: EmailImportance;
   suggestedAction: string;
+  reason?: string;
+  documentType?: string | null;
+  amount?: number | null;
+  dueDate?: string | null;
+  appointmentDate?: string | null;
+  appointmentTime?: string | null;
+  senderName?: string | null;
+  analyzedByAi?: boolean;
 };
 
 type InboxResponse = {
@@ -31,6 +50,24 @@ type InboxResponse = {
   nextPageToken?: string | null;
   resultSizeEstimate?: number;
   range?: HistoryRange;
+  error?: string;
+};
+
+type AnalyzeResponse = {
+  results?: Array<{
+    id: string;
+    category: EmailCategory;
+    importance: EmailImportance;
+    suggestedAction: string;
+    reason: string;
+    documentType: string | null;
+    amount: number | null;
+    dueDate: string | null;
+    appointmentDate: string | null;
+    appointmentTime: string | null;
+    senderName: string | null;
+  }>;
+  analyzed?: number;
   error?: string;
 };
 
@@ -49,11 +86,43 @@ const rangeLabels: Record<HistoryRange, string> = {
   all: "Tutta la posta",
 };
 
+function buildSummary(messages: SmartEmail[]) {
+  return {
+    total: messages.length,
+    important: messages.filter((item) => item.importance === "high").length,
+    documents: messages.filter(
+      (item) => item.category === "documenti" || item.category === "pagamenti",
+    ).length,
+    advertising: messages.filter((item) => item.category === "pubblicita").length,
+  };
+}
+
+function getAnalysisDetails(message: SmartEmail) {
+  const details: string[] = [];
+  if (message.documentType) details.push(`Tipo: ${message.documentType}`);
+  if (typeof message.amount === "number") {
+    details.push(
+      `Importo rilevato: ${new Intl.NumberFormat("it-IT", {
+        maximumFractionDigits: 2,
+      }).format(message.amount)}`,
+    );
+  }
+  if (message.dueDate) details.push(`Scadenza: ${message.dueDate}`);
+  if (message.appointmentDate) {
+    details.push(
+      `Appuntamento: ${message.appointmentDate}${message.appointmentTime ? ` alle ${message.appointmentTime}` : ""}`,
+    );
+  }
+  return details;
+}
+
 export default function SmartEmailPage() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<{ done: number; total: number } | null>(null);
   const [actingIds, setActingIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -90,12 +159,7 @@ export default function SmartEmailPage() {
         return {
           ...result,
           messages,
-          summary: {
-            total: messages.length,
-            important: messages.filter((item) => item.importance === "high").length,
-            documents: messages.filter((item) => item.category === "documenti" || item.category === "pagamenti").length,
-            advertising: messages.filter((item) => item.category === "pubblicita").length,
-          },
+          summary: buildSummary(messages),
         };
       });
     } catch (loadError) {
@@ -130,6 +194,89 @@ export default function SmartEmailPage() {
     }
   }
 
+  async function analyzeEmails() {
+    if (!data?.connected || data.messages.length === 0 || analyzing) return;
+
+    const pendingMessages = data.messages.filter((message) => !message.analyzedByAi);
+    const targets = pendingMessages.length > 0 ? pendingMessages : data.messages;
+    const batchSize = 15;
+
+    setAnalyzing(true);
+    setAnalysisProgress({ done: 0, total: targets.length });
+    setError("");
+    setNotice("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Sessione DocuMio non disponibile.");
+
+      let completed = 0;
+      for (let index = 0; index < targets.length; index += batchSize) {
+        const batch = targets.slice(index, index + batchSize);
+        const response = await fetch("/api/email/gmail/analyze", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messages: batch.map((message) => ({
+              id: message.id,
+              subject: message.subject,
+              from: message.from,
+              date: message.date,
+              snippet: message.snippet,
+              labelIds: message.labelIds,
+            })),
+          }),
+        });
+
+        const responseText = await response.text();
+        let result: AnalyzeResponse = {};
+        try {
+          result = responseText ? JSON.parse(responseText) as AnalyzeResponse : {};
+        } catch {
+          throw new Error("La risposta dell'analisi non era leggibile.");
+        }
+
+        if (!response.ok) {
+          throw new Error(result.error ?? "Analisi email non riuscita.");
+        }
+
+        const analyses = result.results ?? [];
+        if (analyses.length === 0) {
+          throw new Error("L'IA non ha restituito risultati per queste email.");
+        }
+
+        const analysisById = new Map(analyses.map((analysis) => [analysis.id, analysis]));
+        setData((current) => {
+          if (!current) return current;
+          const messages = current.messages.map((message) => {
+            const analysis = analysisById.get(message.id);
+            return analysis
+              ? { ...message, ...analysis, analyzedByAi: true }
+              : message;
+          });
+          return { ...current, messages, summary: buildSummary(messages) };
+        });
+
+        completed += analyses.length;
+        setAnalysisProgress({ done: Math.min(completed, targets.length), total: targets.length });
+      }
+
+      setNotice(`${completed} email analizzate con l'IA. Controlla sempre i dati importanti prima di usarli.`);
+    } catch (analysisError) {
+      setError(
+        analysisError instanceof Error
+          ? analysisError.message
+          : "Errore durante l'analisi delle email.",
+      );
+    } finally {
+      setAnalyzing(false);
+      setAnalysisProgress(null);
+    }
+  }
+
   async function applyAction(message: SmartEmail, action: "archive" | "trash") {
     const label = action === "trash" ? "spostare nel cestino" : "archiviare";
     if (!window.confirm(`Confermi di ${label} l’email “${message.subject || "Senza oggetto"}”?`)) return;
@@ -150,8 +297,16 @@ export default function SmartEmailPage() {
       });
       const result = (await response.json()) as { changed?: number; error?: string };
       if (!response.ok || !result.changed) throw new Error(result.error ?? "Azione non completata.");
-      setData((current) => current ? { ...current, messages: current.messages.filter((item) => item.id !== message.id) } : current);
-      setNotice(action === "trash" ? "Email spostata nel cestino. Puoi ancora recuperarla da Gmail." : "Email archiviata.");
+      setData((current) => {
+        if (!current) return current;
+        const messages = current.messages.filter((item) => item.id !== message.id);
+        return { ...current, messages, summary: buildSummary(messages) };
+      });
+      setNotice(
+        action === "trash"
+          ? "Email spostata nel cestino. Puoi ancora recuperarla da Gmail."
+          : "Email archiviata.",
+      );
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Azione non riuscita.");
     } finally {
@@ -164,6 +319,8 @@ export default function SmartEmailPage() {
     [data?.messages, filter],
   );
 
+  const pendingAiCount = data?.messages.filter((message) => !message.analyzedByAi).length ?? 0;
+
   return (
     <main className="smart-mail-page">
       <div className="smart-mail-shell">
@@ -172,7 +329,7 @@ export default function SmartEmailPage() {
             <ArrowLeft size={17} /> Torna a DocuMio
           </Link>
           {data?.connected && (
-            <button onClick={() => void loadInbox()} disabled={loading} className="smart-mail-refresh">
+            <button onClick={() => void loadInbox()} disabled={loading || analyzing} className="smart-mail-refresh">
               <RefreshCw size={17} /> Aggiorna posta
             </button>
           )}
@@ -181,7 +338,7 @@ export default function SmartEmailPage() {
         <section className="smart-mail-hero">
           <div className="smart-mail-badge"><ShieldCheck size={16} /> Azioni sempre sotto il tuo controllo</div>
           <h1>Posta intelligente</h1>
-          <p>DocuMio può analizzare anche la posta vecchia, individuando documenti, pagamenti, appuntamenti e pubblicità. Non elimina mai definitivamente nulla.</p>
+          <p>Le email si aprono subito. L’analisi intelligente parte soltanto quando premi il pulsante dedicato.</p>
         </section>
 
         {error && <div className="smart-mail-error">{error}</div>}
@@ -200,20 +357,36 @@ export default function SmartEmailPage() {
           </section>
         ) : (
           <>
-            <div className="smart-mail-filters" aria-label="Periodo da analizzare">
+            <div className="smart-mail-filters" aria-label="Periodo da caricare">
               {(Object.keys(rangeLabels) as HistoryRange[]).map((item) => (
-                <button key={item} onClick={() => setRange(item)} className={`smart-mail-filter ${range === item ? "active" : ""}`}>
+                <button key={item} onClick={() => setRange(item)} disabled={analyzing} className={`smart-mail-filter ${range === item ? "active" : ""}`}>
                   {rangeLabels[item]}
                 </button>
               ))}
             </div>
 
+            <section className="smart-mail-ai-panel">
+              <button
+                onClick={() => void analyzeEmails()}
+                disabled={analyzing || data.messages.length === 0}
+                className="smart-mail-analyze"
+              >
+                {analyzing ? <Loader2 size={19} /> : <Sparkles size={19} />}
+                {analyzing && analysisProgress
+                  ? `Analisi ${analysisProgress.done} di ${analysisProgress.total}`
+                  : pendingAiCount > 0
+                    ? `Analizza ${pendingAiCount} email con l’IA`
+                    : "Rianalizza le email con l’IA"}
+              </button>
+              <p>DocuMio analizzerà soltanto le email già caricate in questa pagina, a gruppi sicuri di 15.</p>
+            </section>
+
             <div className="smart-mail-summary">
               {[
-                ["Email analizzate", data.summary?.total ?? 0],
+                ["Email caricate", data.summary?.total ?? 0],
                 ["Importanti", data.summary?.important ?? 0],
                 ["Documenti trovati", data.summary?.documents ?? 0],
-                ["Pubblicità", data.summary?.advertising ?? 0],
+                ["Analizzate con IA", data.messages.filter((message) => message.analyzedByAi).length],
               ].map(([label, value]) => (
                 <div key={String(label)} className="smart-mail-stat"><span>{label}</span><strong>{value}</strong></div>
               ))}
@@ -232,6 +405,7 @@ export default function SmartEmailPage() {
                 <div className="smart-mail-empty">Nessuna email in questa categoria.</div>
               ) : visibleMessages.map((message) => {
                 const acting = actingIds.includes(message.id);
+                const analysisDetails = getAnalysisDetails(message);
                 return (
                   <article key={message.id} className="smart-mail-message">
                     <div className="smart-mail-message-row">
@@ -239,14 +413,23 @@ export default function SmartEmailPage() {
                         <div className="smart-mail-tags">
                           <span className="smart-mail-tag">{categoryLabels[message.category]}</span>
                           {message.importance === "high" && <span className="smart-mail-tag attention">Richiede attenzione</span>}
+                          {message.analyzedByAi && <span className="smart-mail-tag ai"><Sparkles size={12} /> Analizzata con IA</span>}
                         </div>
                         <h3>{message.subject || "Senza oggetto"}</h3>
                         <div className="smart-mail-from">{message.from}</div>
                         <p className="smart-mail-snippet">{message.snippet}</p>
+                        {message.analyzedByAi && message.reason && (
+                          <div className="smart-mail-ai-reason"><Sparkles size={15} /> {message.reason}</div>
+                        )}
+                        {analysisDetails.length > 0 && (
+                          <div className="smart-mail-ai-details">
+                            {analysisDetails.map((detail) => <span key={detail}>{detail}</span>)}
+                          </div>
+                        )}
                       </div>
                       <div className="smart-mail-actions">
-                        <button disabled={acting} onClick={() => void applyAction(message, "archive")} className="smart-mail-action"><Archive size={16} /> Archivia</button>
-                        <button disabled={acting} onClick={() => void applyAction(message, "trash")} className="smart-mail-action trash"><Trash2 size={16} /> Cestina</button>
+                        <button disabled={acting || analyzing} onClick={() => void applyAction(message, "archive")} className="smart-mail-action"><Archive size={16} /> Archivia</button>
+                        <button disabled={acting || analyzing} onClick={() => void applyAction(message, "trash")} className="smart-mail-action trash"><Trash2 size={16} /> Cestina</button>
                       </div>
                     </div>
                   </article>
@@ -257,7 +440,7 @@ export default function SmartEmailPage() {
             {data.nextPageToken && (
               <button
                 onClick={() => void loadInbox(data.nextPageToken ?? undefined)}
-                disabled={loadingMore}
+                disabled={loadingMore || analyzing}
                 className="smart-mail-refresh"
                 style={{ width: "100%", marginTop: 14 }}
               >
