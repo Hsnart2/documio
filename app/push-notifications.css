@@ -1,0 +1,172 @@
+.push-settings-card {
+  margin: 0 0 16px;
+  padding: 18px;
+  border: 1px solid #d8ddff;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #f8f8ff 0%, #ffffff 70%);
+  box-shadow: 0 12px 32px rgba(79, 70, 229, 0.08);
+  color: #111827;
+}
+
+.push-settings-card > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.push-settings-card > header > span:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+
+.push-settings-card > header strong {
+  font-size: 17px;
+}
+
+.push-settings-card > header small,
+.push-install-help small,
+.push-settings-note {
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.push-settings-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #4338ca;
+  background: #e9e8ff;
+}
+
+.push-settings-card header em {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.push-settings-card header em.active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.push-install-help,
+.push-settings-warning,
+.push-settings-success,
+.push-settings-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  font-size: 14px;
+}
+
+.push-install-help {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #3730a3;
+}
+
+.push-install-help span {
+  display: grid;
+  gap: 3px;
+}
+
+.push-settings-warning {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+}
+
+.push-settings-success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.push-settings-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.push-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 15px;
+}
+
+.push-settings-actions button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 13px;
+  padding: 10px 14px;
+  font-weight: 800;
+}
+
+.push-enable-button,
+.push-test-button {
+  color: #ffffff !important;
+  border-color: #4f46e5 !important;
+  background: linear-gradient(135deg, #5b50ef, #4338ca) !important;
+}
+
+.push-settings-note {
+  margin: 13px 0 0;
+  font-size: 12px;
+}
+
+.push-spin {
+  animation: documio-push-spin 0.9s linear infinite;
+}
+
+@keyframes documio-push-spin {
+  to { transform: rotate(360deg); }
+}
+
+.push-deep-link-highlight {
+  animation: documio-push-highlight 2.2s ease-out;
+  outline: 3px solid rgba(79, 70, 229, 0.55);
+  outline-offset: 5px;
+}
+
+@keyframes documio-push-highlight {
+  0%, 45% { box-shadow: 0 0 0 12px rgba(79, 70, 229, 0.18); }
+  100% { box-shadow: none; }
+}
+
+@media (max-width: 640px) {
+  .push-settings-card {
+    padding: 15px;
+  }
+
+  .push-settings-card > header {
+    flex-wrap: wrap;
+  }
+
+  .push-settings-card header em {
+    margin-left: 54px;
+    margin-top: -8px;
+  }
+
+  .push-settings-actions,
+  .push-settings-actions button {
+    width: 100%;
+  }
+}

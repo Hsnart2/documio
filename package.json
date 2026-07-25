@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs",
+    "predev": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs && node scripts/apply-web-push-integration.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs",
+    "prebuild": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs && node scripts/apply-web-push-integration.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "vapid:generate": "node scripts/generate-vapid-keys.mjs"
   },
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
