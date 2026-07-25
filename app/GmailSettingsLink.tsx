@@ -14,6 +14,9 @@ type GmailStatus = {
 function installGmailLink(status: GmailStatus) {
   if (!status.checked) return;
 
+  const existing = document.getElementById(LINK_ID);
+  if (existing?.isConnected) existing.remove();
+
   const deleteButton = Array.from(document.querySelectorAll("button")).find((button) => {
     const text = button.textContent?.trim().toLowerCase() ?? "";
     return text.includes("cancella account") || text.includes("delete account");
@@ -26,22 +29,9 @@ function installGmailLink(status: GmailStatus) {
     ?.trim()
     .toLowerCase()
     .includes("cancella account");
-  const signature = `${status.connected ? "connected" : "disconnected"}:${status.emailAddress ?? ""}:${languageIsItalian ? "it" : "en"}`;
-  const existing = document.getElementById(LINK_ID);
-
-  if (
-    existing?.isConnected &&
-    existing.parentElement === panel &&
-    existing.dataset.signature === signature
-  ) {
-    return;
-  }
-
-  existing?.remove();
 
   const card = document.createElement("div");
   card.id = LINK_ID;
-  card.dataset.signature = signature;
   card.style.border = status.connected ? "1px solid #bbf7d0" : "1px solid #c7d2fe";
   card.style.borderRadius = "16px";
   card.style.padding = "14px";
@@ -97,26 +87,30 @@ export default function GmailSettingsLink() {
     async function checkConnection() {
       try {
         const supabase = getSupabaseClient();
-        const { data } = supabase
-          ? await supabase.auth.getSession()
-          : { data: { session: null } };
-        const token = data.session?.access_token;
-        if (!token) {
+        if (!supabase) {
           if (!cancelled) setStatus({ checked: true, connected: false });
           return;
         }
 
-        const response = await fetch("/api/email/gmail/inbox?range=14d", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const result = await response.json() as { connected?: boolean; emailAddress?: string };
-        if (!cancelled) {
-          setStatus({
-            checked: true,
-            connected: response.ok && result.connected === true,
-            emailAddress: result.emailAddress,
-          });
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData.session?.user) {
+          if (!cancelled) setStatus({ checked: true, connected: false });
+          return;
         }
+
+        const { data, error } = await supabase
+          .from("email_connections")
+          .select("email_address")
+          .eq("provider", "gmail")
+          .maybeSingle();
+
+        if (cancelled) return;
+
+        setStatus({
+          checked: true,
+          connected: !error && Boolean(data),
+          emailAddress: data?.email_address ?? undefined,
+        });
       } catch {
         if (!cancelled) setStatus({ checked: true, connected: false });
       }
@@ -132,7 +126,7 @@ export default function GmailSettingsLink() {
     const observer = new MutationObserver(() => installGmailLink(status));
     observer.observe(document.body, { childList: true, subtree: true });
 
-    const interval = window.setInterval(() => installGmailLink(status), 750);
+    const interval = window.setInterval(() => installGmailLink(status), 500);
 
     return () => {
       observer.disconnect();
