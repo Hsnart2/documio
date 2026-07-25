@@ -14,9 +14,6 @@ type GmailStatus = {
 function installGmailLink(status: GmailStatus) {
   if (!status.checked) return;
 
-  const existing = document.getElementById(LINK_ID);
-  if (existing?.isConnected) existing.remove();
-
   const deleteButton = Array.from(document.querySelectorAll("button")).find((button) => {
     const text = button.textContent?.trim().toLowerCase() ?? "";
     return text.includes("cancella account") || text.includes("delete account");
@@ -29,9 +26,22 @@ function installGmailLink(status: GmailStatus) {
     ?.trim()
     .toLowerCase()
     .includes("cancella account");
+  const signature = `${status.connected ? "connected" : "disconnected"}:${status.emailAddress ?? ""}:${languageIsItalian ? "it" : "en"}`;
+  const existing = document.getElementById(LINK_ID);
+
+  if (
+    existing?.isConnected &&
+    existing.parentElement === panel &&
+    existing.dataset.signature === signature
+  ) {
+    return;
+  }
+
+  existing?.remove();
 
   const card = document.createElement("div");
   card.id = LINK_ID;
+  card.dataset.signature = signature;
   card.style.border = status.connected ? "1px solid #bbf7d0" : "1px solid #c7d2fe";
   card.style.borderRadius = "16px";
   card.style.padding = "14px";
@@ -96,7 +106,7 @@ export default function GmailSettingsLink() {
           return;
         }
 
-        const response = await fetch("/api/email/gmail/inbox?range=14d&limit=1", {
+        const response = await fetch("/api/email/gmail/inbox?range=14d", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const result = await response.json() as { connected?: boolean; emailAddress?: string };
@@ -122,7 +132,7 @@ export default function GmailSettingsLink() {
     const observer = new MutationObserver(() => installGmailLink(status));
     observer.observe(document.body, { childList: true, subtree: true });
 
-    const interval = window.setInterval(() => installGmailLink(status), 500);
+    const interval = window.setInterval(() => installGmailLink(status), 750);
 
     return () => {
       observer.disconnect();
