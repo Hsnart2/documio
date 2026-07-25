@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DocuMio">
+  <defs>
+    <linearGradient id="g" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6556f5"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#g)"/>
+  <path d="M151 104h146l64 64v240H151z" fill="#fff" opacity=".98"/>
+  <path d="M297 104v72h64" fill="#dcdcff"/>
+  <rect x="190" y="222" width="132" height="24" rx="12" fill="#4f46e5"/>
+  <rect x="190" y="274" width="132" height="24" rx="12" fill="#7771f7"/>
+  <rect x="190" y="326" width="92" height="24" rx="12" fill="#a7a3ff"/>
+</svg>
