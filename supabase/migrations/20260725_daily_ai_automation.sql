@@ -124,6 +124,17 @@ for delete
 to authenticated
 using (auth.uid() = user_id);
 
+grant usage on schema public to authenticated, service_role;
+
 grant select, insert, update on public.automation_preferences to authenticated;
 grant select, update on public.automation_activity to authenticated;
 grant select, update, delete on public.automation_notifications to authenticated;
+
+grant all privileges
+on table public.automation_preferences,
+         public.automation_activity,
+         public.automation_notifications
+to service_role;
+
+grant execute on function public.documio_set_updated_at()
+to authenticated, service_role;
