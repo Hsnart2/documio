@@ -43,11 +43,35 @@ await writeFile(smartHomePath, smartHome, "utf8");
 
 let page = await readFile(pagePath, "utf8");
 if (!page.includes("conversation: assistantMessages.slice(-10)")) {
-  page = page.replace(
-    "conversation: assistantMessages.slice(-8)",
-    "conversation: assistantMessages.slice(-10)",
-  );
+  if (page.includes("conversation: assistantMessages.slice(-8)")) {
+    page = page.replace(
+      "conversation: assistantMessages.slice(-8)",
+      "conversation: assistantMessages.slice(-10)",
+    );
+  } else {
+    const assistantRequestPattern = /(body:\s*JSON\.stringify\(\{\s*\n\s*question:\s*cleanQuestion,\s*\n\s*language,)/;
+    const match = page.match(assistantRequestPattern);
+
+    if (match) {
+      page = page.replace(
+        assistantRequestPattern,
+        `$1\n          conversation: assistantMessages.slice(-10).map((message) => ({\n            role: message.role,\n            text: message.text,\n          })),`,
+      );
+    } else {
+      console.warn("Legacy assistant request body not found; Document Brain routing remains active.");
+    }
+  }
 }
+
+page = page.replace(
+  "Ciao! Posso rispondere usando i dati già estratti dai tuoi documenti.",
+  "Ciao! Leggo i tuoi documenti reali, ricordo la conversazione e rispondo senza inventare.",
+);
+page = page.replace(
+  "Hi! I can answer using the information already extracted from your documents.",
+  "Hi! I read your actual documents, remember the conversation, and answer without making things up.",
+);
+
 await writeFile(pagePath, page, "utf8");
 
-console.log("Applied DocuMio Document Brain routing and conversation context.");
+console.log("Applied DocuMio Document Brain routing and conversation context to both interfaces.");
