@@ -5,8 +5,6 @@ const MAX_MULTIPART_BYTES = 21 * 1024 * 1024;
 const MAX_JSON_BYTES = 512 * 1024;
 const ALLOWED_FILE_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png"]);
 
-type InsuranceSubject = "Audi" | "camper" | "casa";
-
 function jsonError(message: string, status: number) {
   return NextResponse.json(
     { error: message },
@@ -61,28 +59,6 @@ function isInsuranceExpiryQuestion(question: unknown) {
   ].some((term) => normalized.includes(term));
 
   return asksExpiry && asksInsurance;
-}
-
-function getInsuranceSubject(question: unknown): InsuranceSubject | null {
-  const normalized = normalizedQuestion(question);
-
-  if (normalized.includes("audi")) return "Audi";
-  if (
-    ["camper", "ducato", "motorhome", "autocaravan"].some((term) =>
-      normalized.includes(term),
-    )
-  ) {
-    return "camper";
-  }
-  if (
-    ["casa", "abitazione", "immobile", "fabbricato"].some((term) =>
-      normalized.includes(term),
-    )
-  ) {
-    return "casa";
-  }
-
-  return null;
 }
 
 function needsAssistantContext(question: unknown) {
@@ -168,27 +144,10 @@ export async function middleware(request: NextRequest) {
     } | null;
     const italian = body?.language !== "en";
     const insuranceExpiry = italian && isInsuranceExpiryQuestion(body?.question);
-    const insuranceSubject = getInsuranceSubject(body?.question);
+    const pendingInsuranceFollowup =
+      italian && request.cookies.get("documio-insurance-followup")?.value === "1";
 
-    if (insuranceExpiry && !insuranceSubject) {
-      return NextResponse.json(
-        {
-          answer:
-            "Quale assicurazione intendi: quella dell’Audi, del camper o della casa?",
-          documentIds: [],
-          practiceIds: [],
-          filesInspected: 0,
-          mode: "insurance-clarification",
-        },
-        {
-          headers: {
-            "Cache-Control": "no-store, max-age=0",
-          },
-        },
-      );
-    }
-
-    if (insuranceExpiry && insuranceSubject) {
+    if (insuranceExpiry || pendingInsuranceFollowup) {
       destination.pathname = "/api/assistant-insurance";
       return NextResponse.rewrite(destination);
     }
