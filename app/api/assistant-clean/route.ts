@@ -45,6 +45,49 @@ function isDecorativeDocument(title: string, question: string) {
   );
 }
 
+function isLostDocumentQuestion(question: string) {
+  const value = normalize(question);
+  const asksLoss = [
+    "denuncia",
+    "smarrimento",
+    "documenti persi",
+    "documenti smarriti",
+    "carta identita persa",
+    "tessera sanitaria persa",
+  ].some((term) => value.includes(term));
+  const explicitlyAsksInsurance = ["assicurazione", "polizza", "allianz", "rca"].some(
+    (term) => value.includes(term),
+  );
+  return asksLoss && !explicitlyAsksInsurance;
+}
+
+function isRelevantToLostDocuments(document: {
+  title: string;
+  summary: string;
+  category: string;
+}) {
+  const value = normalize(`${document.title} ${document.summary} ${document.category}`);
+  const relevant = [
+    "denuncia",
+    "smarrimento",
+    "smarrit",
+    "carta d identita",
+    "carta identita",
+    "tessera sanitaria",
+    "carabinieri",
+    "questura",
+    "documenti persi",
+  ].some((term) => value.includes(term));
+  const unrelatedInsurance = [
+    "assicurazione",
+    "polizza",
+    "quietanza",
+    "rc auto",
+    "allianz",
+  ].some((term) => value.includes(term));
+  return relevant && !unrelatedInsurance;
+}
+
 export async function POST(request: Request) {
   const requestForBody = request.clone();
   const body = (await requestForBody.json().catch(() => null)) as {
@@ -105,7 +148,7 @@ export async function POST(request: Request) {
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  const documents = (documentResult.data ?? [])
+  const allDocuments = (documentResult.data ?? [])
     .map((item) => ({
       id: String(item.id),
       title: String(item.title ?? "Documento"),
@@ -114,12 +157,27 @@ export async function POST(request: Request) {
     }))
     .filter((item) => !isDecorativeDocument(item.title, question));
 
+  const lostDocumentIntent = isLostDocumentQuestion(question);
+  const lostDocumentMatches = lostDocumentIntent
+    ? allDocuments.filter(isRelevantToLostDocuments)
+    : [];
+  const documents =
+    lostDocumentIntent && lostDocumentMatches.length > 0
+      ? lostDocumentMatches
+      : allDocuments;
+
   const practices = (practiceResult.data ?? []).map((item) => ({
     id: String(item.id),
     title: String(item.title ?? "Pratica"),
     status: String(item.status ?? ""),
     practiceType: String(item.practice_type ?? ""),
   }));
+
+  const relevanceRule = lostDocumentIntent
+    ? language === "it"
+      ? "- La domanda riguarda una denuncia o documenti smarriti: cita esclusivamente verbali di denuncia, carta d’identità, tessera sanitaria o documenti direttamente collegati allo smarrimento. Non citare assicurazioni, polizze o quietanze salvo richiesta esplicita."
+      : "- The question concerns lost documents: include only reports and documents directly related to the loss. Do not mention insurance policies or receipts unless explicitly requested."
+    : "";
 
   const cleanupInstructions =
     language === "it"
@@ -131,6 +189,7 @@ Regole obbligatorie:
 - non dire mai di indicare un ID per aprire un documento;
 - non citare logo, icone o immagini decorative, salvo richiesta esplicita;
 - mostra solo la pratica e i documenti realmente utili alla domanda;
+${relevanceRule}
 - non ripetere informazioni;
 - usa al massimo un breve elenco;
 - non inventare nulla;
@@ -155,6 +214,7 @@ Mandatory rules:
 - never ask the user to provide an ID to open a document;
 - omit logos, icons, and decorative images unless explicitly requested;
 - include only the case and documents genuinely relevant to the question;
+${relevanceRule}
 - avoid repetition;
 - use at most one short list;
 - invent nothing;
@@ -239,6 +299,21 @@ ${JSON.stringify(documents)}`;
     );
   } catch (error) {
     console.error("Assistant cleanup error:", error);
+
+    if (lostDocumentIntent && lostDocumentMatches.length > 0) {
+      return NextResponse.json(
+        {
+          answer: `Ho trovato ${lostDocumentMatches.length === 1 ? "questo documento" : "questi documenti"} collegato${lostDocumentMatches.length === 1 ? "" : "i"} alla denuncia di smarrimento:\n${lostDocumentMatches
+            .slice(0, 5)
+            .map((item) => `- ${item.title}`)
+            .join("\n")}`,
+          documentIds: lostDocumentMatches.slice(0, 5).map((item) => item.id),
+          practiceIds: [],
+          filesInspected: originalPayload.filesInspected ?? 0,
+        },
+        { headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
 
     return NextResponse.json(
       {
