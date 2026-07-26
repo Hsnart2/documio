@@ -5,6 +5,8 @@ const MAX_MULTIPART_BYTES = 21 * 1024 * 1024;
 const MAX_JSON_BYTES = 512 * 1024;
 const ALLOWED_FILE_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png"]);
 
+type InsuranceSubject = "Audi" | "camper" | "casa";
+
 function jsonError(message: string, status: number) {
   return NextResponse.json(
     { error: message },
@@ -39,6 +41,48 @@ function normalizedQuestion(question: unknown) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function isInsuranceExpiryQuestion(question: unknown) {
+  const normalized = normalizedQuestion(question);
+  const asksExpiry = [
+    "quando scade",
+    "data scadenza",
+    "fino a quando",
+    "validita",
+    "scadenza",
+    "scade",
+  ].some((term) => normalized.includes(term));
+  const asksInsurance = [
+    "assicurazione",
+    "polizza",
+    "rca",
+    "certificato assicurazione",
+  ].some((term) => normalized.includes(term));
+
+  return asksExpiry && asksInsurance;
+}
+
+function getInsuranceSubject(question: unknown): InsuranceSubject | null {
+  const normalized = normalizedQuestion(question);
+
+  if (normalized.includes("audi")) return "Audi";
+  if (
+    ["camper", "ducato", "motorhome", "autocaravan"].some((term) =>
+      normalized.includes(term),
+    )
+  ) {
+    return "camper";
+  }
+  if (
+    ["casa", "abitazione", "immobile", "fabbricato"].some((term) =>
+      normalized.includes(term),
+    )
+  ) {
+    return "casa";
+  }
+
+  return null;
 }
 
 function needsAssistantContext(question: unknown) {
@@ -123,6 +167,32 @@ export async function middleware(request: NextRequest) {
       language?: unknown;
     } | null;
     const italian = body?.language !== "en";
+    const insuranceExpiry = italian && isInsuranceExpiryQuestion(body?.question);
+    const insuranceSubject = getInsuranceSubject(body?.question);
+
+    if (insuranceExpiry && !insuranceSubject) {
+      return NextResponse.json(
+        {
+          answer:
+            "Quale assicurazione intendi: quella dell’Audi, del camper o della casa?",
+          documentIds: [],
+          practiceIds: [],
+          filesInspected: 0,
+          mode: "insurance-clarification",
+        },
+        {
+          headers: {
+            "Cache-Control": "no-store, max-age=0",
+          },
+        },
+      );
+    }
+
+    if (insuranceExpiry && insuranceSubject) {
+      destination.pathname = "/api/assistant-insurance";
+      return NextResponse.rewrite(destination);
+    }
+
     const useContext = italian && needsAssistantContext(body?.question);
     const usePaymentGuard =
       italian && !useContext && needsAuthoritativePaymentState(body?.question);
