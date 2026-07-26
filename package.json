@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs && node scripts/apply-web-push-integration.mjs",
+    "predev": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs && node scripts/apply-web-push-integration.mjs && node scripts/apply-today-action-safety.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs && node scripts/apply-web-push-integration.mjs",
+    "prebuild": "node scripts/apply-smart-upload-20mb.mjs && node scripts/apply-optional-ilovepdf.mjs && node scripts/apply-legal-compliance.mjs && node scripts/apply-daily-automation-types.mjs && node scripts/apply-run-now-automation.mjs && node scripts/apply-practice-live-sync.mjs && node scripts/apply-smart-practice-stability.mjs && node scripts/apply-web-push-integration.mjs && node scripts/apply-today-action-safety.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
