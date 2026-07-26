@@ -1,0 +1,1 @@
+DocuMio Assistant now treats insurance expiry questions as document-validity questions, prioritizes policy/certificate files, and does not confuse payment dates with coverage expiration dates.
