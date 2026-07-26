@@ -1,21 +1,28 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { POST as runAssistant } from "../assistant/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const FOLLOWUP_COOKIE = "documio-insurance-followup";
-const MAX_INSURANCE_FILES = 4;
+const MAX_FILES = 6;
+const MAX_FILE_BYTES = 6 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 14 * 1024 * 1024;
 
 type InsuranceDocument = {
   id: string;
   title: string;
   fileName: string;
+  storagePath: string | null;
   category: string;
   summary: string;
   keywords: string[];
   expiryDate: string | null;
+};
+
+type OpenAIResponse = {
+  output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+  error?: { message?: string };
 };
 
 function normalize(value: unknown) {
@@ -37,50 +44,22 @@ function bearerToken(request: Request) {
 }
 
 function isInsuranceDocument(document: InsuranceDocument) {
-  const category = normalize(document.category);
-  const identityText = normalize(
-    [document.title, document.fileName, document.category].join(" "),
-  );
-  const supportingText = normalize(
-    [document.summary, document.keywords.join(" ")].join(" "),
-  );
+  const identity = normalize(`${document.title} ${document.fileName}`);
 
-  const clearlyUnrelated = [
-    "importazione",
-    "documenti vendita",
-    "vendita e targhe",
-    "immatricolazione",
-    "fattura",
-    "bolletta",
-    "tari",
-  ].some((term) => identityText.includes(term));
-
-  if (clearlyUnrelated && !category.includes("assicur")) return false;
-
-  const strongIdentity = [
+  // La categoria o una citazione nel riepilogo non bastano: un contratto,
+  // una fattura o una pratica auto possono parlare di assicurazione senza
+  // essere una polizza. Il titolo o il nome file devono identificarla davvero.
+  return [
     "assicurazione",
+    "assicurativo",
     "polizza",
     "rca",
     "responsabilita civile auto",
-    "certificato assicurazione",
     "attestato di rischio",
-    "copertura assicurativa",
-  ].some((term) => identityText.includes(term));
-
-  const structuredInsuranceEvidence = [
-    "numero polizza",
-    "contraente",
-    "compagnia assicurativa",
-    "premio assicurativo",
-    "periodo assicurato",
-    "decorrenza copertura",
-  ].some((term) => supportingText.includes(term));
-
-  return (
-    category.includes("assicur") ||
-    strongIdentity ||
-    structuredInsuranceEvidence
-  );
+    "carta verde",
+    "quietanza assicurativa",
+    "certificato assicurazione",
+  ].some((term) => identity.includes(term));
 }
 
 function selectorTerms(question: string) {
@@ -94,6 +73,8 @@ function selectorTerms(question: string) {
     "validita",
     "assicurazione",
     "assicurazioni",
+    "assicurativa",
+    "assicurative",
     "polizza",
     "polizze",
     "rca",
@@ -114,6 +95,7 @@ function selectorTerms(question: string) {
     "una",
     "mio",
     "mia",
+    "mie",
     "per",
     "tutte",
     "tutti",
@@ -127,17 +109,29 @@ function selectorTerms(question: string) {
 
 function matchScore(document: InsuranceDocument, terms: string[]) {
   const title = normalize(document.title);
+  const fileName = normalize(document.fileName);
   const summary = normalize(document.summary);
   const keywords = normalize(document.keywords.join(" "));
-  const fileName = normalize(document.fileName);
 
   return terms.reduce((score, term) => {
-    if (title.includes(term)) score += 8;
-    if (keywords.includes(term)) score += 5;
-    if (summary.includes(term)) score += 3;
-    if (fileName.includes(term)) score += 2;
+    if (title.includes(term)) score += 10;
+    if (fileName.includes(term)) score += 8;
+    if (keywords.includes(term)) score += 3;
+    if (summary.includes(term)) score += 1;
     return score;
   }, 0);
+}
+
+function safeFileName(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120) || "polizza.pdf";
+}
+
+function getMimeType(fileName: string, fallback?: string) {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  return fallback || "application/octet-stream";
 }
 
 function cookieOptions(maxAge: number) {
@@ -155,240 +149,322 @@ function clearFollowupCookie(response: NextResponse) {
   return response;
 }
 
-async function forwardToArchiveAssistant(
-  request: Request,
-  body: { question?: unknown; language?: unknown } | null,
-  question: string,
-  language: "it" | "en",
-) {
-  const headers = new Headers(request.headers);
-  headers.set("Content-Type", "application/json");
-
-  const forwardedRequest = new Request(request.url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      ...body,
-      question,
-      language,
-    }),
-  });
-
-  const response = await runAssistant(forwardedRequest);
-  const payload = await response.clone().json().catch(() => null);
-  if (!payload) return response;
-
-  const finalResponse = NextResponse.json(payload, {
-    status: response.status,
-    headers: { "Cache-Control": "no-store, max-age=0" },
-  });
-  return clearFollowupCookie(finalResponse);
-}
-
-async function buildInsuranceOverview(
-  request: Request,
-  body: { question?: unknown; language?: unknown } | null,
-  documents: InsuranceDocument[],
-  language: "it" | "en",
-) {
-  const candidates = documents.slice(0, MAX_INSURANCE_FILES);
-  const candidateList = candidates
-    .map(
-      (document, index) =>
-        `${index + 1}. ${document.title}${
-          document.expiryDate
-            ? ` (data registrata nell’archivio: ${document.expiryDate})`
-            : ""
-        }`,
-    )
-    .join("\n");
-
-  const analysisQuestion =
-    language === "it"
-      ? `Analizza tutte le assicurazioni presenti nel mio archivio.
-
-DOCUMENTI CANDIDATI DA APRIRE E VERIFICARE:
-${candidateList}
-
-ISTRUZIONI OBBLIGATORIE:
-- apri e leggi il file reale di ogni candidato, non fermarti al titolo o al riepilogo;
-- verifica che sia davvero una polizza, un certificato o una quietanza assicurativa; se non lo è, escludilo completamente dalla risposta;
-- per ogni vera assicurazione identifica con precisione che cosa copre: veicolo con marca, modello e targa quando presenti; casa o immobile con indirizzo quando presente; persona, viaggio o altro bene assicurato;
-- indica la compagnia assicurativa quando presente;
-- trova la data reale di fine copertura o scadenza; non confonderla con la data di pagamento, emissione, quietanza o caricamento;
-- rispondi iniziando esattamente con “Ho trovato queste assicurazioni nel tuo archivio:”;
-- poi usa una riga per ogni assicurazione nel formato “• [nome riconoscibile]: assicurazione di [cosa copre] — compagnia [nome] — scade il [data]”;
-- se la compagnia non è indicata, ometti quel pezzo;
-- se la scadenza non è scritta nel documento, scrivi “scadenza non indicata nel documento”;
-- non chiedere quale assicurazione voglio controllare;
-- non limitarti a ripetere i titoli e non includere documenti non assicurativi.`
-      : `Analyze every real insurance document in my archive.
-
-CANDIDATES TO OPEN AND VERIFY:
-${candidateList}
-
-For every genuine insurance document, identify exactly what it covers, the insurer, and the real coverage expiry date. Exclude non-insurance documents. Start with “I found these insurance policies in your archive:” and give one complete line for each policy. Do not ask me to choose one.`;
-
-  return forwardToArchiveAssistant(
-    request,
-    body,
-    analysisQuestion,
-    language,
-  );
-}
-
 export async function POST(request: Request) {
-  const body = (await request.clone().json().catch(() => null)) as {
-    question?: unknown;
-    language?: unknown;
-  } | null;
-  const question = String(body?.question ?? "").trim();
-  const language = body?.language === "en" ? "en" : "it";
+  try {
+    const body = (await request.clone().json().catch(() => null)) as {
+      question?: unknown;
+      language?: unknown;
+    } | null;
+    const question = String(body?.question ?? "").trim();
+    const language = body?.language === "en" ? "en" : "it";
 
-  if (!question) {
-    return NextResponse.json(
-      { error: language === "it" ? "Domanda mancante." : "Missing question." },
-      { status: 400, headers: { "Cache-Control": "no-store, max-age=0" } },
-    );
-  }
+    if (!question) {
+      return NextResponse.json(
+        { error: language === "it" ? "Domanda mancante." : "Missing question." },
+        { status: 400, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
 
-  const token = bearerToken(request);
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishableKey =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const serviceRoleKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
+    const token = bearerToken(request);
+    const apiKey = process.env.OPENAI_API_KEY;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const publishableKey =
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const serviceRoleKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
 
-  if (!token || !supabaseUrl || !publishableKey || !serviceRoleKey) {
-    return NextResponse.json(
-      {
-        error:
-          language === "it"
-            ? "Configurazione o sessione non disponibile."
-            : "Configuration or session unavailable.",
+    if (!token || !apiKey || !supabaseUrl || !publishableKey || !serviceRoleKey) {
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "Configurazione o sessione non disponibile."
+              : "Configuration or session unavailable.",
+        },
+        { status: 500, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
+
+    const authClient = createClient(supabaseUrl, publishableKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const {
+      data: { user },
+      error: userError,
+    } = await authClient.auth.getUser(token);
+
+    if (userError || !user) {
+      return NextResponse.json(
+        { error: language === "it" ? "Sessione non valida." : "Invalid session." },
+        { status: 401, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
+
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data, error } = await admin
+      .from("documents")
+      .select(
+        "id,title,file_name,storage_path,category,summary,keywords,expiry_date",
+      )
+      .eq("user_id", user.id)
+      .limit(1000);
+
+    if (error) {
+      console.error("Insurance archive lookup failed", error.message);
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "Non riesco a leggere le assicurazioni nell’archivio."
+              : "I cannot read insurance documents in the archive.",
+        },
+        { status: 500, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
+
+    const insuranceDocuments = (data ?? [])
+      .map<InsuranceDocument>((item) => ({
+        id: String(item.id),
+        title: String(item.title ?? item.file_name ?? "Documento assicurativo"),
+        fileName: String(item.file_name ?? ""),
+        storagePath: item.storage_path ? String(item.storage_path) : null,
+        category: String(item.category ?? ""),
+        summary: String(item.summary ?? ""),
+        keywords: Array.isArray(item.keywords)
+          ? item.keywords.map((keyword) => String(keyword))
+          : [],
+        expiryDate: item.expiry_date ? String(item.expiry_date) : null,
+      }))
+      .filter(isInsuranceDocument)
+      .sort((a, b) => a.title.localeCompare(b.title, "it"));
+
+    if (!insuranceDocuments.length) {
+      const response = NextResponse.json(
+        {
+          answer:
+            language === "it"
+              ? "Non trovo vere polizze o certificati assicurativi nel tuo archivio. I contratti, le fatture e le pratiche che citano soltanto un’assicurazione non vengono considerati polizze."
+              : "I cannot find genuine insurance policies or certificates in your archive.",
+          documentIds: [],
+          practiceIds: [],
+          filesInspected: 0,
+          mode: "insurance",
+        },
+        { headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+      return clearFollowupCookie(response);
+    }
+
+    const terms = selectorTerms(question);
+    let candidates = insuranceDocuments;
+
+    if (terms.length > 0 && insuranceDocuments.length > 1) {
+      const ranked = insuranceDocuments
+        .map((document) => ({ document, score: matchScore(document, terms) }))
+        .sort((a, b) => b.score - a.score);
+      const best = ranked[0];
+      const second = ranked[1];
+
+      if (best && best.score > 0 && (!second || best.score > second.score)) {
+        candidates = [best.document];
+      }
+    }
+
+    candidates = candidates.slice(0, MAX_FILES);
+
+    const selectedFiles: Array<{
+      document: InsuranceDocument;
+      dataUrl: string;
+      mime: string;
+    }> = [];
+    let totalBytes = 0;
+
+    for (const document of candidates) {
+      if (
+        !document.storagePath ||
+        !document.storagePath.startsWith(`${user.id}/`)
+      ) {
+        continue;
+      }
+
+      const { data: fileData, error: downloadError } = await admin.storage
+        .from("documents")
+        .download(document.storagePath);
+      if (downloadError || !fileData) continue;
+
+      const bytes = Buffer.from(await fileData.arrayBuffer());
+      if (!bytes.length || bytes.length > MAX_FILE_BYTES) continue;
+      if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
+
+      const mime = getMimeType(document.fileName, fileData.type);
+      if (!['application/pdf', 'image/jpeg', 'image/png'].includes(mime)) continue;
+
+      selectedFiles.push({
+        document,
+        mime,
+        dataUrl: `data:${mime};base64,${bytes.toString("base64")}`,
+      });
+      totalBytes += bytes.length;
+    }
+
+    if (!selectedFiles.length) {
+      const response = NextResponse.json(
+        {
+          answer:
+            language === "it"
+              ? `Ho trovato ${candidates.length === 1 ? "questo documento assicurativo" : "questi documenti assicurativi"}, ma non riesco ad aprire il file originale per controllare cosa copre e quando scade.`
+              : "I found insurance documents, but I cannot open their original files.",
+          documentIds: candidates.map((document) => document.id),
+          practiceIds: [],
+          filesInspected: 0,
+          mode: "insurance",
+        },
+        { headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+      return clearFollowupCookie(response);
+    }
+
+    const archiveMap = selectedFiles.map(({ document }) => ({
+      id: document.id,
+      title: document.title,
+      fileName: document.fileName,
+      storedExpiryDate: document.expiryDate,
+    }));
+    const genericOverview = selectedFiles.length > 1;
+
+    const instructions =
+      language === "it"
+        ? `Sei l’assistente assicurazioni di DocuMio. Analizza esclusivamente i file allegati a questa richiesta: non hai il permesso di usare o citare altri documenti dell’archivio.
+
+Domanda dell’utente: ${question}
+
+Mappa esatta dei file allegati:
+${JSON.stringify(archiveMap)}
+
+Regole obbligatorie:
+- apri e leggi ogni file allegato;
+- verifica prima che il file sia davvero una polizza, un certificato o una quietanza assicurativa; escludi qualsiasi contratto commerciale, fattura, pratica di importazione, documento di vendita, impianto fotovoltaico o altro documento non assicurativo;
+- identifica cosa viene assicurato usando solo ciò che compare nel file: veicolo con marca, modello e targa; casa o immobile con indirizzo; persona, viaggio o altro bene;
+- indica la compagnia assicurativa quando è leggibile;
+- trova la vera data di fine copertura o scadenza; non usare come scadenza la data di pagamento, quietanza, emissione o caricamento;
+- non inventare dati mancanti;
+- non mostrare ID tecnici nel testo;
+- restituisci in documentIds soltanto gli ID dei file che hai verificato essere realmente assicurativi.
+
+Formato della risposta:
+${genericOverview ? 'Inizia con “Ho trovato queste assicurazioni nel tuo archivio:” e usa una riga per ogni vera assicurazione: “• [nome chiaro]: assicurazione di [bene/persona] — compagnia [nome, se presente] — scade il [data]”. Non chiedere quale scegliere.' : 'Rispondi in una frase completa indicando che cosa copre, la compagnia e la scadenza. Se la scadenza non è indicata, scrivilo chiaramente.'}`
+        : `You are DocuMio's insurance assistant. Analyze only the files attached to this request. Verify which files are genuine insurance documents, identify what each covers, the insurer, and the real coverage expiry date. Exclude every unrelated document and return only verified document IDs.\n\nFile map:\n${JSON.stringify(archiveMap)}\n\nUser question: ${question}`;
+
+    const content: Array<Record<string, unknown>> = [
+      { type: "input_text", text: instructions },
+      ...selectedFiles.map(({ document, dataUrl, mime }) =>
+        mime.startsWith("image/")
+          ? { type: "input_image", image_url: dataUrl }
+          : {
+              type: "input_file",
+              filename: safeFileName(document.fileName),
+              file_data: dataUrl,
+            },
+      ),
+    ];
+
+    const openAIResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-      { status: 500, headers: { "Cache-Control": "no-store, max-age=0" } },
-    );
-  }
+      body: JSON.stringify({
+        model: "gpt-5-mini",
+        reasoning: { effort: "minimal" },
+        input: [{ role: "user", content }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "documio_insurance_answer",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                answer: { type: "string" },
+                documentIds: {
+                  type: "array",
+                  items: { type: "string" },
+                  maxItems: MAX_FILES,
+                },
+              },
+              required: ["answer", "documentIds"],
+            },
+          },
+        },
+      }),
+    });
 
-  const authClient = createClient(supabaseUrl, publishableKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  const {
-    data: { user },
-    error: userError,
-  } = await authClient.auth.getUser(token);
+    const result = (await openAIResponse.json()) as OpenAIResponse;
+    if (!openAIResponse.ok) {
+      console.error("Insurance OpenAI error", result.error?.message);
+      return NextResponse.json(
+        {
+          error:
+            result.error?.message ||
+            (language === "it"
+              ? "Analisi delle assicurazioni non disponibile."
+              : "Insurance analysis unavailable."),
+        },
+        { status: openAIResponse.status },
+      );
+    }
 
-  if (userError || !user) {
-    return NextResponse.json(
-      { error: language === "it" ? "Sessione non valida." : "Invalid session." },
-      { status: 401, headers: { "Cache-Control": "no-store, max-age=0" } },
-    );
-  }
+    const outputText = result.output
+      ?.flatMap((item) => item.content ?? [])
+      .find((part) => part.type === "output_text")?.text;
 
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-  const { data, error } = await admin
-    .from("documents")
-    .select("id,title,file_name,category,summary,keywords,expiry_date")
-    .eq("user_id", user.id)
-    .limit(1000);
+    if (!outputText) {
+      return NextResponse.json(
+        {
+          error:
+            language === "it"
+              ? "La risposta sulle assicurazioni non era leggibile."
+              : "The insurance answer could not be read.",
+        },
+        { status: 502 },
+      );
+    }
 
-  if (error) {
-    console.error("Insurance archive lookup failed", error.message);
-    return NextResponse.json(
+    const parsed = JSON.parse(outputText) as {
+      answer?: string;
+      documentIds?: string[];
+    };
+    const allowedIds = new Set(selectedFiles.map(({ document }) => document.id));
+    const verifiedIds = (parsed.documentIds ?? [])
+      .filter((id) => allowedIds.has(id))
+      .slice(0, MAX_FILES);
+
+    const finalResponse = NextResponse.json(
       {
-        error:
-          language === "it"
-            ? "Non riesco a leggere le assicurazioni nell’archivio."
-            : "I cannot read insurance documents in the archive.",
-      },
-      { status: 500, headers: { "Cache-Control": "no-store, max-age=0" } },
-    );
-  }
-
-  const insuranceDocuments = (data ?? [])
-    .map<InsuranceDocument>((item) => ({
-      id: String(item.id),
-      title: String(item.title ?? item.file_name ?? "Documento assicurativo"),
-      fileName: String(item.file_name ?? ""),
-      category: String(item.category ?? ""),
-      summary: String(item.summary ?? ""),
-      keywords: Array.isArray(item.keywords)
-        ? item.keywords.map((keyword) => String(keyword))
-        : [],
-      expiryDate: item.expiry_date ? String(item.expiry_date) : null,
-    }))
-    .filter(isInsuranceDocument)
-    .sort((a, b) => a.title.localeCompare(b.title, "it"));
-
-  if (!insuranceDocuments.length) {
-    const response = NextResponse.json(
-      {
-        answer:
-          language === "it"
-            ? "Non trovo ancora vere polizze o certificati assicurativi nel tuo archivio. Carica il documento assicurativo e poi potrò dirti cosa copre e quando scade."
-            : "I cannot find genuine insurance policies or certificates in your archive yet.",
-        documentIds: [],
+        answer: String(parsed.answer ?? "").trim(),
+        documentIds: verifiedIds,
         practiceIds: [],
-        filesInspected: 0,
+        filesInspected: selectedFiles.length,
+        mode: "insurance",
       },
       { headers: { "Cache-Control": "no-store, max-age=0" } },
     );
-    return clearFollowupCookie(response);
-  }
-
-  const terms = selectorTerms(question);
-
-  if (terms.length === 0) {
-    return buildInsuranceOverview(
-      request,
-      body,
-      insuranceDocuments,
-      language,
+    return clearFollowupCookie(finalResponse);
+  } catch (error) {
+    console.error("Insurance assistant error", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Errore imprevisto nell’analisi delle assicurazioni.",
+      },
+      { status: 500 },
     );
   }
-
-  let selected: InsuranceDocument | null = null;
-
-  if (insuranceDocuments.length === 1) {
-    selected = insuranceDocuments[0];
-  } else {
-    const ranked = insuranceDocuments
-      .map((document) => ({ document, score: matchScore(document, terms) }))
-      .sort((a, b) => b.score - a.score);
-    const best = ranked[0];
-    const second = ranked[1];
-
-    if (best && best.score > 0 && (!second || best.score > second.score)) {
-      selected = best.document;
-    }
-  }
-
-  if (!selected) {
-    return buildInsuranceOverview(
-      request,
-      body,
-      insuranceDocuments,
-      language,
-    );
-  }
-
-  const enrichedQuestion =
-    language === "it"
-      ? `${question}
-
-ISTRUZIONE OBBLIGATORIA: usa esclusivamente il documento assicurativo intitolato “${selected.title}”. Apri e leggi il file reale. Verifica prima che sia davvero assicurativo. Identifica con precisione che cosa copre, includendo veicolo, marca, modello e targa oppure immobile e indirizzo quando presenti; indica la compagnia; trova la data reale di fine copertura. Non confondere pagamento, emissione o quietanza con la scadenza. Rispondi in una frase completa nel formato: “${selected.title}: assicurazione di ... — compagnia ... — scade il ...”. Se la scadenza non compare davvero, dichiaralo chiaramente.`
-      : `${question}
-
-MANDATORY INSTRUCTION: use only the insurance document titled “${selected.title}”. Open the actual file, identify exactly what it covers, the insurer and the real coverage expiry date. Do not confuse payment or issue dates with policy expiry.`;
-
-  return forwardToArchiveAssistant(
-    request,
-    body,
-    enrichedQuestion,
-    language,
-  );
 }
