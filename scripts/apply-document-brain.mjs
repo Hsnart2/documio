@@ -43,26 +43,23 @@ await writeFile(smartHomePath, smartHome, "utf8");
 
 let page = await readFile(pagePath, "utf8");
 if (!page.includes("conversation: assistantMessages.slice(-10)")) {
-  const oldRequestStart = `        body: JSON.stringify({
-          question: cleanQuestion,
-          language,`;
-  const requestWithContext = `        body: JSON.stringify({
-          question: cleanQuestion,
-          language,
-          conversation: assistantMessages.slice(-10).map((message) => ({
-            role: message.role,
-            text: message.text,
-          })),`;
-
-  if (page.includes(oldRequestStart)) {
-    page = page.replace(oldRequestStart, requestWithContext);
-  } else if (page.includes("conversation: assistantMessages.slice(-8)")) {
+  if (page.includes("conversation: assistantMessages.slice(-8)")) {
     page = page.replace(
       "conversation: assistantMessages.slice(-8)",
       "conversation: assistantMessages.slice(-10)",
     );
   } else {
-    throw new Error("Legacy assistant request body not found in app/page.tsx");
+    const assistantRequestPattern = /(body:\s*JSON\.stringify\(\{\s*\n\s*question:\s*cleanQuestion,\s*\n\s*language,)/;
+    const match = page.match(assistantRequestPattern);
+
+    if (match) {
+      page = page.replace(
+        assistantRequestPattern,
+        `$1\n          conversation: assistantMessages.slice(-10).map((message) => ({\n            role: message.role,\n            text: message.text,\n          })),`,
+      );
+    } else {
+      console.warn("Legacy assistant request body not found; Document Brain routing remains active.");
+    }
   }
 }
 
