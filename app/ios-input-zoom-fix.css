@@ -1,0 +1,20 @@
+/* Prevent iOS Safari/PWA from auto-zooming when an input receives focus. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 720px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    font-size: 16px !important;
+  }
+}
