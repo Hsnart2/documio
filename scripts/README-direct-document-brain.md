@@ -1,0 +1,1 @@
+This marker documents that both DocuMio assistant interfaces are rewritten at build time to call `/api/document-brain` directly, bypassing legacy `/api/assistant` middleware rewrites that can fail on some iOS/WebKit requests.
