@@ -14,12 +14,18 @@ export type DocumentCategory =
 export type PaymentStatus =
   "Da pagare" | "Parzialmente pagato" | "Pagato" | "Scaduto" | "Contestato";
 
-export type PracticeStatus =
-  | "In corso"
-  | "Aperta"
-  | "Completata"
-  | "Sospesa"
-  | "Chiusa";
+export type FinancialDirection = "expense" | "income" | "neutral";
+
+export type AmountMeaning =
+  | "payment"
+  | "income"
+  | "document_value"
+  | "customs_value"
+  | "contract_value"
+  | "estimate"
+  | "other";
+
+export type PracticeStatus = "In corso" | "Aperta" | "Chiusa";
 
 export type Practice = {
   id: string;
@@ -43,6 +49,8 @@ export type StoredDocument = {
   summary: string;
   keywords: string[];
   practiceId?: string | null;
+  financialDirection?: FinancialDirection | null;
+  amountMeaning?: AmountMeaning | null;
   expiryDate?: string | null;
   appointmentTime?: string | null;
   appointmentCompletedAt?: string | null;
