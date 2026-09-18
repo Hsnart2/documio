@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
     );
 
     if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error("DEBOX bridge upstream error", response.status, body);
       return new NextResponse(
         "Listino DEBOX momentaneamente non disponibile. Riprova tra qualche secondo.",
         {
@@ -35,6 +37,7 @@ export async function GET(request: NextRequest) {
     const target = rows?.[0]?.target_url?.replace(/\/+$/, "");
 
     if (!target || !/^https:\/\/[A-Za-z0-9.-]+\.trycloudflare\.com$/i.test(target)) {
+      console.error("DEBOX bridge target missing or invalid", rows);
       return new NextResponse(
         "Collegamento Listino DEBOX non ancora disponibile. Avvia il Listino Online dal PC aziendale.",
         {
@@ -52,7 +55,8 @@ export async function GET(request: NextRequest) {
     const redirect = NextResponse.redirect(destination, 307);
     redirect.headers.set("Cache-Control", "no-store, max-age=0");
     return redirect;
-  } catch {
+  } catch (error) {
+    console.error("DEBOX bridge fetch failed", error);
     return new NextResponse(
       "Listino DEBOX momentaneamente non disponibile. Riprova tra qualche secondo.",
       {
