@@ -1,1 +1,0 @@
-Trigger deploy Vercel dopo il ripristino del collegamento GitHub.
