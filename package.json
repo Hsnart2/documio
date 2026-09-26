@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "rm -rf public && mkdir -p public && tar -xzf site.tar.gz -C public"
+    "build": "node build.js"
   }
 }

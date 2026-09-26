@@ -1,6 +1,7 @@
-# NextMind Software Site
+# NextMind Software
 
 Multilingual public website for NextMind Software.
-Prepared for Vercel deployment.
 
-Production branch: `nextmindsoftware-site`.
+- Production candidate branch: `nextmindsoftware-site`
+- Static output built into `public/`
+- NextMind Email AI is presented as free
