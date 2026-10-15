@@ -6074,6 +6074,7 @@ function AttachmentModal({
 
 function UploadModal({
   language,
+  fastUploadAvailable,
   documents,
   attachments,
   onClose,
@@ -6081,6 +6082,7 @@ function UploadModal({
   onLinkedAttachment,
 }: {
   language: Language;
+  fastUploadAvailable: boolean;
   documents: StoredDocument[];
   attachments: Record<string, DocumentAttachment[]>;
   onClose: () => void;
@@ -6127,6 +6129,9 @@ function UploadModal({
 
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [fileError, setFileError] = useState("");
+  const selectedFileSequence = useRef(0);
   const [expiryDate, setExpiryDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<SmartAnalysis | null>(null);
@@ -6460,6 +6465,44 @@ function UploadModal({
     }
   }
 
+  async function saveQuickDocument() {
+    if (!file || !fastUploadAvailable || loading || preparing) return;
+    setLoading(true);
+    setFileError("");
+    try {
+      // Il titolo provvisorio e la nota non sono un parere AI: il file verra'
+      // archiviato subito e il trigger PostgreSQL ne accoda l'analisi.
+      // Non inferire mai l'importo, il pagamento o il tipo di ricevuta qui.
+      await onSaved({
+        id: crypto.randomUUID(),
+        title: file.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").slice(0,180),
+        category: "Altro",
+        fileName: file.name,
+        uploadedAt: new Date().toISOString(),
+        summary: language === "it"
+          ? "Documento salvato. Analisi AI in preparazione."
+          : "Document saved. AI analysis pending.",
+        keywords: [],
+        aiStatus: "queued",
+        aiUserNote: note.trim().slice(0,1000) || null,
+        expiryDate: expiryDate || null,
+        appointmentTime: null,
+        size: file.size,
+        storagePath: null,
+        paymentStatus: "Da pagare",
+        totalAmount: null,
+        paidAmount: null,
+        remainingAmount: null,
+        isFinancing: false,
+      }, file);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message :
+        (language === "it" ? "Caricamento non riuscito." : "Upload failed."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function saveAsNewDocument(data = analysis) {
     if (!file || !data) return;
 
@@ -6661,24 +6704,45 @@ function UploadModal({
             accept="application/pdf,image/*"
             onChange={async (event) => {
               const selected = event.target.files?.[0] || null;
+              const sequence = ++selectedFileSequence.current;
               setAnalysis(null);
               setMatchedDocuments([]);
               setSelectedDocumentId("");
-              if (!selected) {
-                setFile(null);
+              setFileError("");
+              setFile(null);
+              if (!selected) return;
+              if (selected.size > 20 * 1024 * 1024 || selected.size < 1) {
+                setFileError(language === "it"
+                  ? "Seleziona un PDF o una foto fino a 20 MB."
+                  : "Choose a PDF or photo up to 20 MB.");
                 return;
               }
+              setPreparing(true);
               try {
-                setFile(await prepareFileForUpload(selected));
-              } catch {
-                setFile(selected);
+                const prepared = await prepareFileForUpload(selected);
+                if (sequence !== selectedFileSequence.current) return;
+                if (!/\.(pdf|jpe?g|png)$/i.test(prepared.name)) {
+                  throw new Error(language === "it"
+                    ? "Formato non supportato: usa PDF, JPG o PNG."
+                    : "Unsupported file: use PDF, JPG or PNG.");
+                }
+                setFile(prepared);
+              } catch (error) {
+                if (sequence !== selectedFileSequence.current) return;
+                setFileError(error instanceof Error ? error.message :
+                  (language === "it" ? "Impossibile preparare il file." : "File preparation failed."));
+              } finally {
+                if (sequence === selectedFileSequence.current) setPreparing(false);
               }
             }}
           />
           <Upload size={28} />
-          <strong>{file ? file.name : t.chooseFile}</strong>
-          <span>{t.fileFormats}</span>
+          <strong>{preparing ? (language === "it" ? "Preparo la foto…" : "Preparing image…")
+            : file ? file.name : t.chooseFile}</strong>
+          <span>{language === "it" ? "PDF, JPG, PNG · massimo 20 MB" : "PDF, JPG, PNG · up to 20 MB"}</span>
         </label>
+
+        {fileError && <p className="documio-fast-upload-error" role="alert">{fileError}</p>}
 
         {file && (
           <div
@@ -6724,15 +6788,45 @@ function UploadModal({
           />
         </label>
 
-        <div className="upload-actions">
+        <div className="upload-actions documio-fast-upload-actions">
+          {fastUploadAvailable && (
+            <>
+              <button
+                type="button"
+                className="primary full upload-submit"
+                disabled={!file || loading || preparing}
+                onClick={() => void saveQuickDocument()}
+              >
+                {loading
+                  ? (language === "it" ? "Salvataggio sicuro in corso…" : "Secure upload in progress…")
+                  : (language === "it" ? "⚡ Carica subito · AI dopo" : "⚡ Save now · AI afterwards")}
+              </button>
+              <p className="documio-fast-upload-hint">
+                {language === "it"
+                  ? "Il file entra subito nell'archivio. L'AI lo classifica successivamente, anche se chiudi questa finestra. Per le ricevute, verifica sempre il collegamento prima di considerarle pagate."
+                  : "Your file is stored first. AI classifies it afterwards; always verify payment receipts manually."}
+              </p>
+            </>
+          )}
           <button
-            className="primary full upload-submit"
-            disabled={!file || loading}
-            onClick={analyze}
+            type="button"
+            className={fastUploadAvailable ? "documio-deep-analysis-button" : "primary full upload-submit"}
+            disabled={!file || loading || preparing}
+            onClick={() => void analyze()}
             aria-label={loading ? t.organizing : t.analyzeAndArchive}
           >
-            <span>{loading ? t.organizing : t.analyzeAndArchive}</span>
+            <span>{loading ? t.organizing
+              : fastUploadAvailable
+                ? (language === "it" ? "Analisi approfondita e collegamento ricevute" : "Detailed analysis and receipt matching")
+                : t.analyzeAndArchive}</span>
           </button>
+          {!fastUploadAvailable && (
+            <p className="documio-fast-upload-hint">
+              {language === "it"
+                ? "Il caricamento immediato sarà disponibile quando il database AI sarà attivato. La modalità approfondita continua a funzionare."
+                : "Instant save requires the AI queue database. Detailed analysis remains available."}
+            </p>
+          )}
         </div>
       </div>
     </div>
