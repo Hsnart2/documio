@@ -55,6 +55,7 @@ create table if not exists public.financial_bank_connections (
   consent_status text not null default 'pending'
     check (consent_status in ('pending','linked','expired','rejected')),
   last_sync_at timestamptz,
+  balances jsonb not null default '[]'::jsonb check (jsonb_typeof(balances) = 'array'),
   created_at timestamptz not null default now(),
   unique (id, user_id)
 );
