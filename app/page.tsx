@@ -1167,12 +1167,15 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let active = true;
     async function loadDocuments() {
       if (!authReady) return;
 
       if (!userId) {
         setDocuments([]);
         setPractices([]);
+        setAttachments({});
+        aiKickStarted.current.clear();
         setIsLoaded(true);
         return;
       }
@@ -1186,11 +1189,27 @@ export default function Home() {
 
       setIsLoaded(false);
 
-      const { data: practiceRows, error: practiceError } = await supabase
-        .from("practices")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+      // Prima erano 4 richieste in SEQUENZA. Parallelizzandole la
+      // dashboard non attende ogni round-trip prima del successivo.
+      const [
+        { data: practiceRows, error: practiceError },
+        { data, error },
+        { data: attachmentRows, error: attachmentError },
+        { data: preference },
+      ] = await Promise.all([
+        supabase.from("practices").select("*")
+          .eq("user_id", userId).order("created_at", { ascending: false }),
+        supabase.from("documents").select("*")
+          .eq("user_id", userId).order("uploaded_at", { ascending: false }),
+        supabase.from("document_attachments").select("*")
+          .eq("user_id", userId).order("uploaded_at", { ascending: false }),
+        supabase.from("notification_preferences")
+          .select("email_enabled, weekly_digest_enabled, browser_enabled")
+          .eq("user_id", userId).maybeSingle(),
+      ]);
+      // Un login/logout mentre le query sono in corso non deve esporre
+      // il risultato della sessione precedente.
+      if (!active) return;
 
       if (practiceError) {
         alert(practiceError.message);
@@ -1212,12 +1231,6 @@ export default function Home() {
           updatedAt: item.updated_at,
         })),
       );
-
-      const { data, error } = await supabase
-        .from("documents")
-        .select("*")
-        .eq("user_id", userId)
-        .order("uploaded_at", { ascending: false });
 
       if (error) {
         alert(error.message);
@@ -1264,12 +1277,6 @@ export default function Home() {
 
       setDocuments(loadedDocuments);
 
-      const { data: attachmentRows, error: attachmentError } = await supabase
-        .from("document_attachments")
-        .select("*")
-        .eq("user_id", userId)
-        .order("uploaded_at", { ascending: false });
-
       if (attachmentError) {
         alert(attachmentError.message);
       } else {
@@ -1301,12 +1308,6 @@ export default function Home() {
         setAttachments(grouped);
       }
 
-      const { data: preference } = await supabase
-        .from("notification_preferences")
-        .select("email_enabled, weekly_digest_enabled, browser_enabled")
-        .eq("user_id", userId)
-        .maybeSingle();
-
       if (preference) {
         const hasLocalPreferences = Boolean(
           localStorage.getItem("documio-notification-preferences"),
@@ -1327,7 +1328,8 @@ export default function Home() {
       setIsLoaded(true);
     }
 
-    loadDocuments();
+    void loadDocuments();
+    return () => { active = false; };
   }, [authReady, userId]);
 
   async function signUp() {
