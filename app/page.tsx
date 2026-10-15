@@ -3090,6 +3090,29 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
+          <a
+            href="/controllo"
+            title={language === "it" ? "Centro di controllo amministrativo" : "Financial control center"}
+            aria-label={language === "it" ? "Apri Centro di controllo" : "Open Financial Control Center"}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 7,
+              padding: "9px 12px",
+              borderRadius: 11,
+              fontSize: 13,
+              fontWeight: 750,
+              color: "#0b7066",
+              background: "#eaf7f2",
+              border: "1px solid #b8ded1",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <Landmark size={18} />
+            <span>{language === "it" ? "Controllo" : "Control"}</span>
+          </a>
           <button
             type="button"
             className="topbar-icon-button"
