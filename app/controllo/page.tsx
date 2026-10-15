@@ -69,6 +69,7 @@ export default function FinancialControlCenter() {
   const [userId, setUserId] = useState<string | null>(null);
   const [checkingLogin, setCheckingLogin] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [storageReady, setStorageReady] = useState<boolean | null>(null);
   const [working, setWorking] = useState(false);
   const [tab, setTab] = useState<Section>("overview");
   const [error, setError] = useState("");
@@ -107,8 +108,10 @@ export default function FinancialControlCenter() {
     ]);
     const problem = a.error ?? b.error ?? c.error ?? d.error;
     if (problem) {
-      setError("Modulo finanziario non ancora attivato nel database: occorre applicare la migrazione SQL.");
+      setStorageReady(false);
+      setError("Il Centro di controllo non è ancora attivo nel database. Non vengono mostrati saldi o pagamenti incompleti.");
     } else {
+      setStorageReady(true);
       setError("");
       setInvoices((a.data ?? []) as InvoiceRow[]);
       setMovements((b.data ?? []) as MovementRow[]);
@@ -484,8 +487,23 @@ export default function FinancialControlCenter() {
     {error && <div className="fc-alert error" role="alert"><CircleAlert size={18}/>{error}</div>}
     {message && <div className="fc-alert success" role="status"><CheckCircle2 size={18}/>{message}</div>}
     {loading && <div className="fc-loading"><LoaderCircle size={20} className="fc-spin"/> Caricamento dati reali…</div>}
+    {!loading && storageReady === false && <section className="fc-panel">
+      <h2><ShieldCheck size={21}/> Attivazione del Centro di controllo</h2>
+      <p className="fc-muted">
+        La nuova interfaccia è pronta, ma il database non è ancora stato migrato.
+        Per evitare informazioni fuorvianti, fatture e saldi non vengono mostrati
+        finché le tabelle finanziarie non rispondono correttamente.
+      </p>
+      <p className="fc-disclaimer">
+        Il gestore deve applicare la migrazione
+        <strong> 20261015_financial_control_center.sql </strong>
+        in Supabase e verificare i permessi di accesso.
+        Nessuna tua operazione o documento esistente è stato modificato.
+      </p>
+      <a className="fc-button secondary" href="/">Torna all'archivio <ArrowRight size={16}/></a>
+    </section>}
 
-    {tab === "overview" && <>
+    {storageReady === true && tab === "overview" && <>
       <section className="fc-metrics">
         <article><span><TrendingUp size={17}/> Crediti da incassare</span><strong>{eur(metrics.receivables)}</strong><small>Fatture non riconciliate · EUR</small></article>
         <article><span><TrendingDown size={17}/> Debiti verso fornitori</span><strong>{eur(metrics.payables)}</strong><small>Fatture non riconciliate · EUR</small></article>
@@ -514,7 +532,7 @@ export default function FinancialControlCenter() {
       <div className="fc-disclaimer">Questi importi rappresentano fatture e flussi bancari, non l'utile contabile né le imposte dovute. Le fonti potrebbero essere incomplete.</div>
     </>}
 
-    {tab === "invoices" && <>
+    {storageReady === true && tab === "invoices" && <>
       <div className="fc-two-col">
         <section className="fc-panel">
           <h2><Plus size={21}/> Registra una fattura</h2>
@@ -648,7 +666,7 @@ export default function FinancialControlCenter() {
       </section>
     </>}
 
-    {tab === "accounts" && <>
+    {storageReady === true && tab === "accounts" && <>
       <div className="fc-two-col">
         <section className="fc-panel">
           <h2><Landmark size={21}/> Collega banca in sola lettura</h2>
@@ -705,7 +723,7 @@ export default function FinancialControlCenter() {
       </section>
     </>}
 
-    {tab === "deadlines" && <>
+    {storageReady === true && tab === "deadlines" && <>
       <div className="fc-two-col">
         <section className="fc-panel">
           <h2><CalendarClock size={21}/> Aggiungi una scadenza</h2>
