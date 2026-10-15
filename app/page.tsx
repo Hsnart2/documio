@@ -6143,29 +6143,65 @@ function UploadModal({
     if (!file) {
       throw new Error(language === "it" ? "File mancante." : "Missing file.");
     }
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("userNote", note);
-    formData.append("language", language);
-    formData.append("mode", mode);
-    formData.append("candidateDocuments", JSON.stringify(candidateDocuments));
-
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: await getApiAuthHeaders(),
-      body: formData,
-    });
-
-    const data = (await response.json()) as SmartAnalysis & {
-      error?: string;
-    };
-
-    if (!response.ok) {
-      throw new Error(data.error || "Analysis failed");
+    // Manteniamo la modalita' approfondita per collegare ricevute e pratiche.
+    // Per la modalita' veloce il file viene salvato UNA volta ed elaborato
+    // in un job separato, senza attendere il risultato dell'AI.
+    const maxFileBytes = 20 * 1024 * 1024;
+    const inlineBytes = 4 * 1024 * 1024;
+    if (file.size > maxFileBytes) {
+      throw new Error(language === "it"
+        ? "Limite massimo 20 MB per file." : "File limit is 20 MB.");
     }
-
-    return data;
+    let temporaryStoragePath: string | null = null;
+    try {
+      let response: Response;
+      if (file.size > inlineBytes) {
+        const supabase = getSupabaseClient();
+        if (!supabase) throw new Error(t.notConfigured);
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (!user || userError) throw new Error(t.invalidSession);
+        const safeName = file.name.normalize("NFKD")
+          .replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
+        temporaryStoragePath =
+          `${user.id}/analisi-temporanea/${crypto.randomUUID()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from("documents")
+          .upload(temporaryStoragePath, file, {
+            cacheControl: "3600", contentType: file.type || undefined,
+            upsert: false,
+          });
+        if (uploadError) throw new Error(uploadError.message);
+        response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: await getApiAuthHeaders("application/json"),
+          body: JSON.stringify({
+            storagePath: temporaryStoragePath, fileName: file.name,
+            userNote: note, language, mode, candidateDocuments,
+          }),
+        });
+      } else {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("userNote", note);
+        form.append("language", language);
+        form.append("mode", mode);
+        form.append("candidateDocuments", JSON.stringify(candidateDocuments));
+        response = await fetch("/api/analyze", {
+          method: "POST", headers: await getApiAuthHeaders(), body: form,
+        });
+      }
+      const data = (await response.json()) as SmartAnalysis & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Analysis failed");
+      return data;
+    } finally {
+      if (temporaryStoragePath) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { error: cleanup } = await supabase.storage.from("documents")
+            .remove([temporaryStoragePath]);
+          if (cleanup) console.warn("Impossibile rimuovere il file di analisi temporaneo.");
+        }
+      }
+    }
   }
 
   async function analyze() {
@@ -6178,14 +6214,6 @@ function UploadModal({
     setSelectedDocumentId("");
 
     try {
-      if (file.size > 4 * 1024 * 1024) {
-        throw new Error(
-          language === "it"
-            ? "Il file supera 4 MB. Scegli un file più piccolo."
-            : "The file is larger than 4 MB. Choose a smaller file.",
-        );
-      }
-
       // Prima passata: l'IA estrae solo i dati del file, senza ricevere
       // l'intero archivio dell'utente.
       const extracted = await requestAnalysis([], "document");
