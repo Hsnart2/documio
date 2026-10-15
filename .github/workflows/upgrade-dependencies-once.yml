@@ -1,0 +1,57 @@
+name: One-time dependency security update
+
+on:
+  push:
+    branches:
+      - feature/finance-control-center-20261015
+    paths:
+      - .github/workflows/upgrade-dependencies-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: documio-once-dependency-update
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/finance-control-center-20261015
+          persist-credentials: true
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install known dependencies
+        run: npm ci
+      - name: Apply audited patched framework and compatible transitive updates
+        run: |
+          set -euo pipefail
+          npm install --save-exact next@16.4.1
+          npm audit fix
+          npm audit --audit-level=critical
+      - name: Financial regression suite
+        run: npm run test:finance
+      - name: Archive and upload regression suite
+        run: npm run test:archive
+      - name: Verify Next.js build
+        run: npm run build
+      - name: Commit updated manifests after successful tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No package changes necessary"
+          else
+            git commit -m "security: upgrade Next.js and audit-fix vulnerable dependencies"
+            git push origin HEAD:refs/heads/feature/finance-control-center-20261015
+          fi
