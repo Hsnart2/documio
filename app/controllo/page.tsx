@@ -20,6 +20,16 @@ type Connection = {
   last_sync_at: string | null; created_at: string;
 };
 type Bank = { id: string; name: string };
+type ArchiveDocument = {
+  id: string;
+  title: string;
+  category: string | null;
+  total_amount: number | null;
+  expiry_date: string | null;
+  financial_direction: string | null;
+  payment_status: string | null;
+  uploaded_at: string | null;
+};
 type Section = "overview" | "invoices" | "accounts" | "deadlines";
 const blankInvoice = {
   direction: "income" as InvoiceDirection,
@@ -67,6 +77,8 @@ export default function FinancialControlCenter() {
   const [movements, setMovements] = useState<MovementRow[]>([]);
   const [matches, setMatches] = useState<MatchRow[]>([]);
   const [deadlines, setDeadlines] = useState<DeadlineRow[]>([]);
+  const [archivedDocuments, setArchivedDocuments] = useState<ArchiveDocument[]>([]);
+  const [linkedDocumentId, setLinkedDocumentId] = useState<string | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [bankEnabled, setBankEnabled] = useState(false);
   const [institutions, setInstitutions] = useState<Bank[]>([]);
@@ -81,7 +93,7 @@ export default function FinancialControlCenter() {
     const supabase = getSupabaseClient();
     if (!supabase) { setError("Configurazione archivio non disponibile."); setLoading(false); return; }
     setLoading(true);
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c, d, e] = await Promise.all([
       supabase.from("financial_invoices").select("*").eq("user_id", id)
         .order("issue_date", { ascending: false }).limit(2000),
       supabase.from("financial_transactions").select("*").eq("user_id", id)
@@ -89,6 +101,9 @@ export default function FinancialControlCenter() {
       supabase.from("financial_matches").select("*").eq("user_id", id).limit(4000),
       supabase.from("financial_deadlines").select("*").eq("user_id", id)
         .order("due_date", { ascending: true }).limit(1000),
+      supabase.from("documents")
+        .select("id,title,category,total_amount,expiry_date,financial_direction,payment_status,uploaded_at")
+        .eq("user_id", id).order("uploaded_at", { ascending: false }).limit(500),
     ]);
     const problem = a.error ?? b.error ?? c.error ?? d.error;
     if (problem) {
@@ -99,6 +114,9 @@ export default function FinancialControlCenter() {
       setMovements((b.data ?? []) as MovementRow[]);
       setMatches((c.data ?? []) as MatchRow[]);
       setDeadlines((d.data ?? []) as DeadlineRow[]);
+      // Il nuovo modulo resta utilizzabile anche se un archivio legacy
+      // non presenta ancora tutte le colonne avanzate.
+      setArchivedDocuments(e.error ? [] : (e.data ?? []) as ArchiveDocument[]);
     }
     setLoading(false);
   }, []);
@@ -214,10 +232,12 @@ export default function FinancialControlCenter() {
       counterparty: invoiceForm.counterparty.trim(), issue_date: invoiceForm.issue_date,
       due_date: invoiceForm.due_date || null, amount, currency: "EUR",
       notes: invoiceForm.notes.trim() || null,
+      document_id: linkedDocumentId,
     });
     setWorking(false);
     if (issue) setError("Non è stato possibile registrare la fattura: " + issue.message);
-    else { setInvoiceForm(blankInvoice); setMessage("Fattura registrata; pagamento da verificare.");
+    else { setInvoiceForm(blankInvoice); setLinkedDocumentId(null);
+      setMessage("Fattura registrata; pagamento da verificare.");
       await loadData(userId); }
   }
   async function submitDeadline(event: React.FormEvent) {
@@ -449,6 +469,11 @@ export default function FinancialControlCenter() {
       <div className="fc-two-col">
         <section className="fc-panel">
           <h2><Plus size={21}/> Registra una fattura</h2>
+          {linkedDocumentId && <div className="fc-source-banner">
+            <CheckCircle2 size={16}/>
+            <span>Stai collegando la fattura a un documento del tuo archivio. Verifica numero, controparte e importo prima di salvare.</span>
+            <button type="button" onClick={()=>setLinkedDocumentId(null)}>Scollega</button>
+          </div>}
           <form onSubmit={(event)=>void submitInvoice(event)} className="fc-form">
             <label>Tipo<select value={invoiceForm.direction} onChange={(e)=>setInvoiceForm({...invoiceForm,direction:e.target.value as InvoiceDirection})}>
               <option value="income">Emessa · da incassare</option><option value="expense">Ricevuta · da pagare</option>
@@ -489,6 +514,45 @@ export default function FinancialControlCenter() {
         </section>
       </div>
       <section className="fc-panel">
+        <h2><FileUp size={21}/> Fatture già presenti nell'archivio</h2>
+        <p className="fc-muted">
+          DocuMio individua documenti con importi e descrizioni compatibili con fatture.
+          Selezionane uno per preparare la scheda; controlla tutti i campi prima del collegamento.
+          Non vengono create nuove fatture automaticamente.
+        </p>
+        {(() => {
+          const linked = new Set(invoices.map((item) => item.document_id).filter(Boolean));
+          const candidates = archivedDocuments.filter((doc) =>
+            !linked.has(doc.id) && Number(doc.total_amount) > 0 &&
+            !["Pagato", "Contestato"].includes(doc.payment_status ?? "") &&
+            (doc.financial_direction === "income" || doc.financial_direction === "expense") &&
+            /fattur|invoice|nota di credito/i.test(doc.title),
+          ).slice(0, 12);
+          return candidates.length
+            ? <div className="fc-list">{candidates.map((doc) =>
+                <div key={doc.id} className="fc-list-item">
+                  <div>
+                    <strong>{doc.title}</strong>
+                    <small>{doc.category || "Documento"} · {money(Number(doc.total_amount))}
+                      {doc.expiry_date ? ` · Scad. ${dateIt(doc.expiry_date)}` : ""}
+                    </small>
+                  </div>
+                  <button type="button" className="fc-inline-button" onClick={()=>{
+                    setInvoiceForm({
+                      ...blankInvoice,
+                      direction: doc.financial_direction === "income" ? "income" : "expense",
+                      counterparty: doc.title, amount: String(doc.total_amount ?? ""),
+                      due_date: doc.expiry_date ?? "",
+                      notes: "Precompilata da documento nell'archivio DocuMio. Verificare i dati.",
+                    });
+                    setLinkedDocumentId(doc.id);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}>Usa dati <ArrowRight size={15}/></button>
+                </div>)}</div>
+            : <div className="fc-empty">Nessuna fattura non collegata trovata nell'archivio attuale.</div>;
+        })()}
+      </section>
+      <section className="fc-panel">
         <h2><Receipt size={21}/> Fatture e stato degli incassi/pagamenti</h2>
         {!invoices.length ? <div className="fc-empty">Nessuna fattura registrata.</div> :
           <div className="fc-invoice-list">{invoices.map((invoice) => {
@@ -505,6 +569,7 @@ export default function FinancialControlCenter() {
                 <div><strong>{invoice.counterparty}</strong><small>
                   {invoice.direction === "income" ? "Emessa" : "Ricevuta"} ·
                   {" "}{invoice.invoice_number} · {dateIt(invoice.issue_date)}
+                  {invoice.document_id ? " · Documento DocuMio collegato" : ""}
                   {invoice.due_date ? ` · Scad. ${dateIt(invoice.due_date)}` : ""}
                 </small></div>
                 <span className={`fc-status ${status.kind}`}>{status.text}</span>
