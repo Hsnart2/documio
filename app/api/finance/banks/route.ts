@@ -76,9 +76,22 @@ async function providerJwt() {
     signal: AbortSignal.timeout(18000),
   });
   if (!result.ok) throw new Error(`Provider auth ${result.status}`);
-  const body = await result.json() as { access?: string };
-  if (!body.access) throw new Error("Token provider mancante");
-  return body.access;
+  // GoCardless /token/new/ restituisce il refresh token, non l'access token.
+  // La seconda chiamata è obbligatoria prima di interrogare le banche.
+  const body = await result.json() as { refresh?: string; access?: string };
+  if (body.access) return body.access;
+  if (!body.refresh) throw new Error("Refresh token provider mancante");
+  const refreshed = await fetch(API + "/token/refresh/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ refresh: body.refresh }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(18000),
+  });
+  if (!refreshed.ok) throw new Error(`Provider refresh ${refreshed.status}`);
+  const refreshedBody = await refreshed.json() as { access?: string };
+  if (!refreshedBody.access) throw new Error("Access token provider mancante");
+  return refreshedBody.access;
 }
 function connectedUrl() {
   const value = process.env.DOCUMIO_APP_URL;
