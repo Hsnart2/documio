@@ -39,75 +39,16 @@ async function compressImage(file: File): Promise<File> {
 }
 
 async function compressPdf(file: File): Promise<PreparedUpload> {
-  const originalSize = file.size;
-
-  if (file.size < 2 * 1024 * 1024) {
-    return {
-      file,
-      compressed: false,
-      originalSize,
-      finalSize: file.size,
-      savingPercent: 0,
-    };
-  }
-
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    const response = await fetch("/api/compress-file", {
-      method: "POST",
-      body: formData,
-    });
-
-    const contentType = response.headers.get("content-type") ?? "";
-
-    if (!response.ok || contentType.includes("application/json")) {
-      return {
-        file,
-        compressed: false,
-        originalSize,
-        finalSize: file.size,
-        savingPercent: 0,
-      };
-    }
-
-    const blob = await response.blob();
-    if (!blob.size || blob.size >= file.size) {
-      return {
-        file,
-        compressed: false,
-        originalSize,
-        finalSize: file.size,
-        savingPercent: 0,
-      };
-    }
-
-    const compressedFile = new File([blob], file.name, {
-      type: "application/pdf",
-      lastModified: Date.now(),
-    });
-
-    return {
-      file: compressedFile,
-      compressed: true,
-      originalSize,
-      finalSize: compressedFile.size,
-      savingPercent: Math.round(
-        ((originalSize - compressedFile.size) / originalSize) * 100,
-      ),
-    };
-  } catch (error) {
-    console.warn("PDF compression skipped:", error);
-
-    return {
-      file,
-      compressed: false,
-      originalSize,
-      finalSize: file.size,
-      savingPercent: 0,
-    };
-  }
+  // La vecchia rotta /api/compress-file accettava tutto il PDF e poi
+  // restituiva sempre "not compressed": solo traffico e latenza.
+  // Il file originale passa direttamente a Supabase Storage in una sola volta.
+  return {
+    file,
+    compressed: false,
+    originalSize: file.size,
+    finalSize: file.size,
+    savingPercent: 0,
+  };
 }
 
 export async function prepareFileForUpload(file: File): Promise<PreparedUpload> {
