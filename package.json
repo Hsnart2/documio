@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "test:finance": "node scripts/test-financial-control.mjs",
+    "test:archive": "node scripts/test-archive.mjs",
     "vapid:generate": "node scripts/generate-vapid-keys.mjs"
   },
   "dependencies": {
