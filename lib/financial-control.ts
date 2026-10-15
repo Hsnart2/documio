@@ -6,6 +6,7 @@ export type InvoiceRow = {
   direction: InvoiceDirection;
   source: "manual" | "xml";
   invoice_number: string;
+  document_id: string | null;
   issue_date: string;
   due_date: string | null;
   counterparty: string;
