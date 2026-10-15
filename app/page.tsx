@@ -38,6 +38,7 @@ import type {
   StoredDocument,
 } from "@/lib/types";
 import { getSupabaseClient } from "@/lib/supabase";
+import { prepareFileForUpload as prepareUpload } from "@/lib/prepare-upload-file";
 
 type Language = "it" | "en";
 type ActiveView = "documents" | "practices";
@@ -818,53 +819,8 @@ async function getApiAuthHeaders(contentType?: string) {
   };
 }
 
-async function compressImageForUpload(file: File): Promise<File> {
-  if (!file.type.startsWith("image/") || file.size < 900_000) return file;
-
-  const bitmap = await createImageBitmap(file);
-  const maxSide = 1800;
-  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    bitmap.close();
-    return file;
-  }
-
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/jpeg", 0.78),
-  );
-
-  if (!blob || blob.size >= file.size) return file;
-
-  const baseName = file.name.replace(/\.[^.]+$/, "");
-  return new File([blob], `${baseName}.jpg`, {
-    type: "image/jpeg",
-    lastModified: Date.now(),
-  });
-}
-
-async function compressPdfForUpload(file: File): Promise<File> {
-  // I PDF non vengono inviati a /api/compress-file: quell'endpoint non
-  // applica alcuna compressione. Evitiamo un secondo trasferimento inutile.
-  return file;
-}
-
 async function prepareFileForUpload(file: File): Promise<File> {
-  const isPdf =
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-
-  if (isPdf) {
-    return compressPdfForUpload(file);
-  }
-
-  return compressImageForUpload(file);
+  return (await prepareUpload(file)).file;
 }
 
 function rankDocumentsForQuestion(
