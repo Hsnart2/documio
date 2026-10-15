@@ -23,3 +23,9 @@
 }
 .documio-ai-indicator button:hover { filter:brightness(.97); }
 @media(max-width:650px){.documio-fast-upload-actions {gap:9px}.documio-ai-indicator {font-size:11px}}
+
+.documio-batch-upload-link{display:flex;justify-content:center;align-items:center;
+  min-height:42px;border:1px solid #abd6cc;background:#effaf6;border-radius:11px;
+  color:#09655d!important;text-decoration:none!important;font-weight:750;
+  padding:9px 12px;font-size:13px}
+.documio-batch-upload-link:hover{background:#e1f4ed}
