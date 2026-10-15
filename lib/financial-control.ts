@@ -82,6 +82,7 @@ export function decimal(value: string): number | null {
   const input = String(value || "").replace(/[€\s]/g, "").trim();
   if (!input) return null;
   let cleaned = input.replace(/[^0-9,.-]/g, "");
+  if (!/^-?[0-9][0-9.,]*$/.test(cleaned)) return null;
   const comma = cleaned.lastIndexOf(",");
   const dot = cleaned.lastIndexOf(".");
   if (comma >= 0 && dot >= 0) {
