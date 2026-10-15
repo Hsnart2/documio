@@ -851,46 +851,9 @@ async function compressImageForUpload(file: File): Promise<File> {
 }
 
 async function compressPdfForUpload(file: File): Promise<File> {
-  const isPdf =
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-
-  if (!isPdf || file.size < 2 * 1024 * 1024) return file;
-
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    const response = await fetch("/api/compress-file", {
-      method: "POST",
-      body: formData,
-    });
-
-    const contentType = response.headers.get("content-type") ?? "";
-
-    if (!response.ok || contentType.includes("application/json")) {
-      const errorData = contentType.includes("application/json")
-        ? await response.json().catch(() => null)
-        : null;
-
-      console.warn(
-        "Compressione PDF saltata:",
-        errorData?.error ?? response.statusText,
-      );
-      return file;
-    }
-
-    const blob = await response.blob();
-
-    if (!blob.size || blob.size >= file.size) return file;
-
-    return new File([blob], file.name, {
-      type: "application/pdf",
-      lastModified: Date.now(),
-    });
-  } catch (error) {
-    console.warn("Compressione PDF non disponibile, uso l’originale:", error);
-    return file;
-  }
+  // I PDF non vengono inviati a /api/compress-file: quell'endpoint non
+  // applica alcuna compressione. Evitiamo un secondo trasferimento inutile.
+  return file;
 }
 
 async function prepareFileForUpload(file: File): Promise<File> {
