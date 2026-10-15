@@ -94,7 +94,7 @@ async function providerJwt() {
   return refreshedBody.access;
 }
 function connectedUrl() {
-  const value = process.env.DOCUMIO_APP_URL;
+  const value = process.env.DOCUMIO_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
   if (!value) throw new Error("DOCUMIO_APP_URL non configurato");
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
