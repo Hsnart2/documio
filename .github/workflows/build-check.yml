@@ -19,6 +19,8 @@ jobs:
       - run: npm ci
       - name: Financial-control unit tests
         run: npm run test:finance
+      - name: Archive and fast-upload regression tests
+        run: npm run test:archive
       - name: Build
         shell: bash
         run: |
