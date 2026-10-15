@@ -182,7 +182,7 @@ export async function GET(request: Request) {
   }
   const { data, error } = await access.admin
     .from("financial_bank_connections")
-    .select("id,institution_name,consent_status,last_sync_at,created_at")
+    .select("id,institution_name,consent_status,last_sync_at,balances,created_at")
     .eq("user_id", access.userId)
     .order("created_at", { ascending: false });
   if (error) return json({ error: "Applica la migrazione SQL del Centro di controllo." }, 503);
@@ -257,6 +257,14 @@ export async function POST(request: Request) {
     const accounts = (requisition.accounts ?? []).filter((id) => /^[a-f0-9-]{36}$/i.test(id)).slice(0, 15);
     let imported = 0;
     const warnings: string[] = [];
+    // Solo riepilogo, nessun IBAN completo o titolare del conto salvato.
+    const bankBalances: Array<{
+      accountLabel: string;
+      amount: number;
+      currency: string;
+      balanceType: string;
+      referenceDate: string;
+    }> = [];
     for (const accountId of accounts) {
       try {
         const result = await provider<{ transactions?: { booked?: unknown[] } }>(
@@ -276,13 +284,57 @@ export async function POST(request: Request) {
         console.error("Open Banking account sync:", error instanceof Error ? error.message : "Unknown");
         warnings.push("Un conto non è stato aggiornato.");
       }
+      // Alcuni istituti non espongono i saldi PSD2: la disponibilità
+      // di questa informazione non deve bloccare l'import dei movimenti.
+      try {
+        const result = await provider<{ balances?: Array<{
+          balanceAmount?: { amount?: string; currency?: string };
+          balanceType?: string;
+          referenceDate?: string;
+          lastChangeDateTime?: string;
+        }> }>(
+          `/accounts/${encodeURIComponent(accountId)}/balances/`, jwt,
+        );
+        const priority = [
+          "interimAvailable","closingAvailable","interimBooked",
+          "closingBooked","expected","openingBooked",
+        ];
+        const candidates = (result.balances ?? []).filter((item) =>
+          item.balanceAmount && Number.isFinite(Number(item.balanceAmount.amount)) &&
+          typeof item.balanceAmount.currency === "string" &&
+          /^[A-Z]{3}$/.test(item.balanceAmount.currency),
+        );
+        candidates.sort((a,b) => {
+          const left = priority.indexOf(a.balanceType ?? "");
+          const right = priority.indexOf(b.balanceType ?? "");
+          return (left < 0 ? 50 : left) - (right < 0 ? 50 : right);
+        });
+        const selected = candidates[0];
+        if (selected?.balanceAmount) {
+          bankBalances.push({
+            accountLabel: `Conto ${accountId.slice(0,8)}`,
+            amount: Math.round(Number(selected.balanceAmount.amount) * 100) / 100,
+            currency: selected.balanceAmount.currency!,
+            balanceType: selected.balanceType ?? "non specificato",
+            referenceDate: selected.referenceDate ??
+              selected.lastChangeDateTime ?? new Date().toISOString(),
+          });
+        }
+      } catch {
+        // Assenza di saldo non implica che il consenso ai movimenti sia invalido.
+      }
     }
     if (warnings.length === 0) {
-      await access.admin.from("financial_bank_connections")
-        .update({ consent_status: "linked", last_sync_at: new Date().toISOString() })
+      const { error: updateError } = await access.admin.from("financial_bank_connections")
+        .update({
+          consent_status: "linked",
+          last_sync_at: new Date().toISOString(),
+          ...(bankBalances.length ? { balances: bankBalances } : {}),
+        })
         .eq("user_id", access.userId).eq("id", connectionId);
+      if (updateError) warnings.push("Impossibile aggiornare lo stato di sincronizzazione.");
     }
-    return json({ imported, status: "linked", warnings });
+    return json({ imported, balancesAvailable: bankBalances.length, status: "linked", warnings });
   } catch (error) {
     console.error("Open Banking operation:", error instanceof Error ? error.message : "Unknown");
     return json({ error: "Operazione bancaria non riuscita. Controlla configurazione e autorizzazione." }, 502);
