@@ -32,10 +32,11 @@ type DocumentRow = {
   paid_installments: number | null;
 };
 
-type ReminderKind = "installment" | "appointment" | "deadline";
+type ReminderKind = "installment" | "appointment" | "deadline" | "invoice" | "financial_deadline";
 
 type Reminder = {
-  documentId: string;
+  documentId: string | null;
+  recordKey?: string;
   kind: ReminderKind;
   title: string;
   message: string;
@@ -44,7 +45,7 @@ type Reminder = {
 };
 
 const DAY_MS = 86_400_000;
-const PUSH_MILESTONES = new Set([30, 7, 1, 0]);
+const PUSH_MILESTONES = new Set([30, 14, 7, 1, 0, -1, -7]);
 
 function romeDate() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -156,6 +157,76 @@ function remindersFor(document: DocumentRow, today: string): Reminder[] {
   return reminders;
 }
 
+type FinanceInvoiceRow = {
+  id: string;
+  document_id: string | null;
+  direction: "income" | "expense";
+  amount: number | string;
+  currency: string;
+  counterparty: string;
+  invoice_number: string;
+  due_date: string | null;
+};
+type FinanceMatchRow = { invoice_id: string; allocated_amount: number | string };
+type FinanceDeadlineRow = {
+  id: string;
+  category: string;
+  title: string;
+  amount: number | string | null;
+  due_date: string;
+  status: string;
+};
+const FINANCE_MILESTONES = new Set([30, 14, 7, 1, 0, -1, -7]);
+
+function financeMoney(value: number, currency: string) {
+  try { return new Intl.NumberFormat("it-IT", {
+    style: "currency", currency: currency || "EUR",
+  }).format(value); }
+  catch { return `${value.toFixed(2)} ${currency || "EUR"}`; }
+}
+
+// Le promesse di incasso non sono dichiarate "pagate" finché non sono
+// collegate a movimenti bancari confermati. Le scadenze generiche si basano
+// esclusivamente sulle informazioni registrate dall'utente.
+function financeReminders(
+  invoices: FinanceInvoiceRow[],
+  matches: FinanceMatchRow[],
+  deadlines: FinanceDeadlineRow[],
+  today: string,
+): Reminder[] {
+  const paid = new Map<string, number>();
+  for (const item of matches) paid.set(item.invoice_id,
+    (paid.get(item.invoice_id) ?? 0) + Math.max(0, Number(item.allocated_amount) || 0));
+  const result: Reminder[] = [];
+  for (const row of invoices) {
+    if (!row.due_date) continue;
+    const remaining = Math.max(0, Number(row.amount) - (paid.get(row.id) ?? 0));
+    if (!Number.isFinite(remaining) || remaining <= 0.01) continue;
+    const days = daysBetween(today, row.due_date);
+    if (!FINANCE_MILESTONES.has(days)) continue;
+    const outgoing = row.direction === "expense";
+    result.push({
+      documentId: null, recordKey: `invoice:${row.id}`, kind: "invoice",
+      title: `${outgoing ? "Da pagare" : "Da incassare"}: ${row.counterparty}`,
+      message: `Fattura ${row.invoice_number}, residuo ${financeMoney(remaining,row.currency)}: ${timing(days,false)}. Verifica la riconciliazione in DocuMio prima di agire.`,
+      dueDate: row.due_date, days,
+    });
+  }
+  for (const item of deadlines) {
+    if (item.status !== "open") continue;
+    const days = daysBetween(today, item.due_date);
+    if (!FINANCE_MILESTONES.has(days)) continue;
+    const amount = item.amount === null ? "" : ` · ${financeMoney(Number(item.amount),"EUR")}`;
+    result.push({
+      documentId: null, recordKey: `deadline:${item.id}`, kind: "financial_deadline",
+      title: `Scadenza ${item.category}: ${item.title}`,
+      message: `${item.title}${amount}: ${timing(days,false)}. Controlla la fonte ufficiale e il pagamento.`,
+      dueDate: item.due_date, days,
+    });
+  }
+  return result;
+}
+
 function escapeHtml(value: string) {
   return value.replace(
     /[&<>"']/g,
@@ -204,12 +275,16 @@ function pushNotificationFor(userId: string, reminder: Reminder) {
     title: reminder.title,
     body: reminder.message,
     document_id: reminder.documentId,
-    dedupe_key: `scheduled-reminder:${reminder.documentId}:${reminder.dueDate}:d${reminder.days}`,
+    dedupe_key: reminder.recordKey
+      ? `finance-reminder:${reminder.recordKey}:${reminder.dueDate}:d${reminder.days}`
+      : `scheduled-reminder:${reminder.documentId}:${reminder.dueDate}:d${reminder.days}`,
     metadata: {
       dueDate: reminder.dueDate,
       days: reminder.days,
       reminderKind: reminder.kind,
       source: "reminders-cron",
+      destination: reminder.recordKey ? "/controllo" : "/",
+      recordKey: reminder.recordKey ?? null,
     },
   };
 }
@@ -288,8 +363,32 @@ export async function GET(request: NextRequest) {
       continue;
     }
 
-    const reminders = ((documents ?? []) as DocumentRow[])
-      .flatMap((document) => remindersFor(document, today))
+    // Facoltativo durante la migrazione: se le nuove tabelle non esistono,
+    // i vecchi promemoria documentali continuano a funzionare normalmente.
+    const [invoiceResult, matchResult, deadlineResult] = await Promise.all([
+      supabase.from("financial_invoices")
+        .select("id,document_id,direction,amount,currency,counterparty,invoice_number,due_date")
+        .eq("user_id", userId).limit(2000),
+      supabase.from("financial_matches").select("invoice_id,allocated_amount")
+        .eq("user_id", userId).limit(4000),
+      supabase.from("financial_deadlines")
+        .select("id,category,title,amount,due_date,status")
+        .eq("user_id", userId).eq("status", "open").limit(2000),
+    ]);
+    const financeAvailable = !invoiceResult.error && !matchResult.error && !deadlineResult.error;
+    const financeInvoices = financeAvailable
+      ? (invoiceResult.data ?? []) as FinanceInvoiceRow[] : [];
+    const linkedDocuments = new Set(financeInvoices.map((invoice) => invoice.document_id).filter(Boolean));
+    const fromDocuments = ((documents ?? []) as DocumentRow[])
+      .filter((document) => !linkedDocuments.has(document.id))
+      .flatMap((document) => remindersFor(document, today));
+    const fromFinance = financeAvailable
+      ? financeReminders(financeInvoices,
+          (matchResult.data ?? []) as FinanceMatchRow[],
+          (deadlineResult.data ?? []) as FinanceDeadlineRow[],
+          today)
+      : [];
+    const reminders = [...fromDocuments, ...fromFinance]
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
     const pushRows = reminders
