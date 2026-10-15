@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bell,
@@ -960,6 +960,8 @@ export default function Home() {
   const [aiSearching, setAiSearching] = useState(false);
   const [activeCategory, setActiveCategory] = useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
+  const [fastUploadAvailable, setFastUploadAvailable] = useState(false);
+  const aiKickStarted = useRef(new Set<string>());
   const [showAssistant, setShowAssistant] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -984,6 +986,80 @@ export default function Home() {
   const [expandedAttachmentDocuments, setExpandedAttachmentDocuments] =
     useState<Set<string>>(() => new Set());
   const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!userId) { setFastUploadAvailable(false); return; }
+    let active = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/document-ai/trigger", {
+          headers: await getApiAuthHeaders(), cache: "no-store",
+        });
+        const data = await response.json();
+        if (active) setFastUploadAvailable(response.ok && Boolean(data.available));
+      } catch {
+        if (active) setFastUploadAvailable(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [userId]);
+
+  // Se il caricamento e' stato confermato, il job e' gia' nella coda DB.
+  // Avviarlo una sola volta; uscire dalla pagina non cancella il file.
+  useEffect(() => {
+    if (!userId || !fastUploadAvailable) return;
+    const queued = documents.filter((doc) => doc.aiStatus === "queued"
+      && !aiKickStarted.current.has(doc.id)).slice(0, 3);
+    for (const doc of queued) {
+      aiKickStarted.current.add(doc.id);
+      void (async () => {
+        try {
+          await fetch("/api/document-ai/trigger", {
+            method: "POST",
+            headers: await getApiAuthHeaders("application/json"),
+            body: JSON.stringify({ documentId: doc.id }),
+          });
+        } catch {
+          // Il lavoro resta in Supabase: un nuovo accesso puo' ritentarlo.
+        }
+      })();
+    }
+  }, [userId, fastUploadAvailable, documents]);
+
+  useEffect(() => {
+    if (!userId || !fastUploadAvailable) return;
+    const pendingIds = documents
+      .filter((doc) => doc.aiStatus === "queued" ||
+        doc.aiStatus === "processing" || doc.aiStatus === "failed")
+      .slice(0, 100).map((doc) => doc.id);
+    if (!pendingIds.length) return;
+    let polling = false;
+    const timer = window.setInterval(async () => {
+      if (polling || document.visibilityState !== "visible") return;
+      polling = true;
+      try {
+        const supabase = getSupabaseClient();
+        if (!supabase) return;
+        const { data, error } = await supabase.from("documents")
+          .select("id,title,category,summary,keywords,expiry_date,appointment_time,ai_status,ai_analyzed_at")
+          .eq("user_id", userId).in("id", pendingIds);
+        if (error || !data) return;
+        setDocuments((current) => current.map((item) => {
+          const row = data.find((entry) => entry.id === item.id);
+          if (!row || (row.ai_status === item.aiStatus && row.summary === item.summary)) return item;
+          return {
+            ...item, title: row.title, category: row.category as DocumentCategory,
+            summary: row.summary, keywords: row.keywords ?? [],
+            expiryDate: row.expiry_date, appointmentTime: row.appointment_time,
+            aiStatus: row.ai_status, aiAnalyzedAt: row.ai_analyzed_at,
+          };
+        }));
+      } finally {
+        polling = false;
+      }
+    }, 6500);
+    return () => window.clearInterval(timer);
+  }, [userId, fastUploadAvailable, documents]);
 
   function toggleAttachments(documentId: string) {
     setExpandedAttachmentDocuments((current) => {
@@ -1157,6 +1233,9 @@ export default function Home() {
         uploadedAt: item.uploaded_at,
         summary: item.summary,
         keywords: item.keywords ?? [],
+        aiStatus: item.ai_status ?? "completed",
+        aiUserNote: item.ai_user_note ?? null,
+        aiAnalyzedAt: item.ai_analyzed_at ?? null,
         practiceId: item.practice_id ?? null,
         expiryDate: item.expiry_date,
         appointmentTime: item.appointment_time
@@ -2115,6 +2194,9 @@ export default function Home() {
           financing_total_amount: updatedDocument.financingTotalAmount ?? null,
           first_installment_date: updatedDocument.firstInstallmentDate || null,
           is_financing: Boolean(updatedDocument.isFinancing),
+          ...(updatedDocument.aiStatus &&
+            updatedDocument.aiStatus !== "completed"
+            ? { ai_status: "completed" } : {}),
         })
         .eq("id", updatedDocument.id)
         .eq("user_id", currentUser.id)
@@ -2136,7 +2218,8 @@ export default function Home() {
 
       setDocuments((current) =>
         current.map((document) =>
-          document.id === updatedDocument.id ? updatedDocument : document,
+          document.id === updatedDocument.id
+            ? { ...updatedDocument, aiStatus: "completed" } : document,
         ),
       );
       setEditingDocument(null);
@@ -2644,6 +2727,10 @@ export default function Home() {
         reminder_snoozed_until: doc.reminderSnoozedUntil ?? null,
         summary: doc.summary,
         keywords: doc.keywords,
+        ...(doc.aiStatus === "queued" ? {
+          ai_status: "queued",
+          ai_user_note: (doc.aiUserNote ?? "").slice(0, 1000),
+        } : {}),
         size: doc.size ?? null,
         storage_path: storagePath,
         payment_status: doc.paymentStatus ?? "Da pagare",
@@ -2679,6 +2766,9 @@ export default function Home() {
       uploadedAt: data.uploaded_at,
       summary: data.summary,
       keywords: data.keywords ?? [],
+      aiStatus: data.ai_status ?? "completed",
+      aiUserNote: data.ai_user_note ?? null,
+      aiAnalyzedAt: data.ai_analyzed_at ?? null,
       practiceId: data.practice_id ?? null,
       expiryDate: data.expiry_date,
       appointmentTime: data.appointment_time
@@ -4801,6 +4891,7 @@ export default function Home() {
       {showUpload && (
         <UploadModal
           language={language}
+          fastUploadAvailable={fastUploadAvailable}
           documents={documents}
           attachments={attachments}
           onClose={() => setShowUpload(false)}
