@@ -3540,6 +3540,44 @@ export default function Home() {
                   </span>
                   <h3>{doc.title}</h3>
                   <p>{doc.summary}</p>
+                  {doc.aiStatus &&
+                    ["queued","processing","failed","needs_review"].includes(doc.aiStatus) && (
+                      <div className={`documio-ai-indicator ${doc.aiStatus}`} role="status">
+                        <span>
+                          {doc.aiStatus === "queued"
+                            ? language === "it" ? "✓ File al sicuro · AI in coda" : "✓ File saved · AI queued"
+                            : doc.aiStatus === "processing"
+                              ? language === "it" ? "✓ File al sicuro · AI in elaborazione" : "✓ File saved · AI processing"
+                              : doc.aiStatus === "needs_review"
+                                ? language === "it" ? "Controlla la classificazione, scadenza e possibili ricevute" : "Review classification and possible receipts"
+                                : language === "it" ? "File al sicuro · analisi AI non completata" : "File saved · AI processing failed"}
+                        </span>
+                        {doc.aiStatus === "failed" && (
+                          <button type="button" onClick={async () => {
+                            try {
+                              const res = await fetch("/api/document-ai/trigger", {
+                                method: "POST",
+                                headers: await getApiAuthHeaders("application/json"),
+                                body: JSON.stringify({ documentId: doc.id }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok || data.status !== "processing") {
+                                window.alert(language === "it"
+                                  ? "Riprova fra qualche minuto; il documento resta salvato. Se il problema continua puoi modificare la scheda manualmente."
+                                  : "Try later; your file is safe. You can edit its details manually.");
+                              } else {
+                                setDocuments((current)=>current.map((item)=>
+                                  item.id===doc.id ? { ...item, aiStatus:"processing" } : item));
+                              }
+                            } catch {
+                              window.alert(language === "it" ? "Riprova più tardi." : "Please retry later.");
+                            }
+                          }}>
+                            {language === "it" ? "Riprova AI" : "Retry AI"}
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                   {getFinancingTerms(doc).isFinancing &&
                     getFinancingTerms(doc).installmentCount != null &&
