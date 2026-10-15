@@ -319,7 +319,7 @@ export default function FinancialControlCenter() {
         ...row, user_id: userId,
         import_key: await fingerprint([
           "xml", row.direction, row.invoice_number, row.issue_date,
-          row.counterparty.toLowerCase(), row.amount.toFixed(2),
+          row.counterparty.toLowerCase(), row.amount.toFixed(2), row.currency,
         ].join("|")),
       })));
       const { error: issue } = await getSupabaseClient()!.from("financial_invoices")
