@@ -15,9 +15,13 @@ import {
 } from "@/lib/financial-control";
 import "./control-center.css";
 
+type BankBalance = {
+  accountLabel: string; amount: number; currency: string;
+  balanceType: string; referenceDate: string;
+};
 type Connection = {
   id: string; institution_name: string; consent_status: string;
-  last_sync_at: string | null; created_at: string;
+  last_sync_at: string | null; created_at: string; balances: BankBalance[];
 };
 type Bank = { id: string; name: string };
 type ArchiveDocument = {
@@ -163,6 +167,14 @@ export default function FinancialControlCenter() {
       setMessage("Autorizzazione bancaria ricevuta. Premi Sincronizza per verificare il consenso e importare i movimenti.");
     }
   }, [userId, loadData, loadConnections]);
+
+  const availableBalances = useMemo(() =>
+    connections.flatMap((connection) => connection.balances ?? [])
+      .filter((balance) => balance.currency === "EUR" &&
+        ["interimAvailable", "closingAvailable"].includes(balance.balanceType)),
+    [connections],
+  );
+  const availableTotal = availableBalances.reduce((sum,balance) => sum + Number(balance.amount), 0);
 
   const metrics = useMemo(() => {
     const paid = (invoice: InvoiceRow) => paidFor(invoice.id, matches);
@@ -505,6 +517,12 @@ export default function FinancialControlCenter() {
 
     {storageReady === true && tab === "overview" && <>
       <section className="fc-metrics">
+        <article><span><Landmark size={17}/> Disponibilità bancaria</span>
+          <strong>{availableBalances.length ? eur(availableTotal) : "—"}</strong>
+          <small>{availableBalances.length
+            ? `Saldi disponibili EUR di ${availableBalances.length} conti· dati PSD2`
+            : "Non disponibile o banca da collegare"} · ultima sincronizzazione</small>
+        </article>
         <article><span><TrendingUp size={17}/> Crediti da incassare</span><strong>{eur(metrics.receivables)}</strong><small>Fatture non riconciliate · EUR</small></article>
         <article><span><TrendingDown size={17}/> Debiti verso fornitori</span><strong>{eur(metrics.payables)}</strong><small>Fatture non riconciliate · EUR</small></article>
         <article><span><Banknote size={17}/> Entrate ultimi 30 giorni</span><strong>{eur(metrics.received)}</strong><small>Dai movimenti bancari acquisiti</small></article>
@@ -675,7 +693,15 @@ export default function FinancialControlCenter() {
             <div className="fc-bank" key={connection.id}>
               <div><strong>{connection.institution_name}</strong>
                 <small>Stato: {connection.consent_status} · Ultimo controllo: {connection.last_sync_at
-                  ? new Date(connection.last_sync_at).toLocaleDateString("it-IT") : "mai"}</small></div>
+                  ? new Date(connection.last_sync_at).toLocaleDateString("it-IT") : "mai"}</small>
+                {(connection.balances ?? []).map((balance,index) =>
+                  <small key={index} className="fc-bank-balance">
+                    {balance.accountLabel}: <strong>{money(balance.amount,balance.currency)}</strong>
+                    {" · "}{balance.balanceType === "interimAvailable" || balance.balanceType === "closingAvailable"
+                      ? "disponibile" : "contabile"}
+                    {" · Rif. "}{dateIt(balance.referenceDate.slice(0,10))}
+                  </small>)}
+              </div>
               <div className="fc-bank-buttons">
                 <button disabled={working} onClick={()=>void syncBank(connection.id)}><RefreshCw size={15}/> Sincronizza</button>
                 <button disabled={working} onClick={()=>void disconnect(connection.id)}>Scollega</button>
