@@ -189,3 +189,16 @@
   .fc-spin { animation:none; }
   .fc-page * { transition:none !important; }
 }
+
+/* Collegamento esplicito documento → fattura */
+.fc-inline-button { display:inline-flex; align-items:center; gap:5px; flex-shrink:0; border:1px solid #9ec9bd;
+  border-radius:9px; color:#0c6e63; background:#fff; padding:8px 11px; font-size:12px; font-weight:760; cursor:pointer; }
+.fc-inline-button:hover { background:#e7f5ef; }
+.fc-source-banner { display:flex; align-items:flex-start; gap:10px; padding:12px; margin-bottom:15px;
+  border-radius:10px; background:#eaf8f0; color:#196c55; border:1px solid #bbd9c9;
+  font-size:12px; line-height:1.5; }
+.fc-source-banner svg { flex:0 0 auto; }
+.fc-source-banner span { flex:1; }
+.fc-source-banner button { color:#115c4c; border:0; background:transparent;
+  text-decoration:underline; cursor:pointer; font-size:12px; font-weight:750; }
+@media(max-width:550px) { .fc-source-banner { flex-wrap:wrap; } }
