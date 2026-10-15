@@ -17,6 +17,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Financial-control unit tests
+        run: npm run test:finance
       - name: Build
         shell: bash
         run: |
