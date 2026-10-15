@@ -6673,7 +6673,7 @@ function UploadModal({
         <label className="dropzone">
           <input
             type="file"
-            accept="application/pdf,image/*"
+            accept="application/pdf,image/*,.heic,.heif"
             onChange={async (event) => {
               const selected = event.target.files?.[0] || null;
               const sequence = ++selectedFileSequence.current;
@@ -6735,8 +6735,12 @@ function UploadModal({
             <span aria-hidden="true">✓</span>
             <span>
               {language === "it"
-                ? "Foto o file acquisito correttamente. Ora premi Analizza e archivia."
-                : "Photo or file captured successfully. Now press Analyze and archive."}
+                ? fastUploadAvailable
+                  ? "File pronto. Premi «Carica subito» per salvarlo senza aspettare l'analisi."
+                  : "Foto o file acquisito correttamente. Ora premi Analizza e archivia."
+                : fastUploadAvailable
+                  ? "File ready. Save it now without waiting for AI analysis."
+                  : "Photo or file captured successfully. Now press Analyze and archive."}
             </span>
           </div>
         )}
@@ -6763,6 +6767,11 @@ function UploadModal({
         <div className="upload-actions documio-fast-upload-actions">
           {fastUploadAvailable && (
             <>
+              <a href="/carica" className="documio-batch-upload-link">
+                {language === "it"
+                  ? "Carica più documenti insieme →"
+                  : "Upload multiple documents →"}
+              </a>
               <button
                 type="button"
                 className="primary full upload-submit"
