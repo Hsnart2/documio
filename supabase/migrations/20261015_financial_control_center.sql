@@ -9,6 +9,7 @@ create table if not exists public.financial_invoices (
   direction text not null check (direction in ('income','expense')),
   source text not null default 'manual' check (source in ('manual','xml')),
   invoice_number text not null,
+  document_id uuid references public.documents(id) on delete set null,
   issue_date date not null,
   due_date date,
   counterparty text not null,
@@ -19,8 +20,30 @@ create table if not exists public.financial_invoices (
   notes text,
   created_at timestamptz not null default now(),
   unique (id, user_id),
-  unique (user_id, import_key)
+  unique (user_id, import_key),
+  unique (user_id, document_id)
 );
+
+-- Impedisce il collegamento a un documento di un altro utente.
+-- Il controllo si applica a INSERT e UPDATE e usa sempre l'utente proprietario.
+create or replace function public.documio_financial_invoice_doc_guard()
+returns trigger language plpgsql security invoker set search_path = public as $$
+begin
+  if new.document_id is not null
+    and not exists (
+      select 1 from public.documents
+      where id = new.document_id and user_id = new.user_id
+    ) then
+    raise exception 'Il documento non appartiene all’utente';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists documio_financial_invoice_doc_guard on public.financial_invoices;
+create trigger documio_financial_invoice_doc_guard before insert or update
+on public.financial_invoices for each row
+execute function public.documio_financial_invoice_doc_guard();
 
 create table if not exists public.financial_bank_connections (
   id uuid primary key default gen_random_uuid(),
