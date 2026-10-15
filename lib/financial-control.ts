@@ -136,6 +136,7 @@ export function parseBankCsv(text: string): { rows: ParsedMovement[]; rejected: 
   const debitsIndex = field("addebiti","addebito","uscite","uscita","debit","dare");
   const creditsIndex = field("accrediti","accredito","entrate","entrata","credit","avere");
   const counterpartyIndex = field("controparte","counterparty","beneficiario","ordinante","intestatario");
+  const currencyIndex = field("divisa","currency","codicevaluta","codicedivisa");
   if (dateIndex === -1 || (amountIndex === -1 && (debitsIndex === -1 || creditsIndex === -1)))
     throw new Error("Il CSV deve contenere Data e Importo oppure colonne Entrate/Uscite. Esporta i movimenti, non il saldo.");
   const rows: ParsedMovement[] = [];
@@ -148,9 +149,12 @@ export function parseBankCsv(text: string): { rows: ParsedMovement[]; rejected: 
       const credit = decimal(cells[creditsIndex] || "") ?? 0;
       amount = credit - Math.abs(debit);
     }
-    if (!booking_date || amount === null || amount === 0) { rejected++; continue; }
+    const currency = currencyIndex >= 0
+      ? String(cells[currencyIndex] || "EUR").toUpperCase().trim() : "EUR";
+    if (!booking_date || amount === null || amount === 0 ||
+      !/^[A-Z]{3}$/.test(currency)) { rejected++; continue; }
     rows.push({
-      booking_date, amount, currency: "EUR",
+      booking_date, amount, currency,
       counterparty: counterpartyIndex >= 0 ? String(cells[counterpartyIndex] || "").slice(0,220) : "",
       description: descriptionIndex >= 0 ? String(cells[descriptionIndex] || "").slice(0,1500) : "",
     });
@@ -186,19 +190,25 @@ export function parseFatturaPaXml(xml: string, direction: InvoiceDirection) {
   return bodies.map((body) => {
     const doc = firstNamed(body, "DatiGeneraliDocumento");
     if (!doc) throw new Error("Mancano i dati della fattura.");
+    const kind = contentNamed(doc, "TipoDocumento").toUpperCase();
+    if (kind === "TD04" || kind === "TD08") {
+      throw new Error("Nota di credito: registrala separatamente. Non viene trattata come una fattura da incassare o pagare.");
+    }
     const invoice_number = contentNamed(doc, "Numero");
     const issue_date = dateIso(contentNamed(doc, "Data"));
+    const currency = contentNamed(doc, "Divisa").toUpperCase() || "EUR";
     const amount = decimal(contentNamed(doc, "ImportoTotaleDocumento"));
     const expiry = contentNamed(body, "DataScadenzaPagamento");
-    if (!invoice_number || !issue_date || amount === null || amount <= 0) {
-      throw new Error("Numero, data o totale non presenti nella fattura: verifica l'originale.");
+    if (!invoice_number || !issue_date || amount === null || amount <= 0 ||
+      !/^[A-Z]{3}$/.test(currency)) {
+      throw new Error("Numero, data, valuta o totale non validi nella fattura: verifica l'originale.");
     }
     if (!counterparty.name) throw new Error("Controparte mancante: controlla l'XML originale.");
     return {
       direction, source: "xml" as const, invoice_number, issue_date,
       due_date: dateIso(expiry), counterparty: counterparty.name,
       vat_number: counterparty.vat || null, amount,
-      currency: "EUR", notes: "Importata dai dati XML FatturaPA, da verificare.",
+      currency, notes: "Importata dai dati XML FatturaPA, da verificare.",
     };
   });
 }
