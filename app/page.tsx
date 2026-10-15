@@ -1810,36 +1810,12 @@ export default function Home() {
     setActiveCategory("Tutti");
 
     try {
+      // La ricerca e' effettuata sul server con il JWT e RLS.
+      // Non spedire ogni volta l'intero archivio dal browser.
       const response = await fetch("/api/search", {
         method: "POST",
         headers: await getApiAuthHeaders("application/json"),
-        body: JSON.stringify({
-          query: cleanQuery,
-          language,
-          documents: documents.map((document) => ({
-            id: document.id,
-            title: document.title,
-            fileName: document.fileName,
-            category: document.category,
-            summary: document.summary,
-            keywords: document.keywords,
-            expiryDate: document.expiryDate,
-            appointmentTime: document.appointmentTime,
-            paymentStatus: getPaymentSnapshot(
-              document,
-              attachments[document.id] ?? [],
-            ).status,
-            totalAmount: document.totalAmount,
-            paidAmount: document.paidAmount,
-            attachments: (attachments[document.id] ?? []).map((item) => ({
-              title: item.title,
-              type: item.attachmentType,
-              fileName: item.fileName,
-              paymentMethod: item.paymentMethod,
-              notes: item.notes,
-            })),
-          })),
-        }),
+        body: JSON.stringify({ query: cleanQuery, language }),
       });
 
       const data = await response.json();
