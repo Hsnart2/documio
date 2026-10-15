@@ -75,6 +75,7 @@ export function searchDocuments(
     const fields = [title,filename,category,summary,keywords,supplements];
     let score = 0;
     let uniqueHits = 0;
+    let nonDateHits = 0;
     if (query.length >= 4 && title.includes(query)) score += 38;
     if (query.length >= 4 && filename.includes(query)) score += 25;
     for (const term of terms) {
@@ -85,10 +86,16 @@ export function searchDocuments(
           best = Math.max(best,[16,12,10,5,11,9][i]);
         }
       }
-      if (best>0) uniqueHits++;
+      if (best>0) {
+        uniqueHits++;
+        if (!/^(19|20)\d\d$/.test(term)) nonDateHits++;
+      }
       score += best;
     }
     if (uniqueHits === terms.length) score += 15;
+    // L'anno da solo non basta per far comparire documenti irrilevanti.
+    if (terms.some((term) => !/^(19|20)\d\d$/.test(term)) && nonDateHits === 0)
+      score = 0;
     const yearTerms = terms.filter((t)=>/^(19|20)\d\d$/.test(t));
     if (yearTerms.length &&
       !yearTerms.some((year)=>fields.some((field)=>field.includes(year)) ||
