@@ -216,7 +216,56 @@ export default function FinancialControlCenter() {
     if (!deadlines.length) notices.push(
       "Aggiungi bolli, multe, imposte, assicurazioni e contratti per attivare la sorveglianza delle scadenze.",
     );
-    return notices.slice(0, 5);
+    // Analisi delle spese reali presenti nei conti acquisiti. Non è un
+    // calcolo dell'utile o una valutazione professionale dei fornitori.
+    const outgoing = movements.filter((t) => t.currency === "EUR" && Number(t.amount) < 0);
+    const byMerchant = new Map<string, { name: string; amount: number; count: number }>();
+    for (const tx of outgoing) {
+      const merchant = (tx.counterparty || "").trim().slice(0, 100);
+      if (!merchant) continue;
+      const key = merchant.toLocaleLowerCase("it-IT").replace(/[^a-z0-9]/g, "");
+      if (!key) continue;
+      const current = byMerchant.get(key) ?? { name: merchant, amount: 0, count: 0 };
+      current.amount += Math.abs(Number(tx.amount));
+      current.count++;
+      byMerchant.set(key, current);
+    }
+    const top = [...byMerchant.values()].sort((a,b)=>b.amount-a.amount)[0];
+    if (top && top.amount >= 200 && top.count >= 2) {
+      notices.push(
+        `Nei movimenti caricati, ${top.name} è tra le principali uscite (${eur(top.amount)} su ${top.count} operazioni). Verifica contratti, condizioni e possibilità di negoziare tariffe.`,
+      );
+    }
+    const rangeEnd = isoToday();
+    const today = new Date(rangeEnd + "T00:00:00Z");
+    const from = (days: number) => new Date(today.getTime() - days * 86400000).toISOString().slice(0, 10);
+    const currentMonthSpend = outgoing
+      .filter((tx) => tx.booking_date >= from(30) && tx.booking_date <= rangeEnd)
+      .reduce((total,tx)=>total + Math.abs(Number(tx.amount)),0);
+    const previousMonthSpend = outgoing
+      .filter((tx) => tx.booking_date >= from(60) && tx.booking_date < from(30))
+      .reduce((total,tx)=>total + Math.abs(Number(tx.amount)),0);
+    if (previousMonthSpend >= 200 && currentMonthSpend - previousMonthSpend >= 100
+      && currentMonthSpend > previousMonthSpend * 1.2) {
+      const percent = Math.round((currentMonthSpend / previousMonthSpend - 1) * 100);
+      notices.push(
+        `Le uscite bancarie registrate degli ultimi 30 giorni sono maggiori del ${percent}% rispetto ai 30 precedenti. Controlla acquisti straordinari e costi ricorrenti prima di tagliare spese.`,
+      );
+    }
+    const overdueReceivables = invoices.filter((invoice) =>
+      invoice.direction === "income" && invoice.currency === "EUR" &&
+      invoice.due_date && daysTo(invoice.due_date) < 0 &&
+      Number(invoice.amount) - paidFor(invoice.id,matches) > 0.01)
+      .sort((a,b) => (Number(b.amount)-paidFor(b.id,matches))-
+        (Number(a.amount)-paidFor(a.id,matches)));
+    if (overdueReceivables.length) {
+      const invoice = overdueReceivables[0];
+      notices.push(
+        `Verifica la fattura ${invoice.invoice_number} verso ${invoice.counterparty}:
+        ${eur(Math.max(0,Number(invoice.amount)-paidFor(invoice.id,matches)))} scaduti nei dati inseriti. Se il bonifico non è arrivato, valuta un sollecito.`,
+      );
+    }
+    return notices.slice(0, 8);
   }, [metrics, movements.length, deadlines.length]);
 
   async function submitInvoice(event: React.FormEvent) {
