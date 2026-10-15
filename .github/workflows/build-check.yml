@@ -17,6 +17,21 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Summarize dependency advisories
+        shell: bash
+        run: |
+          npm audit --json > audit-report.json || true
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const data = JSON.parse(readFileSync("audit-report.json", "utf8"));
+            console.log("Severity summary:", JSON.stringify(data.metadata?.vulnerabilities ?? {}));
+            for (const [name,entry] of Object.entries(data.vulnerabilities ?? {})) {
+              const items = (entry.via ?? []).filter((x)=>typeof x==="object")
+                .map((x)=>x.title).slice(0,3);
+              console.log(name, entry.severity, "fix:",JSON.stringify(entry.fixAvailable), items.join(" | "));
+            }
+          '
+          rm -f audit-report.json
       - name: Financial-control unit tests
         run: npm run test:finance
       - name: Archive and fast-upload regression tests
