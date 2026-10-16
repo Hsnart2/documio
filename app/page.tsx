@@ -27,6 +27,8 @@ import {
   CheckCheck,
   Download,
   Mail,
+  MoreHorizontal,
+  Pencil,
   X,
 } from "lucide-react";
 import type {
@@ -42,6 +44,7 @@ import { prepareFileForUpload as prepareUpload } from "@/lib/prepare-upload-file
 
 type Language = "it" | "en";
 type ActiveView = "documents" | "practices";
+type DocumentSort = "recent" | "oldest" | "title" | "expiry";
 type ActiveCategory =
   | DocumentCategory
   | "Tutti"
@@ -956,6 +959,8 @@ export default function Home() {
   const [aiResultIds, setAiResultIds] = useState<string[] | null>(null);
   const [aiSearching, setAiSearching] = useState(false);
   const [activeCategory, setActiveCategory] = useState<ActiveCategory>("Tutti");
+  const [documentSort, setDocumentSort] = useState<DocumentSort>("recent");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [fastUploadAvailable, setFastUploadAvailable] = useState(false);
   const aiKickStarted = useRef(new Set<string>());
@@ -2009,6 +2014,25 @@ export default function Home() {
 
     return rankedDocuments.map(({ document }) => document);
   }, [documents, query, activeCategory, t, attachments, aiResultIds]);
+
+  // La ricerca mantiene la pertinenza originale dei risultati.
+  const sortedDocuments = useMemo(() => {
+    if (query.trim()) return filtered;
+    const items = [...filtered];
+    if (documentSort === "title") {
+      return items.sort((a, b) => a.title.localeCompare(b.title, language === "it" ? "it" : "en", {
+        sensitivity: "base",
+      }));
+    }
+    if (documentSort === "expiry") {
+      return items.sort((a, b) => (a.expiryDate ?? "9999-12-31").localeCompare(
+        b.expiryDate ?? "9999-12-31",
+      ));
+    }
+    return items.sort((a, b) => documentSort === "oldest"
+      ? Date.parse(a.uploadedAt) - Date.parse(b.uploadedAt)
+      : Date.parse(b.uploadedAt) - Date.parse(a.uploadedAt));
+  }, [filtered, query, documentSort, language]);
 
   async function updateAppointment(
     document: StoredDocument,
@@ -3119,6 +3143,21 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="topbar-icon-button dm-topbar-search-button"
+            aria-label={language === "it" ? "Cerca nell'archivio" : "Search the archive"}
+            title={language === "it" ? "Cerca documenti" : "Search documents"}
+            onClick={() => {
+              setActiveView("documents");
+              document.getElementById("dm-search")?.scrollIntoView({
+                behavior: "smooth", block: "center",
+              });
+              searchInputRef.current?.focus({ preventScroll: true });
+            }}
+          >
+            <Search size={19} />
+          </button>
           <a
             className="dm-legacy-control-link"
             href="/controllo"
@@ -3286,9 +3325,11 @@ export default function Home() {
         </button>
       </section>
 
-      <section className="search-wrap">
+      <section className="search-wrap" id="dm-search" role="search" aria-label={language === "it" ? "Cerca documenti" : "Search documents"}>
         <Search size={20} />
         <input
+          ref={searchInputRef}
+          aria-label={t.searchPlaceholder}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -3528,33 +3569,60 @@ export default function Home() {
                   {filtered.length === 1 ? t.documentFound : t.documentsFound}
                 </p>
               </div>
+              <label className="dm-sort-control">
+                <span>{language === "it" ? "Ordina per" : "Sort by"}</span>
+                <select
+                  value={documentSort}
+                  disabled={Boolean(query.trim())}
+                  onChange={(event) => setDocumentSort(event.target.value as DocumentSort)}
+                  aria-label={language === "it" ? "Ordina documenti" : "Sort documents"}
+                >
+                  <option value="recent">{language === "it" ? "Più recenti" : "Newest first"}</option>
+                  <option value="oldest">{language === "it" ? "Più vecchi" : "Oldest first"}</option>
+                  <option value="title">{language === "it" ? "Nome A-Z" : "Name A-Z"}</option>
+                  <option value="expiry">{language === "it" ? "Scadenza vicina" : "Soonest due"}</option>
+                </select>
+              </label>
             </div>
 
             <div className="grid">
-              {filtered.map((doc) => (
+              {sortedDocuments.map((doc) => (
                 <article
                   className="doc-card"
                   key={doc.id}
                   data-document-id={doc.id}
                 >
-                  <div className="doc-card-actions">
-                    <button
-                      type="button"
-                      className="edit-button"
-                      onClick={() => setEditingDocument(doc)}
-                      aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
-                    >
-                      {language === "it" ? "Modifica" : "Edit"}
-                    </button>
-                    <button
-                      type="button"
-                      className="delete-button"
-                      onClick={() => deleteDocument(doc.id)}
-                      aria-label={`${t.delete} ${doc.title}`}
-                    >
-                      {t.delete}
-                    </button>
-                  </div>
+                  <details className="dm-document-menu">
+                    <summary aria-label={`${language === "it" ? "Gestisci" : "Manage"} ${doc.title}`}>
+                      <MoreHorizontal size={19} />
+                      <span>{language === "it" ? "Gestisci" : "Manage"}</span>
+                    </summary>
+                    <div className="dm-document-menu-panel">
+                      <button
+                        type="button"
+                        className="dm-document-menu-edit"
+                        onClick={(event) => {
+                          (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                          setEditingDocument(doc);
+                        }}
+                        aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
+                      >
+                        <Pencil size={16} />
+                        {language === "it" ? "Modifica documento" : "Edit document"}
+                      </button>
+                      <button
+                        type="button"
+                        className="dm-document-menu-delete"
+                        onClick={(event) => {
+                          (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                          void deleteDocument(doc.id);
+                        }}
+                        aria-label={`${t.delete} ${doc.title}`}
+                      >
+                        <Trash2 size={16} /> {t.delete}
+                      </button>
+                    </div>
+                  </details>
 
                   <div className="doc-icon">
                     <FileText size={24} />
