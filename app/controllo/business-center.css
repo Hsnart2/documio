@@ -117,3 +117,51 @@
  .fc-zip-totals{gap:7px}
  .fc-zip-import .fc-file-zip{padding:16px 10px}
 }
+
+/* Fornitori: un'unica regola di categoria per azienda, mobile-first. */
+.fc-supplier-manager{display:grid;gap:18px}
+.fc-supplier-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.fc-supplier-head>div{flex:1 1 360px;min-width:0}
+.fc-supplier-head .fc-muted{max-width:800px;margin:8px 0 0;font-size:12px;line-height:1.6}
+.fc-supplier-add{display:grid;grid-template-columns:minmax(170px,1.6fr) minmax(140px,1fr) minmax(190px,1.5fr);
+  gap:12px;align-items:end;border:1px solid #dbe4ee;border-radius:14px;padding:15px;background:#f9fbff}
+.fc-supplier-add label,.fc-supplier-choice label{display:grid;gap:6px;font-size:12px;font-weight:750;color:#4c5f79;min-width:0}
+.fc-supplier-add input,.fc-supplier-add select,.fc-supplier-choice select{
+  width:100%;min-width:0;height:43px;border:1px solid #d1dce9;border-radius:10px;
+  background:#fff;color:#213650;padding:8px 10px;font-size:13px}
+.fc-supplier-add button{min-height:43px;white-space:normal}
+.fc-supplier-force{display:flex;gap:10px;align-items:flex-start;background:#f7faff;padding:13px 15px;
+ border:1px solid #e0e7f3;border-radius:12px;color:#344965;font-weight:760;font-size:12px}
+.fc-supplier-force input{width:19px;height:19px;accent-color:#4f46e5;margin:0;flex:0 0 auto}
+.fc-supplier-force span{display:grid;gap:4px}
+.fc-supplier-force small{font-weight:400;color:#77869a;line-height:1.4}
+.fc-supplier-list{display:grid;gap:10px}
+.fc-supplier-row{display:flex;align-items:center;gap:12px;padding:14px 15px;border:1px solid #dfe5ee;
+ border-radius:14px;background:#fff;min-width:0}
+.fc-supplier-avatar{display:grid;place-items:center;background:#eef0ff;color:#5646bd;width:43px;height:43px;
+ flex:0 0 43px;border-radius:12px}
+.fc-supplier-info{display:grid;gap:5px;min-width:0;flex:1 1 220px}
+.fc-supplier-info strong{font-size:14px;color:#1c3049;overflow-wrap:anywhere}
+.fc-supplier-info>small{font-size:11px;color:#738198;line-height:1.5}
+.fc-supplier-saved{display:flex;align-items:center;gap:6px;color:#12856a!important;font-weight:780}
+.fc-supplier-choice{display:flex;align-items:end;gap:9px;flex:1 1 380px;max-width:560px}
+.fc-supplier-choice label{flex:1 1 180px}
+.fc-supplier-choice button{min-height:43px;white-space:normal;font-size:12px}
+.fc-supplier-manager .fc-disclaimer{display:flex;align-items:flex-start;gap:9px;line-height:1.6}
+@media(max-width:960px){
+ .fc-supplier-add{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .fc-supplier-add label:nth-child(3){grid-column:1/-1}
+ .fc-supplier-add button{grid-column:1/-1}
+ .fc-supplier-row{flex-wrap:wrap}
+ .fc-supplier-choice{max-width:none;flex-basis:100%}
+}
+@media(max-width:600px){
+ .fc-supplier-head{flex-direction:column}
+ .fc-supplier-add{grid-template-columns:minmax(0,1fr)}
+ .fc-supplier-add label:nth-child(3),.fc-supplier-add button{grid-column:auto}
+ .fc-supplier-row{padding:13px;gap:10px}
+ .fc-supplier-avatar{width:38px;height:38px;flex-basis:38px}
+ .fc-supplier-info{flex-basis:calc(100% - 52px)}
+ .fc-supplier-choice{flex-wrap:wrap}
+ .fc-supplier-choice label,.fc-supplier-choice button{flex:1 1 100%;width:100%}
+}
