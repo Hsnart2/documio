@@ -109,6 +109,7 @@ export default function FinancialControlCenter() {
   const [companyId,setCompanyId] = useState<string|null>(null);
   const [companyReady,setCompanyReady] = useState(false);
   const loadVersion = useRef(0);
+  const bankLoadVersion = useRef(0);
   const [accountingRecords,setAccountingRecords] = useState<AccountingRecord[]>([]);
   const [reviewingContract,setReviewingContract] = useState<string|null>(null);
   const [contractReview,setContractReview] = useState<null|{
@@ -169,17 +170,18 @@ export default function FinancialControlCenter() {
       ? { Authorization: `Bearer ${data.session.access_token}` } : null;
   }, []);
   const loadConnections = useCallback(async () => {
+    const version = ++bankLoadVersion.current;
     try {
       const auth = await headers();
       if (!auth) return;
       const response = await fetch("/api/finance/banks", { headers: auth, cache: "no-store" });
       const data = await response.json();
-      if (response.ok) {
+      if (response.ok && version === bankLoadVersion.current) {
         setBankEnabled(Boolean(data.enabled));
         setConnections(data.connections ?? []);
       }
     } catch {
-      setBankEnabled(false);
+      if (version === bankLoadVersion.current) setBankEnabled(false);
     }
   }, [headers]);
   useEffect(() => {
@@ -224,6 +226,7 @@ export default function FinancialControlCenter() {
       return;
     }
     loadVersion.current++;
+    bankLoadVersion.current++;
     setSelectedTx({});
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
     setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);
@@ -238,6 +241,7 @@ export default function FinancialControlCenter() {
     }
   }, [userId, companyId, companyReady, loadData, loadConnections]);
 
+  const personalConnections = companyId ? [] : connections;
   const availableBalances = useMemo(() =>
     (companyId ? [] : connections).flatMap((connection) => connection.balances ?? [])
       .filter((balance) => balance.currency === "EUR" &&
@@ -1010,7 +1014,7 @@ export default function FinancialControlCenter() {
             qui a destra e verifica i movimenti proposti.
           </div>}
           <p className="fc-muted">Il consenso è gestito dalla banca tramite provider Open Banking regolamentato. DocuMio non chiede password bancarie e non può inviare bonifici.</p>
-          {connections.length ? <div className="fc-list">{connections.map((connection) =>
+          {personalConnections.length ? <div className="fc-list">{personalConnections.map((connection) =>
             <div className="fc-bank" key={connection.id}>
               <div><strong>{connection.institution_name}</strong>
                 <small>Stato: {connection.consent_status} · Ultimo controllo: {connection.last_sync_at
@@ -1028,7 +1032,7 @@ export default function FinancialControlCenter() {
                 <button disabled={working} onClick={()=>void disconnect(connection.id)}>Scollega</button>
               </div>
             </div>)}</div> : <div className="fc-empty">Nessuna banca collegata.</div>}
-          {bankEnabled ? <>
+          {!companyId && bankEnabled ? <>
             {institutions.length === 0 && <button disabled={working} className="fc-button secondary"
               onClick={()=>void loadBanks()}><Landmark size={16}/> Scegli una banca italiana</button>}
             {!!institutions.length && <div className="fc-form">
