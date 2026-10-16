@@ -569,6 +569,26 @@ export default function FinancialControlCenter() {
       <span className="fc-secure"><ShieldCheck size={17}/> Accesso riservato</span>
     </header>
 
+    <section className="fc-workspace-switch" aria-label="Scegli archivio">
+      <div className="fc-workspace-caption">
+        <span className="fc-workspace-symbol">{companyId?<Building2 size={23}/>:<FolderOpen size={23}/>}</span>
+        <div>
+          <small>AMBITO DI LAVORO</small>
+          <strong>{currentCompany?.legal_name||"Personale e famiglia"}</strong>
+          <p>Fatture, movimenti, costi e scadenze vengono separati per archivio.</p>
+        </div>
+      </div>
+      <div className="fc-workspace-tools">
+        <label htmlFor="fc-workspace-select">Cambia archivio</label>
+        <select id="fc-workspace-select" value={companyId??""} disabled={!companyReady}
+          onChange={(event)=>selectCompany(event.target.value)}>
+          <option value="">Personale</option>
+          {companies.map((company)=>
+            <option key={company.id} value={company.id}>{company.legal_name}</option>)}
+        </select>
+        <a href="/aziende" className="fc-company-add"><Plus size={17}/> Crea azienda / gestisci</a>
+      </div>
+    </section>
     <section className="fc-hero">
       <div>
         <span className="fc-overline"><Sparkles size={16}/> DocuMio · Centro di controllo</span>
@@ -582,6 +602,7 @@ export default function FinancialControlCenter() {
       {([
         ["overview","Panoramica",Sparkles],["invoices","Fatture",Receipt],
         ["accounts","Banche e movimenti",Landmark],["deadlines","Scadenze",CalendarClock],
+        ["accounting","Contabilità e documenti",Building2],
       ] as const).map(([key,label,Icon]) =>
         <button key={key} className={tab === key ? "active" : ""} type="button"
           onClick={() => {setTab(key);setError("");setMessage("");}}>
@@ -639,6 +660,22 @@ export default function FinancialControlCenter() {
             <p key={i}><BadgeCheck size={17}/>{note}</p>)}</div>
         </section>
       </div>
+      <section className="fc-panel fc-balance-preview">
+        <h2><Building2 size={21}/> Conto economico preliminare · fatture importate</h2>
+        <p className="fc-muted">Riepilogo lordo basato solo sulle fatture caricate per {currentCompany?.legal_name||"l'archivio personale"}.
+          Non è il bilancio ufficiale e non calcola l'utile fiscale.</p>
+        <div className="fc-balance-metrics">
+          <div><span>Fatture attive lorde</span><strong>{eur(provisional.income)}</strong></div>
+          <div><span>Fatture passive lorde</span><strong>{eur(provisional.expense)}</strong></div>
+          <div><span>Differenza grezza (non utile)</span><strong>{eur(provisional.provisionalDifference)}</strong></div>
+        </div>
+        <h3>Ripartizione provvisoria dei costi</h3>
+        {!provisional.categorized.length
+          ? <p className="fc-muted">Carica fatture e conferma le categorie per vedere la ripartizione.</p>
+          : <div className="fc-category-summary">{provisional.categorized.slice(0,12).map(([code,amount])=>
+            <div key={code}><span>{categoryLabel(code)}</span><strong>{eur(amount)}</strong></div>)}</div>}
+        <div className="fc-disclaimer">Le registrazioni F24, stipendi e CONAI sono separate dai totali fatture per evitare doppie contabilizzazioni. IVA indetraibile, ammortamenti, rimanenze, ratei, risconti e competenze non sono calcolati automaticamente.</div>
+      </section>
       <div className="fc-disclaimer">Questi importi rappresentano fatture e flussi bancari, non l'utile contabile né le imposte dovute. Le fonti potrebbero essere incomplete.</div>
     </>}
 
@@ -669,6 +706,14 @@ export default function FinancialControlCenter() {
               <label>Scadenza pagamento<input type="date" value={invoiceForm.due_date}
                 onChange={(e)=>setInvoiceForm({...invoiceForm,due_date:e.target.value})}/></label>
             </div>
+            <label>Categoria contabile
+              <select value={invoiceForm.cost_category}
+                onChange={(e)=>setInvoiceForm({...invoiceForm,cost_category:e.target.value})}>
+                <option value="">Suggeriscila automaticamente (da verificare)</option>
+                {accountingCategories.map((category)=><option key={category.value}
+                  value={category.value}>{category.label}</option>)}
+              </select>
+            </label>
             <label>Note<input maxLength={500} value={invoiceForm.notes}
               onChange={(e)=>setInvoiceForm({...invoiceForm,notes:e.target.value})}/></label>
             <button className="fc-button" disabled={working} type="submit"><Plus size={17}/> Registra</button>
@@ -747,6 +792,7 @@ export default function FinancialControlCenter() {
                   {invoice.direction === "income" ? "Emessa" : "Ricevuta"} ·
                   {" "}{invoice.invoice_number} · {dateIt(invoice.issue_date)}
                   {invoice.document_id ? " · Documento DocuMio collegato" : ""}
+                  {" · "}{categoryLabel(invoice.cost_category)}
                   {invoice.due_date ? ` · Scad. ${dateIt(invoice.due_date)}` : ""}
                 </small></div>
                 <span className={`fc-status ${status.kind}`}>{status.text}</span>
@@ -755,6 +801,18 @@ export default function FinancialControlCenter() {
                 <span>Totale <b>{money(Number(invoice.amount),invoice.currency)}</b></span>
                 <span>Riconciliato <b>{money(paid,invoice.currency)}</b></span>
                 <span>Residuo <b>{money(rem,invoice.currency)}</b></span>
+                {invoice.vat_amount!=null && <span>IVA esposta in XML
+                  <b>{money(Number(invoice.vat_amount),invoice.currency)}</b></span>}
+              </div>
+              <div className="fc-invoice-category">
+                <label>Imputazione contabile
+                  <select value={invoice.cost_category||"da_verificare"} disabled={working}
+                    onChange={(event)=>void confirmInvoiceCategory(invoice,event.target.value)}>
+                    {accountingCategories.map((c)=><option value={c.value} key={c.value}>{c.label}</option>)}
+                  </select>
+                </label>
+                <small>{invoice.category_status==="confirmed" ? "Categoria confermata" :
+                  "Categoria proposta: verifica la descrizione e scegli quella corretta."}</small>
               </div>
               {rem > 0.01 && <div className="fc-match">
                 <label>Abbina un movimento bancario (solo dopo controllo)
@@ -769,7 +827,19 @@ export default function FinancialControlCenter() {
                 </label>
                 <button type="button" disabled={working || !selectedTx[invoice.id]}
                   onClick={()=>void confirmMatch(invoice)}><Link2 size={16}/> Conferma abbinamento</button>
-                {suggested && <small>★ Prima opzione suggerita dall'importo e dalla descrizione; non confermata automaticamente.</small>}
+                {(() => {
+                  const proposed = reconciliationSuggestions.find((item)=>item.invoiceId===invoice.id);
+                  if (!proposed)return suggested ? <small>★ Controlla causale e importo prima di confermare.</small> : null;
+                  return <div className="fc-match-suggestion">
+                    <strong><Sparkles size={15}/> Movimento suggerito · {proposed.score}%</strong>
+                    <small>{proposed.reasons.join(" · ")}{proposed.requiresReview
+                      ? " · Possibile ambiguità: verifica prima di confermare." : ""}</small>
+                    <button type="button" disabled={working}
+                      onClick={()=>setSelectedTx((curr)=>({...curr,[invoice.id]:proposed.transactionId}))}>
+                      <Check size={15}/> Seleziona suggerimento (non conferma)
+                    </button>
+                  </div>;
+                })()}
               </div>}
             </article>;
           })}</div>}
@@ -780,6 +850,11 @@ export default function FinancialControlCenter() {
       <div className="fc-two-col">
         <section className="fc-panel">
           <h2><Landmark size={21}/> Collega banca in sola lettura</h2>
+          {companyId && <div className="fc-disclaimer">
+            Per questa azienda l'accesso PSD2 non è ancora associato a una delega aziendale.
+            I saldi del tuo conto personale rimangono nascosti. Importa il CSV dell'azienda
+            qui a destra e verifica i movimenti proposti.
+          </div>}
           <p className="fc-muted">Il consenso è gestito dalla banca tramite provider Open Banking regolamentato. DocuMio non chiede password bancarie e non può inviare bonifici.</p>
           {connections.length ? <div className="fc-list">{connections.map((connection) =>
             <div className="fc-bank" key={connection.id}>
