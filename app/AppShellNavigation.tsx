@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { usePathname } from "next/navigation";
 import {
   ArrowUpRight,
@@ -50,6 +50,8 @@ export default function AppShellNavigation() {
   const [signedIn, setSignedIn] = useState(false);
   const [homeTab, setHomeTab] = useState<Destination>("home");
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+  const moreWasOpen = useRef(false);
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -84,6 +86,16 @@ export default function AppShellNavigation() {
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [moreOpen]);
+
+  useEffect(() => {
+    if (moreOpen) {
+      moreWasOpen.current = true;
+      document.querySelector<HTMLButtonElement>(".dm-mobile-more-close")?.focus();
+    } else if (moreWasOpen.current) {
+      moreWasOpen.current = false;
+      moreTriggerRef.current?.focus();
+    }
   }, [moreOpen]);
 
   const visible = signedIn && supportedRoutes.has(pathname);
@@ -171,6 +183,7 @@ export default function AppShellNavigation() {
         <button
           type="button"
           className={`dm-mobile-link dm-mobile-more-trigger ${moreOpen || selected === "practices" || selected === "email" ? "is-active" : ""}`}
+          ref={moreTriggerRef}
           aria-label="Altre sezioni"
           aria-expanded={moreOpen}
           aria-controls="dm-mobile-more-panel"
