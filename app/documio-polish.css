@@ -1,0 +1,662 @@
+/* DocuMio UI polish — October 2026
+   Shared visual language across desktop / tablet / mobile.
+   This layer never changes data, role permissions or server behavior. */
+
+body.dm-app-nav-visible {
+  --dm-canvas: #f5f7fb;
+  --dm-ink: #1f2d46;
+  --dm-subtle: #61718a;
+  --dm-outline: #dfe6f0;
+  --dm-primary: #4f46e5;
+  --dm-glow: 0 8px 28px rgba(31, 46, 85, .055);
+  background: var(--dm-canvas);
+  color: var(--dm-ink);
+}
+body.dm-app-nav-visible .topbar {
+  z-index: 22;
+  border-bottom-color: #e6eaf2;
+  background: rgba(255,255,255,.97);
+  -webkit-backdrop-filter: blur(15px);
+  backdrop-filter: blur(15px);
+}
+body.dm-app-nav-visible .topbar-actions { gap: 9px; }
+body.dm-app-nav-visible .topbar-icon-button,
+body.dm-app-nav-visible .topbar-logout {
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+body.dm-app-nav-visible .topbar-icon-button:hover,
+body.dm-app-nav-visible .topbar-logout:hover {
+  background: #f3f5ff;
+  border-color: #cbd0f7;
+  color: #3931ae;
+}
+body.dm-app-nav-visible .topbar-upload:hover { background: #4338ca; }
+body.dm-app-nav-visible .dm-topbar-search-button {
+  display: inline-grid;
+  place-items: center;
+  padding: 9px;
+}
+body.dm-app-nav-visible .search-wrap { scroll-margin-top: 100px; }
+body.dm-app-nav-visible .search-wrap svg { color: #6b76a6; }
+body.dm-app-nav-visible .search-wrap input {
+  font-size: 16px;
+  line-height: 1.45;
+}
+body.dm-app-nav-visible .search-wrap input::placeholder { color: #8995a9; }
+body.dm-app-nav-visible .search-wrap button:disabled { opacity:.45; cursor:not-allowed; }
+
+/* Desktop: one centered content width, rather than unrelated margins per section. */
+@media (min-width: 1160px) {
+  body.dm-app-nav-visible .smart-home,
+  body.dm-app-nav-visible .dm-quick-actions,
+  body.dm-app-nav-visible .search-wrap,
+  body.dm-app-nav-visible .dm-view-tabs,
+  body.dm-app-nav-visible .dm-summary-grid,
+  body.dm-app-nav-visible .layout {
+    width: min(calc(100% - 76px), 1460px);
+    max-width: 1460px;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+  body.dm-app-nav-visible .dm-view-tabs {
+    padding: 10px 0 !important;
+    margin-bottom: 15px !important;
+  }
+  body.dm-app-nav-visible .dm-summary-grid {
+    padding: 0 !important;
+  }
+  body.dm-app-nav-visible .layout {
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 24px;
+  }
+  body.dm-app-nav-visible .layout > aside {
+    background: #fff;
+    border: 1px solid var(--dm-outline);
+    padding: 10px;
+    border-radius: 17px;
+    box-shadow: 0 5px 20px rgba(31, 46, 85, .035);
+  }
+}
+body.dm-app-nav-visible .dm-sidebar {
+  border-right-color: #e5eaf1;
+  box-shadow: 6px 0 24px rgba(29,39,70,.025);
+}
+body.dm-app-nav-visible .dm-side-link { font-weight: 690; letter-spacing: -.01em; }
+body.dm-app-nav-visible .dm-side-link.is-active {
+  background: #eef0ff;
+  color: #3931b5;
+  border-color: #e2e5ff;
+}
+body.dm-app-nav-visible .dm-side-link.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 999px;
+  background: #6557ed;
+}
+body.dm-app-nav-visible .dm-sidebar-feature {
+  background: linear-gradient(140deg,#edf0ff,#f4faff);
+  border-color: #e0e5f9;
+}
+
+/* Home: greeting and things to do above shortcut tiles. */
+body.dm-app-nav-visible .smart-home {
+  gap: 14px;
+  margin-top: 24px;
+  margin-bottom: 18px;
+}
+body.dm-app-nav-visible .smart-home-welcome {
+  padding: 25px 29px;
+  min-height: 144px;
+  border-radius: 20px;
+  background: linear-gradient(115deg, #192a4c, #35327c 72%, #5542a6);
+  box-shadow: 0 12px 34px rgba(36,40,101,.12);
+}
+body.dm-app-nav-visible .smart-home-welcome h1 {
+  margin: 11px 0 8px;
+  font-size: clamp(28px,3.15vw,40px);
+  letter-spacing: -.045em;
+}
+body.dm-app-nav-visible .smart-home-welcome p {
+  font-size: 13px;
+  max-width: 650px;
+  color: #e0e8fc;
+}
+body.dm-app-nav-visible .smart-home-kicker {
+  padding: 6px 11px;
+  font-size: 11px;
+  letter-spacing: .03em;
+}
+body.dm-app-nav-visible .smart-home-status {
+  max-width: 270px;
+  padding: 12px;
+  font-size: 12px;
+}
+body.dm-app-nav-visible .smart-home-status svg { width: 20px; }
+body.dm-app-nav-visible .smart-home-cards { gap: 11px; }
+body.dm-app-nav-visible .smart-home-card {
+  min-height: 137px;
+  padding: 15px;
+  border-color: var(--dm-outline);
+  border-radius: 16px;
+  box-shadow: var(--dm-glow);
+}
+body.dm-app-nav-visible .smart-home-card-label {
+  margin-top: 10px;
+  font-size: 13px;
+}
+body.dm-app-nav-visible .smart-home-card strong {
+  font-size: clamp(24px,2.3vw,32px);
+}
+body.dm-app-nav-visible .smart-home-card small {
+  padding-top: 8px;
+  font-size: 11px;
+}
+body.dm-app-nav-visible .smart-home-card:focus-visible {
+  outline: 3px solid rgba(79,70,229,.6);
+  outline-offset: 2px;
+}
+body.dm-app-nav-visible .smart-home > #documio-today-action-root {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+body.dm-app-nav-visible .today-action-center { margin: 0; }
+body.dm-app-nav-visible .smart-home-chat {
+  background: linear-gradient(180deg,#f3f4ff 0,#fff 128px);
+}
+body.dm-app-nav-visible .smart-home-chat-heading { gap: 11px; }
+body.dm-app-nav-visible .smart-home-chat-heading h2 { font-size: clamp(18px,2vw,23px); }
+body.dm-app-nav-visible .smart-home-chat-heading p { font-size: 12px; }
+body.dm-app-nav-visible .smart-home-conversation { min-height: 100px; }
+body.dm-app-nav-visible .smart-home-suggestions button {
+  min-height: 36px;
+  font-size: 12px;
+}
+body.dm-app-nav-visible .smart-home-insights-list > button {
+  min-height: 60px;
+  cursor: pointer;
+  transition: background .14s;
+}
+body.dm-app-nav-visible .smart-home-insights-list > button:hover {
+  background: #eef0ff;
+}
+
+/* Clearer shortcut hierarchy: quieter tiles, with one obvious upload action. */
+body.dm-app-nav-visible .dm-quick-actions {
+  margin-top: 14px;
+  margin-bottom: 20px;
+}
+body.dm-app-nav-visible .dm-quick-actions-heading { margin-bottom: 11px; }
+body.dm-app-nav-visible .dm-quick-actions-heading h2 {
+  font-size: clamp(18px,2vw,23px);
+  margin-top: 4px;
+}
+body.dm-app-nav-visible .dm-quick-grid { gap: 11px; }
+body.dm-app-nav-visible .dm-quick-item {
+  min-height: 86px;
+  border-color: var(--dm-outline);
+  border-radius: 15px;
+  box-shadow: 0 4px 13px rgba(31,46,85,.035);
+}
+body.dm-app-nav-visible .dm-quick-item.dm-quick-upload {
+  border-color: #b8ded5;
+  background: linear-gradient(130deg,#eaf7f1,#fff 75%);
+}
+body.dm-app-nav-visible .dm-quick-copy strong { font-size: 13px; }
+body.dm-app-nav-visible .dm-quick-copy small { font-size: 11px; }
+
+/* Search, tabs and document browsing */
+body.dm-app-nav-visible .search-wrap {
+  border-radius: 15px;
+  border: 1px solid #dbe2ee;
+  background: #fff;
+}
+body.dm-app-nav-visible .dm-view-tabs {
+  border-bottom: 1px solid #e3e8f0;
+}
+body.dm-app-nav-visible .dm-view-tabs > button {
+  font-weight: 700;
+  padding: 10px 16px;
+}
+body.dm-app-nav-visible .dm-view-tabs > button.primary {
+  font-weight: 820;
+}
+body.dm-app-nav-visible .section-title { gap: 15px; }
+body.dm-app-nav-visible .section-title h2 { margin-bottom: 3px; }
+body.dm-app-nav-visible .dm-sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  color: #687991;
+  font-size: 12px;
+  font-weight: 740;
+}
+body.dm-app-nav-visible .dm-sort-control select {
+  min-height: 42px;
+  width: auto;
+  max-width: 200px;
+  border: 1px solid #d6deeb;
+  border-radius: 11px;
+  padding: 8px 12px;
+  background: #fff;
+  color: #31425a;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+body.dm-app-nav-visible .dm-sort-control select:disabled { opacity: .58; cursor:not-allowed; }
+body.dm-app-nav-visible .layout .grid { align-items: stretch; }
+body.dm-app-nav-visible .doc-card {
+  position: relative;
+  min-width: 0;
+  border-color: #e0e6f1;
+  box-shadow: 0 4px 18px rgba(31,46,85,.035);
+  transition: transform .16s, box-shadow .16s, border-color .16s;
+}
+body.dm-app-nav-visible .doc-card:hover {
+  transform: translateY(-2px);
+  border-color: #c9c9f8;
+  box-shadow: 0 11px 30px rgba(31,46,85,.085);
+}
+body.dm-app-nav-visible .doc-card:has(.dm-document-menu[open]) {
+  z-index: 8;
+  overflow: visible !important;
+}
+body.dm-app-nav-visible .doc-card h3 {
+  color: #253651;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+body.dm-app-nav-visible .doc-card > p {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+body.dm-app-nav-visible .doc-card .badge {
+  background: #f0f3fa;
+  color: #53647d;
+}
+body.dm-app-nav-visible .doc-card .doc-icon {
+  width: 44px;
+  height: 44px;
+  background: #edf0ff;
+}
+body.dm-app-nav-visible .dm-document-menu {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  z-index: 3;
+}
+body.dm-app-nav-visible .dm-document-menu > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 38px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid #e2e6ef;
+  background: #fff;
+  color: #586a86;
+  font-size: 11px;
+  font-weight: 770;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+body.dm-app-nav-visible .dm-document-menu > summary::-webkit-details-marker { display: none; }
+body.dm-app-nav-visible .dm-document-menu > summary:hover,
+body.dm-app-nav-visible .dm-document-menu[open] > summary {
+  background: #edf0ff;
+  border-color: #bfc6f4;
+  color: #3931b5;
+}
+body.dm-app-nav-visible .dm-document-menu > summary:focus-visible {
+  outline: 3px solid rgba(79,70,229,.45);
+  outline-offset: 2px;
+}
+body.dm-app-nav-visible .dm-document-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  display: grid;
+  gap: 3px;
+  min-width: 205px;
+  padding: 6px;
+  border: 1px solid #dce2f0;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 15px 35px rgba(21,35,70,.16);
+  z-index: 10;
+}
+body.dm-app-nav-visible .dm-document-menu-panel > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 11px 12px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #36465f;
+  font-size: 12px;
+  font-weight: 760;
+  text-align: left;
+  cursor: pointer;
+}
+body.dm-app-nav-visible .dm-document-menu-panel > button:hover {
+  background: #f0f3ff;
+}
+body.dm-app-nav-visible .dm-document-menu-panel > .dm-document-menu-delete {
+  color: #b42336;
+}
+body.dm-app-nav-visible .dm-document-menu-panel > .dm-document-menu-delete:hover {
+  background: #fff0f2;
+}
+body.dm-app-nav-visible .document-buttons button {
+  min-height: 42px;
+  border-radius: 10px;
+  font-weight: 760;
+}
+body.dm-app-nav-visible .payment-row select,
+body.dm-app-nav-visible .doc-card select {
+  max-width: 100%;
+  min-height: 42px;
+}
+body.dm-app-nav-visible .category.active { font-weight: 770; }
+
+/* Consistent independent tool pages. */
+body.dm-app-nav-visible .fc-page,
+body.dm-app-nav-visible .du-page,
+body.dm-app-nav-visible .smart-mail-page { line-height: 1.55; }
+body.dm-app-nav-visible .fc-hero,
+body.dm-app-nav-visible .du-hero,
+body.dm-app-nav-visible .smart-mail-hero { box-shadow: 0 12px 30px rgba(19,40,83,.1); }
+body.dm-app-nav-visible .fc-panel,
+body.dm-app-nav-visible .fc-invoice,
+body.dm-app-nav-visible .du-results,
+body.dm-app-nav-visible .smart-mail-message {
+  border-radius: 16px;
+  border-color: #dfe6ef;
+}
+body.dm-app-nav-visible .fc-tabs button {
+  font-size: 13px;
+  border-radius: 11px;
+  padding: 10px 14px;
+}
+body.dm-app-nav-visible .fc-tabs button.active {
+  color: #115f58;
+  background: #eaf7f2;
+  border-color: #9dccbd;
+}
+body.dm-app-nav-visible .du-drop {
+  border-width: 2px;
+  border-radius: 18px;
+  background: #fff;
+}
+body.dm-app-nav-visible .du-results { box-shadow: var(--dm-glow); }
+body.dm-app-nav-visible .smart-mail-message { box-shadow: var(--dm-glow); }
+
+/* Mobile bottom navigation and accessible additional-sections drawer. */
+@media (max-width: 1159px) {
+  .dm-mobile-nav { z-index: 48; }
+  .dm-mobile-link { cursor: pointer; font: inherit; font-size: 11px; font-weight: 780; }
+  .dm-mobile-more-trigger {
+    border: 0;
+    background: transparent;
+    color: #77849b;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dm-mobile-more-trigger.is-active { color: #473fc9; }
+  .dm-mobile-more-container {
+    position: fixed;
+    inset: 0;
+    z-index: 47;
+  }
+  .dm-mobile-more-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    border: 0;
+    background: rgba(17,27,48,.34);
+    cursor: pointer;
+  }
+  .dm-mobile-more-sheet {
+    position: absolute;
+    left: max(12px,env(safe-area-inset-left));
+    right: max(12px,env(safe-area-inset-right));
+    bottom: calc(77px + env(safe-area-inset-bottom));
+    max-width: 490px;
+    margin: 0 auto;
+    padding: 18px;
+    border: 1px solid #dfe6f0;
+    border-radius: 21px;
+    background: #fff;
+    box-shadow: 0 15px 55px rgba(14,26,58,.22);
+    color: #1c2e48;
+  }
+  .dm-mobile-more-sheet header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 13px;
+  }
+  .dm-mobile-more-sheet header small {
+    color: #8a96aa;
+    font-size: 10px;
+    font-weight: 840;
+    letter-spacing: .12em;
+  }
+  .dm-mobile-more-sheet h2 {
+    margin: 2px 0 0;
+    color: #243651;
+    font-size: 19px;
+    letter-spacing: -.025em;
+  }
+  .dm-mobile-more-close {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: 1px solid #e2e8f1;
+    border-radius: 11px;
+    background: #f7f9fc;
+    color: #5f718c;
+    cursor: pointer;
+  }
+  .dm-mobile-more-sheet nav { display: grid; gap: 9px; }
+  .dm-mobile-more-sheet nav > a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 69px;
+    padding: 13px;
+    border: 1px solid #e2e9f1;
+    border-radius: 13px;
+    background: #f9faff;
+    color: #243754;
+    text-decoration: none;
+  }
+  .dm-mobile-more-sheet nav > a > span:nth-child(2) { display: grid; flex: 1; gap: 4px; min-width:0; }
+  .dm-mobile-more-sheet nav > a strong { font-size: 13px; }
+  .dm-mobile-more-sheet nav > a small { color: #75839a; font-size: 11px; }
+  .dm-mobile-more-sheet nav > a > svg { color: #a5adc1; }
+  .dm-more-sheet-icon {
+    display: grid;
+    place-items: center;
+    width: 41px;
+    height: 41px;
+    flex: 0 0 41px;
+    border-radius: 12px;
+    background: #e9eeff;
+    color: #4f46e5;
+  }
+  .dm-mobile-more-sheet > p {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin: 15px 0 0;
+    color: #8190a5;
+    font-size: 11px;
+  }
+  body.dm-app-nav-visible:has(.modal-backdrop) .dm-mobile-more-container,
+  body.dm-app-nav-visible:has(.practice-prompt-backdrop) .dm-mobile-more-container {
+    display: none;
+  }
+  body.dm-app-nav-visible .dm-summary-grid { gap: 10px !important; }
+}
+@media (min-width: 1160px) {
+  .dm-mobile-more-container { display: none; }
+}
+@media (min-width: 721px) and (max-width: 1159px) {
+  body.dm-app-nav-visible .smart-home,
+  body.dm-app-nav-visible .dm-quick-actions,
+  body.dm-app-nav-visible .search-wrap,
+  body.dm-app-nav-visible .dm-view-tabs,
+  body.dm-app-nav-visible .dm-summary-grid,
+  body.dm-app-nav-visible .layout {
+    width: min(calc(100% - 52px), 1120px);
+    max-width: 1120px;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+  body.dm-app-nav-visible .dm-view-tabs { padding: 10px 0 !important; }
+  body.dm-app-nav-visible .dm-summary-grid { padding: 0 !important; }
+}
+@media (max-width: 720px) {
+  body.dm-app-nav-visible .topbar {
+    height: 65px;
+    padding: 0 14px !important;
+  }
+  body.dm-app-nav-visible .topbar .brand span { font-size: 20px; }
+  body.dm-app-nav-visible .topbar-actions { gap: 7px; }
+  /* Upload is always one tap away in the bottom bar. Avoid a duplicate. */
+  body.dm-app-nav-visible .topbar-upload { display: none !important; }
+  body.dm-app-nav-visible .topbar-icon-button,
+  body.dm-app-nav-visible .topbar-logout {
+    width: 43px;
+    min-width: 43px;
+    height: 43px;
+    min-height: 43px;
+  }
+  body.dm-app-nav-visible .smart-home,
+  body.dm-app-nav-visible .dm-quick-actions,
+  body.dm-app-nav-visible .search-wrap,
+  body.dm-app-nav-visible .dm-view-tabs,
+  body.dm-app-nav-visible .dm-summary-grid,
+  body.dm-app-nav-visible .layout {
+    width: calc(100% - 30px);
+    max-width: none;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+  body.dm-app-nav-visible .smart-home { margin-top: 15px; margin-bottom: 13px; }
+  body.dm-app-nav-visible .smart-home-welcome {
+    min-height: 0;
+    padding: 20px 17px;
+    border-radius: 17px;
+  }
+  body.dm-app-nav-visible .smart-home-welcome h1 { font-size: clamp(26px,7vw,32px); }
+  body.dm-app-nav-visible .smart-home-welcome p {
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  body.dm-app-nav-visible .smart-home-cards { gap: 9px; }
+  body.dm-app-nav-visible .smart-home-card {
+    min-height: 126px;
+    padding: 12px;
+    border-radius: 15px;
+  }
+  body.dm-app-nav-visible .smart-home-card-icon { width: 34px; height: 34px; }
+  body.dm-app-nav-visible .smart-home-card-label { margin-top: 7px; font-size: 12px; }
+  body.dm-app-nav-visible .smart-home-card strong { font-size: 26px; }
+  body.dm-app-nav-visible .smart-home-card small {
+    padding-top: 5px;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  body.dm-app-nav-visible .today-action-center { padding: 13px; }
+  body.dm-app-nav-visible .smart-home-chat-heading { padding: 16px 13px 10px; }
+  body.dm-app-nav-visible .smart-home-chat-heading h2 { font-size: 18px; }
+  body.dm-app-nav-visible .smart-home-chat-heading p { font-size: 12px; }
+  body.dm-app-nav-visible .smart-home-suggestions button { min-height: 36px; font-size: 12px; }
+  body.dm-app-nav-visible .smart-home-conversation { min-height: 82px; max-height: 310px; }
+  body.dm-app-nav-visible .smart-home-message { font-size: 13px; }
+  body.dm-app-nav-visible .dm-quick-actions { margin-top: 14px; margin-bottom: 17px; }
+  body.dm-app-nav-visible .dm-quick-grid { gap: 9px; }
+  body.dm-app-nav-visible .dm-quick-item { min-height: 80px; padding: 11px; }
+  body.dm-app-nav-visible .dm-quick-copy strong { font-size: 12px; }
+  body.dm-app-nav-visible .dm-quick-copy small { font-size: 11px; }
+  body.dm-app-nav-visible .search-wrap {
+    height: 54px;
+    margin-bottom: 16px !important;
+  }
+  body.dm-app-nav-visible .dm-view-tabs {
+    padding: 0 0 10px !important;
+    margin-bottom: 14px !important;
+  }
+  body.dm-app-nav-visible .dm-view-tabs > button { min-height: 44px; }
+  body.dm-app-nav-visible .dm-summary-grid {
+    padding: 0 !important;
+    gap: 9px !important;
+  }
+  body.dm-app-nav-visible .section-title {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 11px;
+  }
+  body.dm-app-nav-visible .dm-sort-control {
+    justify-content: space-between;
+    width: 100%;
+  }
+  body.dm-app-nav-visible .dm-sort-control select {
+    width: min(200px,65%);
+    min-height: 44px;
+  }
+  body.dm-app-nav-visible .doc-card { padding: 17px; border-radius: 16px; }
+  body.dm-app-nav-visible .dm-document-menu { top: 13px; right: 13px; }
+  body.dm-app-nav-visible .dm-document-menu > summary {
+    min-height: 43px;
+    padding: 9px 11px;
+  }
+  body.dm-app-nav-visible .dm-document-menu-panel { min-width: 190px; }
+  body.dm-app-nav-visible .doc-card .doc-icon {
+    width: 44px;
+    height: 44px;
+  }
+  body.dm-app-nav-visible .document-buttons button { flex: 1 1 auto; min-height: 45px; }
+  body.dm-app-nav-visible .dm-mobile-nav { min-height: 72px; }
+  body.dm-app-nav-visible .smart-mail-back,
+  body.dm-app-nav-visible .smart-mail-refresh { min-height: 44px; }
+  body.dm-app-nav-visible .fc-tabs button { min-height: 44px; font-size: 12px; }
+  body.dm-app-nav-visible .du-drop { min-height: 185px; padding: 23px 14px; }
+  body.dm-app-nav-visible .smart-mail-stat strong { font-size: 24px; }
+}
+@media (max-width: 359px) {
+  body.dm-app-nav-visible .topbar .brand span { font-size: 19px; }
+  body.dm-app-nav-visible .topbar-actions { gap: 4px; }
+  body.dm-app-nav-visible .topbar-icon-button,
+  body.dm-app-nav-visible .topbar-logout { min-width: 40px; width: 40px; }
+  .dm-mobile-link { font-size: 10px; }
+  body.dm-app-nav-visible .dm-quick-item > span:first-child {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.dm-app-nav-visible .doc-card,
+  body.dm-app-nav-visible .dm-document-menu > summary,
+  body.dm-app-nav-visible .dm-side-link {
+    transition: none;
+  }
+  body.dm-app-nav-visible .doc-card:hover { transform: none; }
+}
