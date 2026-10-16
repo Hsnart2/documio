@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Banknote, CalendarClock, CheckCircle2,
-  CircleAlert, FileUp, Landmark, Link2, LoaderCircle, Plus, Receipt,
+  CircleAlert, FileUp, FileText, Landmark, Link2, LoaderCircle, Plus, Receipt,
   RefreshCw, ShieldCheck, Sparkles, TrendingDown, TrendingUp, Wallet, Building2, FolderOpen, Check,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
