@@ -105,7 +105,7 @@ export default function FinancialControlCenter() {
   const [xmlDirection, setXmlDirection] = useState<InvoiceDirection>("expense");
   const [zipProgress,setZipProgress] = useState<null|{
     done:number; total:number; imported:number;received:number;issued:number;
-    duplicates:number;errors:string[];signed:number;skipped:number;
+    duplicates:number;failed:number;errors:string[];signed:number;skipped:number;
     limited:boolean;
   }>(null);
   const [invoiceForm, setInvoiceForm] = useState(blankInvoice);
@@ -625,7 +625,7 @@ export default function FinancialControlCenter() {
           : "Nessuna fattura XML importabile nello ZIP.");
       const outcome={
         done:0,total:zip.files.length,imported:0,received:0,issued:0,
-        duplicates:0,errors:[] as string[],signed:zip.signedP7m,
+        duplicates:0,failed:0,errors:[] as string[],signed:zip.signedP7m,
         skipped:zip.skipped+zip.tooLarge,limited:zip.limited,
       };
       setZipProgress({...outcome});
@@ -641,6 +641,7 @@ export default function FinancialControlCenter() {
             else outcome.issued+=result.count;
           }
         } catch(problem) {
+          outcome.failed++;
           if(outcome.errors.length<8)
             outcome.errors.push(`${invoice.name}: ${problem instanceof Error?problem.message:"XML non riconosciuto"}`);
         } finally {
@@ -649,7 +650,8 @@ export default function FinancialControlCenter() {
         }
       }
       setMessage(`ZIP elaborato: ${outcome.imported} fatture importate (${outcome.received} ricevute, ${outcome.issued} emesse);
-        ${outcome.duplicates} duplicati ignorati. Originali salvati nell'archivio dell'azienda.`);
+        ${outcome.duplicates} duplicati ignorati; ${outcome.failed} XML da verificare.
+        Originali salvati nell'archivio dell'azienda.`);
       if(outcome.imported>0)await loadData(userId,companyId);
     } catch(problem) {
       setError(problem instanceof Error?problem.message:"ZIP non leggibile.");
@@ -989,7 +991,7 @@ export default function FinancialControlCenter() {
                 <span>Ricevute: <b>{zipProgress.received}</b></span>
                 <span>Emesse: <b>{zipProgress.issued}</b></span>
                 <span>Duplicati: <b>{zipProgress.duplicates}</b></span>
-                <span>Non elaborati: <b>{zipProgress.skipped+zipProgress.signed+zipProgress.errors.length}</b></span>
+                <span>Non elaborati: <b>{zipProgress.skipped+zipProgress.signed+zipProgress.failed}</b></span>
               </div>
               {zipProgress.signed>0&&<p>{zipProgress.signed} file firmati .p7m non importati: serve l'XML leggibile.</p>}
               {zipProgress.limited&&<p>ZIP oltre il limite di estrazione: suddividi i file in più ZIP.</p>}
