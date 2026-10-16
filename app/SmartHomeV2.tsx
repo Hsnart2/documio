@@ -522,7 +522,14 @@ export default function SmartHomeV2() {
         </div>
       </div>
 
-      <div className="smart-home-cards">
+      <div className="smart-home-priority-heading">
+        <div>
+          <span>IL TUO RIEPILOGO</span>
+          <h2>Priorità e promemoria</h2>
+        </div>
+        <p>Seleziona una scheda per vedere i dettagli.</p>
+      </div>
+      <div className="smart-home-cards" aria-label="Categorie del riepilogo">
         {cards.map((card) => {
           const Icon = card.icon;
           return (
@@ -530,6 +537,8 @@ export default function SmartHomeV2() {
               type="button"
               key={card.key}
               className={`smart-home-card ${activeCard === card.key ? "active" : ""}`}
+              aria-pressed={activeCard === card.key}
+              aria-controls="dm-home-insights"
               onClick={() => setActiveCard(card.key)}
             >
               <span className="smart-home-card-icon"><Icon size={22} /></span>
@@ -541,7 +550,7 @@ export default function SmartHomeV2() {
         })}
       </div>
 
-      <div className="smart-home-insights">
+      <div className="smart-home-insights" id="dm-home-insights">
         <div className="smart-home-insights-heading">
           <div>
             <span>{cards.find((item) => item.key === activeCard)?.label}</span>
