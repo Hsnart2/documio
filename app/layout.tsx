@@ -15,6 +15,7 @@ import "./push-notifications.css";
 import "./today-action-center.css";
 import "./ios-input-zoom-fix.css";
 import "./documio-ui.css";
+import "./documio-polish.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";

@@ -142,7 +142,10 @@ export default function SmartHomeV2() {
       if (!mount) {
         mount = document.createElement("div");
         mount.id = "documio-smart-home-root";
-        main.insertBefore(mount, hero);
+        // Prima il riepilogo, poi le azioni rapide: una gerarchia chiara
+        // sia su smartphone che su desktop, senza nascondere le funzioni.
+        const quickActions = main.querySelector(":scope > .dm-quick-actions");
+        main.insertBefore(mount, quickActions ?? hero);
       }
 
       document.body.classList.add("smart-home-active");

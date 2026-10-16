@@ -49,7 +49,10 @@ export default function PasskeyControls() {
 
     const refreshTargets = () => {
       setSettingsPanel(signedIn ? findSettingsPanel() : null);
-      setLoginPanel(!signedIn ? document.querySelector<HTMLElement>("main") : null);
+      setLoginPanel(!signedIn
+        ? document.querySelector<HTMLElement>("[data-documio-login-actions]") ??
+          document.querySelector<HTMLElement>("main")
+        : null);
     };
 
     refreshTargets();

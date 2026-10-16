@@ -27,6 +27,8 @@ import {
   CheckCheck,
   Download,
   Mail,
+  MoreHorizontal,
+  Pencil,
   X,
 } from "lucide-react";
 import type {
@@ -42,6 +44,7 @@ import { prepareFileForUpload as prepareUpload } from "@/lib/prepare-upload-file
 
 type Language = "it" | "en";
 type ActiveView = "documents" | "practices";
+type DocumentSort = "recent" | "oldest" | "title" | "expiry";
 type ActiveCategory =
   | DocumentCategory
   | "Tutti"
@@ -956,6 +959,8 @@ export default function Home() {
   const [aiResultIds, setAiResultIds] = useState<string[] | null>(null);
   const [aiSearching, setAiSearching] = useState(false);
   const [activeCategory, setActiveCategory] = useState<ActiveCategory>("Tutti");
+  const [documentSort, setDocumentSort] = useState<DocumentSort>("recent");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [fastUploadAvailable, setFastUploadAvailable] = useState(false);
   const aiKickStarted = useRef(new Set<string>());
@@ -2010,6 +2015,25 @@ export default function Home() {
     return rankedDocuments.map(({ document }) => document);
   }, [documents, query, activeCategory, t, attachments, aiResultIds]);
 
+  // La ricerca mantiene la pertinenza originale dei risultati.
+  const sortedDocuments = useMemo(() => {
+    if (query.trim()) return filtered;
+    const items = [...filtered];
+    if (documentSort === "title") {
+      return items.sort((a, b) => a.title.localeCompare(b.title, language === "it" ? "it" : "en", {
+        sensitivity: "base",
+      }));
+    }
+    if (documentSort === "expiry") {
+      return items.sort((a, b) => (a.expiryDate ?? "9999-12-31").localeCompare(
+        b.expiryDate ?? "9999-12-31",
+      ));
+    }
+    return items.sort((a, b) => documentSort === "oldest"
+      ? Date.parse(a.uploadedAt) - Date.parse(b.uploadedAt)
+      : Date.parse(b.uploadedAt) - Date.parse(a.uploadedAt));
+  }, [filtered, query, documentSort, language]);
+
   async function updateAppointment(
     document: StoredDocument,
     databaseValues: Record<string, string | null>,
@@ -3020,89 +3044,117 @@ export default function Home() {
 
   if (!authReady) {
     return (
-      <main style={{ maxWidth: 420, margin: "80px auto", padding: 24 }}>
-        <h1>DocuMio</h1>
+      <main className="dm-auth-loading" aria-live="polite">
+        <span className="dm-auth-mark"><FileText size={23} /></span>
+        <strong>DocuMio</strong>
+        <p>{language === "it" ? "Sto preparando il tuo spazio…" : "Preparing your workspace…"}</p>
       </main>
     );
   }
 
   if (!userId) {
     return (
-      <main style={{ maxWidth: 420, margin: "80px auto", padding: 24 }}>
-        <div
-          style={{ display: "flex", justifyContent: "space-between", gap: 12 }}
-        >
-          <h1>{t.loginTitle}</h1>
-          <button
-            type="button"
-            onClick={() => setLanguage(language === "it" ? "en" : "it")}
-            style={{ height: 42, padding: "0 12px" }}
-          >
-            {language === "it" ? "EN" : "IT"}
-          </button>
-        </div>
-
-        <input
-          type="email"
-          placeholder={t.email}
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          style={{ width: "100%", padding: 12, marginBottom: 12 }}
-        />
-
-        <input
-          type="password"
-          placeholder={t.password}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") signIn();
-          }}
-          style={{ width: "100%", padding: 12, marginBottom: 12 }}
-        />
-
-        <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 9,
-            margin: "4px 0 14px",
-            fontSize: 14,
-            lineHeight: 1.45,
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={privacyAccepted}
-            onChange={(event) => setPrivacyAccepted(event.target.checked)}
-            style={{ marginTop: 3 }}
-          />
-          <span>
-            {language === "it"
-              ? "Ho letto e accetto "
-              : "I have read and accept the "}
-            <a href="/privacy" target="_blank">
-              Privacy Policy
-            </a>
-            {language === "it" ? " e i " : " and "}
-            <a href="/terms" target="_blank">
-              {language === "it" ? "Termini beta" : "beta Terms"}
-            </a>
-            .
+      <main id="dm-main-content" className="dm-auth-layout">
+        <section className="dm-auth-intro" aria-label="Benvenuto su DocuMio">
+          <div className="dm-auth-logo">
+            <span className="dm-auth-mark"><FileText size={26} /></span>
+            <strong>DocuMio</strong>
+          </div>
+          <span className="dm-auth-kicker">
+            <Sparkles size={16} /> {language === "it" ? "Il tuo spazio documentale" : "Your document workspace"}
           </span>
-        </label>
+          <h1>
+            {language === "it"
+              ? "Meno disordine. Più tempo per ciò che conta."
+              : "Less clutter. More time for what matters."}
+          </h1>
+          <p>
+            {language === "it"
+              ? "Documenti, scadenze e pratiche organizzati in un unico posto, con l'aiuto dell'intelligenza artificiale."
+              : "Organize documents, deadlines and cases in one place, with AI to help you."}
+          </p>
+          <div className="dm-auth-highlights">
+            <div><FileText size={19} /><span>{language === "it" ? "Archivio privato e ricercabile" : "Private, searchable archive"}</span></div>
+            <div><CalendarDays size={19} /><span>{language === "it" ? "Scadenze e pagamenti sotto controllo" : "Deadlines and payments at a glance"}</span></div>
+            <div><Bot size={19} /><span>{language === "it" ? "Un assistente per trovare ciò che ti serve" : "An assistant to find what you need"}</span></div>
+          </div>
+        </section>
 
-        <button onClick={signIn} style={{ width: "100%", padding: 12 }}>
-          {t.signIn}
-        </button>
-
-        <button
-          onClick={signUp}
-          disabled={!privacyAccepted}
-          style={{ width: "100%", padding: 12, marginTop: 10 }}
-        >
-          {t.signUp}
-        </button>
+        <section className="dm-auth-panel" aria-labelledby="dm-auth-title">
+          <div className="dm-auth-panel-heading">
+            <div>
+              <span>{language === "it" ? "BENTORNATO" : "WELCOME BACK"}</span>
+              <h2 id="dm-auth-title">{t.loginTitle}</h2>
+            </div>
+            <button
+              type="button"
+              className="dm-auth-language"
+              onClick={() => setLanguage(language === "it" ? "en" : "it")}
+              aria-label={language === "it" ? "Switch to English" : "Passa all'italiano"}
+            >
+              {language === "it" ? "EN" : "IT"}
+            </button>
+          </div>
+          <p className="dm-auth-subtitle">
+            {language === "it"
+              ? "Accedi per ritrovare il tuo archivio e continuare da dove eri rimasto."
+              : "Sign in to access your archive and pick up where you left off."}
+          </p>
+          <form className="dm-auth-form" onSubmit={(event) => {
+            event.preventDefault();
+            void signIn();
+          }}>
+          <div className="dm-auth-fields">
+            <label>
+              <span>{t.email}</span>
+              <input
+                type="email"
+                autoComplete="email"
+                placeholder={language === "it" ? "La tua email" : "Your email"}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>{t.password}</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                placeholder={language === "it" ? "La tua password" : "Your password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="dm-auth-consent">
+            <input
+              type="checkbox"
+              checked={privacyAccepted}
+              onChange={(event) => setPrivacyAccepted(event.target.checked)}
+            />
+            <span>
+              {language === "it" ? "Ho letto e accetto " : "I have read and accept the "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+              {language === "it" ? " e i " : " and "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer">
+                {language === "it" ? "Termini beta" : "beta Terms"}
+              </a>.
+            </span>
+          </label>
+          <div className="dm-auth-actions">
+            <button type="submit" className="dm-auth-sign-in">
+              {t.signIn}
+            </button>
+            <button type="button" className="dm-auth-sign-up" onClick={signUp} disabled={!privacyAccepted}>
+              {t.signUp}
+            </button>
+          </div>
+          </form>
+          <div data-documio-login-actions className="dm-auth-passkey-slot" />
+          <p className="dm-auth-security"><ShieldCheck size={16} />
+            {language === "it" ? "Il tuo archivio rimane privato." : "Your archive stays private."}
+          </p>
+        </section>
       </main>
     );
   }
@@ -3119,6 +3171,21 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="topbar-icon-button dm-topbar-search-button"
+            aria-label={language === "it" ? "Cerca nell'archivio" : "Search the archive"}
+            title={language === "it" ? "Cerca documenti" : "Search documents"}
+            onClick={() => {
+              setActiveView("documents");
+              document.getElementById("dm-search")?.scrollIntoView({
+                behavior: "smooth", block: "center",
+              });
+              searchInputRef.current?.focus({ preventScroll: true });
+            }}
+          >
+            <Search size={19} />
+          </button>
           <a
             className="dm-legacy-control-link"
             href="/controllo"
@@ -3286,9 +3353,11 @@ export default function Home() {
         </button>
       </section>
 
-      <section className="search-wrap">
+      <section className="search-wrap" id="dm-search" role="search" aria-label={language === "it" ? "Cerca documenti" : "Search documents"}>
         <Search size={20} />
         <input
+          ref={searchInputRef}
+          aria-label={t.searchPlaceholder}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -3528,33 +3597,60 @@ export default function Home() {
                   {filtered.length === 1 ? t.documentFound : t.documentsFound}
                 </p>
               </div>
+              <label className="dm-sort-control">
+                <span>{language === "it" ? "Ordina per" : "Sort by"}</span>
+                <select
+                  value={documentSort}
+                  disabled={Boolean(query.trim())}
+                  onChange={(event) => setDocumentSort(event.target.value as DocumentSort)}
+                  aria-label={language === "it" ? "Ordina documenti" : "Sort documents"}
+                >
+                  <option value="recent">{language === "it" ? "Più recenti" : "Newest first"}</option>
+                  <option value="oldest">{language === "it" ? "Più vecchi" : "Oldest first"}</option>
+                  <option value="title">{language === "it" ? "Nome A-Z" : "Name A-Z"}</option>
+                  <option value="expiry">{language === "it" ? "Scadenza vicina" : "Soonest due"}</option>
+                </select>
+              </label>
             </div>
 
             <div className="grid">
-              {filtered.map((doc) => (
+              {sortedDocuments.map((doc) => (
                 <article
                   className="doc-card"
                   key={doc.id}
                   data-document-id={doc.id}
                 >
-                  <div className="doc-card-actions">
-                    <button
-                      type="button"
-                      className="edit-button"
-                      onClick={() => setEditingDocument(doc)}
-                      aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
-                    >
-                      {language === "it" ? "Modifica" : "Edit"}
-                    </button>
-                    <button
-                      type="button"
-                      className="delete-button"
-                      onClick={() => deleteDocument(doc.id)}
-                      aria-label={`${t.delete} ${doc.title}`}
-                    >
-                      {t.delete}
-                    </button>
-                  </div>
+                  <details className="dm-document-menu">
+                    <summary aria-label={`${language === "it" ? "Gestisci" : "Manage"} ${doc.title}`}>
+                      <MoreHorizontal size={19} />
+                      <span>{language === "it" ? "Gestisci" : "Manage"}</span>
+                    </summary>
+                    <div className="dm-document-menu-panel">
+                      <button
+                        type="button"
+                        className="dm-document-menu-edit"
+                        onClick={(event) => {
+                          (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                          setEditingDocument(doc);
+                        }}
+                        aria-label={`${language === "it" ? "Modifica" : "Edit"} ${doc.title}`}
+                      >
+                        <Pencil size={16} />
+                        {language === "it" ? "Modifica documento" : "Edit document"}
+                      </button>
+                      <button
+                        type="button"
+                        className="dm-document-menu-delete"
+                        onClick={(event) => {
+                          (event.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                          void deleteDocument(doc.id);
+                        }}
+                        aria-label={`${t.delete} ${doc.title}`}
+                      >
+                        <Trash2 size={16} /> {t.delete}
+                      </button>
+                    </div>
+                  </details>
 
                   <div className="doc-icon">
                     <FileText size={24} />

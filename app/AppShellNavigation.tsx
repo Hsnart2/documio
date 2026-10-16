@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { usePathname } from "next/navigation";
 import {
   ArrowUpRight,
@@ -9,6 +9,8 @@ import {
   House,
   Landmark,
   Mail,
+  Grid2X2,
+  X,
   Plus,
   ShieldCheck,
   Sparkles,
@@ -47,6 +49,9 @@ export default function AppShellNavigation() {
   const pathname = usePathname();
   const [signedIn, setSignedIn] = useState(false);
   const [homeTab, setHomeTab] = useState<Destination>("home");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+  const moreWasOpen = useRef(false);
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -71,6 +76,27 @@ export default function AppShellNavigation() {
       window.removeEventListener("documio:view", refresh);
     };
   }, [pathname]);
+
+  // Chiudi il menu quando cambi schermata o premi Esc.
+  useEffect(() => { setMoreOpen(false); }, [pathname]);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [moreOpen]);
+
+  useEffect(() => {
+    if (moreOpen) {
+      moreWasOpen.current = true;
+      document.querySelector<HTMLButtonElement>(".dm-mobile-more-close")?.focus();
+    } else if (moreWasOpen.current) {
+      moreWasOpen.current = false;
+      moreTriggerRef.current?.focus();
+    }
+  }, [moreOpen]);
 
   const visible = signedIn && supportedRoutes.has(pathname);
   useEffect(() => {
@@ -153,8 +179,54 @@ export default function AppShellNavigation() {
         <div className="dm-sidebar-private"><ShieldCheck size={16}/> Area privata e protetta</div>
       </aside>
       <nav className="dm-mobile-nav" aria-label="Navigazione principale">
-        {[links[0],links[1],links[3],links[4],links[5]].map((link)=>renderLink(link,true))}
+        {[links[0], links[1], links[3], links[4]].map((link) => renderLink(link, true))}
+        <button
+          type="button"
+          className={`dm-mobile-link dm-mobile-more-trigger ${moreOpen || selected === "practices" || selected === "email" ? "is-active" : ""}`}
+          ref={moreTriggerRef}
+          aria-label="Altre sezioni"
+          aria-expanded={moreOpen}
+          aria-controls="dm-mobile-more-panel"
+          onClick={() => setMoreOpen((open) => !open)}
+        >
+          <span className="dm-nav-icon">{moreOpen ? <X size={21} /> : <Grid2X2 size={21} />}</span>
+          <span className="dm-nav-label">Altro</span>
+        </button>
       </nav>
+      {moreOpen && (
+        <div className="dm-mobile-more-container">
+          <button
+            type="button"
+            className="dm-mobile-more-scrim"
+            aria-label="Chiudi le altre sezioni"
+            onClick={() => setMoreOpen(false)}
+          />
+          <section className="dm-mobile-more-sheet" role="dialog" aria-modal="true" aria-labelledby="dm-mobile-more-title" id="dm-mobile-more-panel">
+            <header>
+              <div>
+                <small>DOCUMIO</small>
+                <h2 id="dm-mobile-more-title">Altre sezioni</h2>
+              </div>
+              <button type="button" className="dm-mobile-more-close" aria-label="Chiudi menu" onClick={() => setMoreOpen(false)}>
+                <X size={20} />
+              </button>
+            </header>
+            <nav aria-label="Altre sezioni di DocuMio">
+              <a href={links[2].href} onClick={(event) => { setMoreOpen(false); follow(event, links[2]); }}>
+                <span className="dm-more-sheet-icon"><FolderKanban size={21} /></span>
+                <span><strong>Pratiche</strong><small>Documenti e attività collegate</small></span>
+                <ArrowUpRight size={17} />
+              </a>
+              <a href={links[5].href} onClick={() => setMoreOpen(false)}>
+                <span className="dm-more-sheet-icon"><Mail size={21} /></span>
+                <span><strong>Posta intelligente</strong><small>Gestisci e organizza le email</small></span>
+                <ArrowUpRight size={17} />
+              </a>
+            </nav>
+            <p><ShieldCheck size={15} /> I tuoi documenti rimangono privati.</p>
+          </section>
+        </div>
+      )}
     </>
   );
 }
