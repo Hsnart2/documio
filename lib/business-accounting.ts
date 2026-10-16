@@ -47,7 +47,7 @@ const rules: Array<{ category: CostCategory; rx: RegExp; reason: string }> = [
   {category:"assicurazioni",rx:/polizza|assicurazion|premio rca|\brc auto\b/i,reason:"Riferimento a polizze assicurative"},
   {category:"interessi",rx:/interessi passivi|spese bancarie|commissioni bancarie|oneri finanziari|canone banc/i,reason:"Riferimento a oneri finanziari"},
   {category:"marketing",rx:/pubblicit|advertis|marketing|social ads|promozion|campagna ads/i,reason:"Riferimento a promozione/pubblicità"},
-  {category:"software",rx:/licenza software|\bsaas\b|hosting|dominio web|cloud|abbonamento software/i,reason:"Riferimento a software e servizi digitali"},
+  {category:"software",rx:/\bsoftware\b|\bsaas\b|hosting|dominio web|cloud|applicativi|licenze digitali/i,reason:"Riferimento a software e servizi digitali"},
   {category:"acquisti_merci",rx:/acquist|fornitura|materie prime|materiale|cartone|carta|imballaggi|consumabili|prodotto/i,reason:"Riferimento ad acquisti o materiali"},
   {category:"rimborsi",rx:/rimborso|storno|restituzione|nota di credito/i,reason:"Riferimento a rimborso/storno: verificare il segno"},
 ];
