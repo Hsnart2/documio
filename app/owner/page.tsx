@@ -81,7 +81,7 @@ function downloadCustomers(items:Customer[],period:number) {
 function Trend({series,metric}:{series:Day[];metric:"active"|"uploads"|"api_calls"}) {
   const maximum=Math.max(1,...series.map(x=>x[metric]||0));
   return <div className="own-trend">
-    <div className="own-chart" role="img" aria-label="Andamento giornaliero, "+metric}>
+    <div className="own-chart" role="img" aria-label={"Andamento giornaliero: "+metric}}>
       {series.map(point=><span key={point.day} className="own-daybar"
         title={point.day+": "+num(point[metric])} style={{height:Math.max(3,100*point[metric]/maximum)+"%"}}/>)}
     </div>
