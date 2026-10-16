@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowRight,
@@ -111,8 +111,11 @@ export default function SmartHomeV2() {
   const [asking, setAsking] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [error, setError] = useState("");
+  const assistantEpoch = useRef(0);
 
   useEffect(() => {
+    assistantEpoch.current++;
+    setAsking(false);
     setMessages([]);
     setInput("");
     setError("");
@@ -392,7 +395,7 @@ export default function SmartHomeV2() {
         : summary.advice;
 
   const openDocument = async (documentId: string) => {
-    const document = documents.find((item) => item.id === documentId);
+    const document = visibleDocuments.find((item) => item.id === documentId);
     if (!document?.storage_path) return;
     const supabase = getSupabaseClient();
     if (!supabase) return;
@@ -437,6 +440,7 @@ export default function SmartHomeV2() {
   const ask = async (question?: string) => {
     const clean = String(question ?? input).trim();
     if (!clean || asking) return;
+    const epoch = assistantEpoch.current;
     setMessages((current) => [
       ...current,
       { id: crypto.randomUUID(), role: "user", text: clean },
@@ -462,6 +466,7 @@ export default function SmartHomeV2() {
         body: JSON.stringify({ question: clean, language: "it", companyId }),
       });
       const result = await response.json();
+      if (epoch !== assistantEpoch.current) return;
       if (!response.ok) throw new Error(result.error || "Risposta non disponibile.");
 
       setMessages((current) => [
@@ -474,13 +479,14 @@ export default function SmartHomeV2() {
         },
       ]);
     } catch (requestError) {
+      if (epoch !== assistantEpoch.current) return;
       setError(
         requestError instanceof Error
           ? requestError.message
           : "Non riesco a rispondere.",
       );
     } finally {
-      setAsking(false);
+      if (epoch === assistantEpoch.current) setAsking(false);
     }
   };
 
