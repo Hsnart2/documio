@@ -5,6 +5,10 @@ export type InvoiceRow = {
   user_id: string;
   direction: InvoiceDirection;
   source: "manual" | "xml";
+  company_id?: string | null;
+  cost_category?: string | null;
+  category_status?: "suggested" | "needs_review" | "confirmed";
+  vat_amount?: number | null;
   invoice_number: string;
   document_id: string | null;
   issue_date: string;
@@ -17,6 +21,9 @@ export type InvoiceRow = {
 };
 export type MovementRow = {
   id: string;
+  company_id?: string | null;
+  suggested_category?: string | null;
+  category_status?: "suggested" | "needs_review" | "confirmed";
   booking_date: string;
   amount: number;
   currency: string;
@@ -27,12 +34,14 @@ export type MovementRow = {
 };
 export type MatchRow = {
   id: string;
+  company_id?: string | null;
   invoice_id: string;
   transaction_id: string;
   allocated_amount: number;
 };
 export type DeadlineRow = {
   id: string;
+  company_id?: string | null;
   category: "bollo" | "multa" | "imposta" | "assicurazione" | "contratto" | "fattura" | "altro";
   title: string;
   due_date: string;
@@ -200,6 +209,14 @@ export function parseFatturaPaXml(xml: string, direction: InvoiceDirection) {
     const currency = contentNamed(doc, "Divisa").toUpperCase() || "EUR";
     const amount = decimal(contentNamed(doc, "ImportoTotaleDocumento"));
     const expiry = contentNamed(body, "DataScadenzaPagamento");
+    // L'IVA è solo quella esposta nei riepiloghi XML: nessuna
+    // aliquota o detraibilità viene indovinata dall'app.
+    const taxSummaries = [...body.getElementsByTagName("*")]
+      .filter((node) => node.localName === "DatiRiepilogo");
+    const taxes = taxSummaries.map((item) => decimal(contentNamed(item, "Imposta")));
+    const vat_amount = taxes.length && taxes.every((item) => item != null)
+      ? Math.round(taxes.reduce((sum, item) => sum + Number(item ?? 0), 0) * 100) / 100
+      : null;
     if (!invoice_number || !issue_date || amount === null || amount <= 0 ||
       !/^[A-Z]{3}$/.test(currency)) {
       throw new Error("Numero, data, valuta o totale non validi nella fattura: verifica l'originale.");
@@ -208,7 +225,7 @@ export function parseFatturaPaXml(xml: string, direction: InvoiceDirection) {
     return {
       direction, source: "xml" as const, invoice_number, issue_date,
       due_date: dateIso(expiry), counterparty: counterparty.name,
-      vat_number: counterparty.vat || null, amount,
+      vat_number: counterparty.vat || null, amount, vat_amount,
       currency, notes: "Importata dai dati XML FatturaPA, da verificare.",
     };
   });
