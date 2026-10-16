@@ -3100,6 +3100,10 @@ export default function Home() {
               ? "Accedi per ritrovare il tuo archivio e continuare da dove eri rimasto."
               : "Sign in to access your archive and pick up where you left off."}
           </p>
+          <form className="dm-auth-form" onSubmit={(event) => {
+            event.preventDefault();
+            void signIn();
+          }}>
           <div className="dm-auth-fields">
             <label>
               <span>{t.email}</span>
@@ -3119,9 +3123,6 @@ export default function Home() {
                 placeholder={language === "it" ? "La tua password" : "Your password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") signIn();
-                }}
               />
             </label>
           </div>
@@ -3141,13 +3142,14 @@ export default function Home() {
             </span>
           </label>
           <div className="dm-auth-actions">
-            <button type="button" className="dm-auth-sign-in" onClick={signIn}>
+            <button type="submit" className="dm-auth-sign-in">
               {t.signIn}
             </button>
             <button type="button" className="dm-auth-sign-up" onClick={signUp} disabled={!privacyAccepted}>
               {t.signUp}
             </button>
           </div>
+          </form>
           <div data-documio-login-actions className="dm-auth-passkey-slot" />
           <p className="dm-auth-security"><ShieldCheck size={16} />
             {language === "it" ? "Il tuo archivio rimane privato." : "Your archive stays private."}
