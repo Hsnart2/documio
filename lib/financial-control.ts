@@ -184,6 +184,35 @@ function xmlCounterparty(element: Element | null) {
   const vat = contentNamed(element, "IdCodice") || contentNamed(element, "CodiceFiscale");
   return { name: name.slice(0,220), vat: vat.slice(0,30) };
 }
+/**
+ * Uno ZIP misto deve stabilire il verso tramite la P. IVA del proprietario.
+ * Se entrambe o nessuna delle parti coincidono, NON creare una fattura.
+ */
+export function detectFatturaPaDirection(
+  xml: string, selectedCompanyVat: string,
+): InvoiceDirection {
+  if (typeof DOMParser === "undefined")
+    throw new Error("Lettura XML disponibile nel browser.");
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  if (document.getElementsByTagName("parsererror").length)
+    throw new Error("XML non valido: impossibile identificare il verso.");
+  const root = document.documentElement;
+  const header = root && firstNamed(root, "FatturaElettronicaHeader");
+  if (!header) throw new Error("File XML non riconosciuto come FatturaPA.");
+  const own = (value:string) => value.toUpperCase().replace(/[^A-Z0-9]/g,"")
+    .replace(/^IT(?=\d{11}$)/,"");
+  const normalized = own(selectedCompanyVat);
+  if (!normalized || normalized.length < 8)
+    throw new Error("Partita IVA aziendale mancante o non valida.");
+  const seller = xmlCounterparty(firstNamed(header, "CedentePrestatore"));
+  const buyer = xmlCounterparty(firstNamed(header, "CessionarioCommittente"));
+  const sellerMatch = own(seller.vat) === normalized;
+  const buyerMatch = own(buyer.vat) === normalized;
+  if (sellerMatch === buyerMatch)
+    throw new Error("Non riesco a stabilire se la fattura sia emessa o ricevuta: verifica le partite IVA.");
+  return sellerMatch ? "income" : "expense";
+}
+
 export function parseFatturaPaXml(xml: string, direction: InvoiceDirection,
   expectedOwnerVat?: string | null) {
   if (typeof DOMParser === "undefined") throw new Error("Lettura XML disponibile dal browser.");
