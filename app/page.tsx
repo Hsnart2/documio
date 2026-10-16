@@ -3257,7 +3257,8 @@ export default function Home() {
           <small>{language === "it" ? "Tutto organizzato in un unico posto" : "Everything in one place"}</small>
         </div>
         <div className="dm-quick-grid">
-          <a href="/carica" className="dm-quick-item dm-quick-upload">
+          <a href={companyId ? `/carica?company=${encodeURIComponent(companyId)}` : "/carica"}
+            className="dm-quick-item dm-quick-upload">
             <span><Upload size={21} /></span>
             <span className="dm-quick-copy">
               <strong>{language === "it" ? "Carica documenti" : "Upload files"}</strong>
@@ -3273,7 +3274,8 @@ export default function Home() {
             </span>
             <span className="dm-quick-arrow" aria-hidden="true">→</span>
           </button>
-          <a href="/controllo" className="dm-quick-item dm-quick-finance">
+          <a href={companyId ? `/controllo?company=${encodeURIComponent(companyId)}` : "/controllo"}
+            className="dm-quick-item dm-quick-finance">
             <span><Landmark size={21} /></span>
             <span className="dm-quick-copy">
               <strong>{language === "it" ? "Controllo e scadenze" : "Finance & deadlines"}</strong>
@@ -3289,6 +3291,30 @@ export default function Home() {
             </span>
             <span className="dm-quick-arrow" aria-hidden="true">→</span>
           </a>
+        </div>
+      </section>
+
+      <section className="dm-workspace-switch" aria-label={language==="it"?"Archivio corrente":"Current archive"}>
+        <div className="dm-workspace-copy">
+          <span><Building2 size={19}/></span>
+          <div>
+            <small>{language==="it"?"STAI LAVORANDO IN":"CURRENT WORKSPACE"}</small>
+            <strong>{activeCompanyName ?? (language==="it"?"Archivio personale":"Personal archive")}</strong>
+            <p>{language==="it"
+              ? "I documenti delle altre aziende non compaiono in questa vista."
+              : "Documents from other workspaces are kept separate."}</p>
+          </div>
+        </div>
+        <div className="dm-workspace-controls">
+          <select aria-label={language==="it"?"Seleziona archivio":"Select workspace"}
+            value={companyId??""} disabled={!companyReady}
+            onChange={(event)=>changeCompany(event.target.value||null)}>
+            <option value="">{language==="it"?"Personale":"Personal"}</option>
+            {companies.map((company)=><option key={company.id} value={company.id}>
+              {company.legal_name}</option>)}
+          </select>
+          <a href="/aziende"><Plus size={16}/>
+            {language==="it"?"Crea azienda":"New company"}</a>
         </div>
       </section>
 
@@ -3534,7 +3560,7 @@ export default function Home() {
             >
               <FileText size={20} />
               {t.allDocuments}
-              <span>{documents.length}</span>
+              <span>{workspaceDocuments.length}</span>
             </button>
 
             {categories.map((category) => (
@@ -3551,7 +3577,7 @@ export default function Home() {
                 {t.categories[category.name]}
                 <span>
                   {
-                    documents.filter(
+                    workspaceDocuments.filter(
                       (document) => document.category === category.name,
                     ).length
                   }
