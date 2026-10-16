@@ -295,6 +295,7 @@ export default function BatchUploadPage() {
               const url=new URL(window.location.href);
               if(next)url.searchParams.set("company",next); else url.searchParams.delete("company");
               window.history.replaceState(null,"",url);
+              window.dispatchEvent(new Event("documio:workspace"));
             }}>
               <option value="">Personale</option>
               {companies.map((company)=><option key={company.id} value={company.id}>
