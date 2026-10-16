@@ -14,6 +14,7 @@ import "./practice-attention.css";
 import "./push-notifications.css";
 import "./today-action-center.css";
 import "./ios-input-zoom-fix.css";
+import "./documio-ui.css";
 import PracticeVisibility from "./PracticeVisibility";
 import PasskeyControls from "./PasskeyControls";
 import GmailSettingsLink from "./GmailSettingsLink";
@@ -30,6 +31,7 @@ import PushNotificationControls from "./PushNotificationControls";
 import PushDeepLinkHandler from "./PushDeepLinkHandler";
 import PushForegroundDeduper from "./PushForegroundDeduper";
 import TodayActionCenter from "./TodayActionCenter";
+import AppShellNavigation from "./AppShellNavigation";
 
 export const metadata: Metadata = {
   title: "DocuMio",
@@ -67,6 +69,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="it">
       <body>
         <script dangerouslySetInnerHTML={{ __html: uiModeBootstrap }} />
+        <AppShellNavigation />
         {children}
         <UiModeController />
         <SmartHomeAuthGuard />
