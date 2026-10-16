@@ -197,4 +197,109 @@ grant all on public.financial_accounting_records to service_role;
 create index if not exists financial_records_workspace_idx
   on public.financial_accounting_records(user_id,company_id,record_type,created_at desc);
 
+-- I riferimenti pratica/documento non devono attraversare archivi.
+-- Trigger anche sulle modifiche (non solo sul primo collegamento).
+create or replace function public.documio_document_practice_scope_guard()
+returns trigger language plpgsql security invoker set search_path=public as $$
+declare practice_owner uuid; practice_scope uuid;
+begin
+  if new.company_id is not null and new.user_id is null then
+    raise exception 'L archivio aziendale richiede il proprietario';
+  end if;
+  if new.practice_id is not null then
+    select user_id, company_id into practice_owner, practice_scope
+    from public.practices where id = new.practice_id;
+    if practice_owner is distinct from new.user_id or
+       practice_scope is distinct from new.company_id then
+      raise exception 'Documento e pratica appartengono ad archivi diversi';
+    end if;
+  end if;
+  return new;
+end; $$;
+revoke all on function public.documio_document_practice_scope_guard() from public,anon;
+drop trigger if exists documio_document_practice_scope_guard on public.documents;
+create trigger documio_document_practice_scope_guard
+  before insert or update on public.documents
+  for each row execute function public.documio_document_practice_scope_guard();
+
+create or replace function public.documio_practice_company_change_guard()
+returns trigger language plpgsql security invoker set search_path=public as $$
+begin
+  if old.company_id is distinct from new.company_id and
+     exists(select 1 from public.documents where practice_id=old.id) then
+    raise exception 'Scollega i documenti prima di spostare la pratica';
+  end if;
+  return new;
+end; $$;
+revoke all on function public.documio_practice_company_change_guard() from public,anon;
+create trigger documio_practice_company_change_guard
+  before update of company_id on public.practices
+  for each row execute function public.documio_practice_company_change_guard();
+
+create or replace function public.documio_financial_scope_change_guard()
+returns trigger language plpgsql security invoker set search_path=public as $$
+begin
+  if old.company_id is distinct from new.company_id then
+    if tg_table_name='financial_invoices' and
+      exists(select 1 from public.financial_matches where invoice_id=old.id) then
+      raise exception 'Non spostare fatture con pagamenti riconciliati';
+    end if;
+    if tg_table_name='financial_transactions' and
+      exists(select 1 from public.financial_matches where transaction_id=old.id) then
+      raise exception 'Non spostare movimenti con abbinamenti registrati';
+    end if;
+  end if;
+  return new;
+end; $$;
+revoke all on function public.documio_financial_scope_change_guard() from public,anon;
+create trigger documio_invoice_scope_change_guard
+  before update of company_id on public.financial_invoices
+  for each row execute function public.documio_financial_scope_change_guard();
+create trigger documio_transaction_scope_change_guard
+  before update of company_id on public.financial_transactions
+  for each row execute function public.documio_financial_scope_change_guard();
+
+-- Le revisioni AI dei contratti sono separate per azienda e proprietario.
+-- L'utente può consultare i passaggi individuati, senza confonderli
+-- con un parere legale asseverato o con una fonte normativa verificata.
+create table if not exists public.financial_contract_reviews (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  company_id uuid,
+  document_id uuid not null unique references public.documents(id) on delete cascade,
+  review_data jsonb not null check (jsonb_typeof(review_data)='object'),
+  model_name text not null default 'gpt-5-mini',
+  status text not null default 'needs_review'
+    check(status in ('needs_review','checked')),
+  reviewed_at timestamptz not null default now(),
+  foreign key (company_id,user_id)
+    references public.financial_companies(id,user_id) on delete restrict
+);
+create or replace function public.documio_contract_review_scope_guard()
+returns trigger language plpgsql security invoker set search_path=public as $$
+declare doc_user uuid; doc_company uuid;
+begin
+  select user_id,company_id into doc_user,doc_company
+    from public.documents where id=new.document_id;
+  if doc_user is distinct from new.user_id or
+     doc_company is distinct from new.company_id then
+    raise exception 'La revisione riguarda un documento di altro archivio';
+  end if;
+  return new;
+end; $$;
+revoke all on function public.documio_contract_review_scope_guard() from public,anon;
+create trigger documio_contract_review_scope_guard
+  before insert or update on public.financial_contract_reviews
+  for each row execute function public.documio_contract_review_scope_guard();
+alter table public.financial_contract_reviews enable row level security;
+create policy financial_contract_reviews_own on public.financial_contract_reviews
+  for all to authenticated
+  using((select auth.uid())=user_id)
+  with check((select auth.uid())=user_id);
+revoke all on public.financial_contract_reviews from anon,authenticated;
+grant select,insert,update,delete on public.financial_contract_reviews to authenticated;
+grant all on public.financial_contract_reviews to service_role;
+create index if not exists financial_contract_reviews_owner_idx
+  on public.financial_contract_reviews(user_id,company_id,reviewed_at desc);
+
 commit;
