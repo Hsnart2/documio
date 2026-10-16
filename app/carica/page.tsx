@@ -212,7 +212,7 @@ export default function BatchUploadPage() {
   const active=entries.filter((item)=>
     ["pending","preparing","uploading","saving"].includes(item.stage)).length;
 
-  return <main className="du-page">
+  return <main id="dm-main-content" className="du-page">
     <header className="du-header">
       <a href="/" className="du-back"><ArrowLeft size={18}/> Torna a DocuMio</a>
       <span className="du-secure"><ShieldCheck size={16}/> Archivio privato</span>
