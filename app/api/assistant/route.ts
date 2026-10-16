@@ -192,6 +192,7 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => null)) as {
       question?: string;
       language?: "it" | "en";
+      companyId?: string | null;
     } | null;
     const question = String(body?.question ?? "").trim();
     const language = body?.language === "en" ? "en" : "it";
@@ -222,18 +223,38 @@ export async function POST(request: Request) {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
+    // L'AI deve leggere SOLO l'ambito richiesto, non altri archivi
+    // dello stesso titolare. Il service role bypassa RLS: verificare
+    // esplicitamente che l'azienda appartenga all'utente autenticato.
+    const requestedCompany = body?.companyId ?? null;
+    if (requestedCompany !== null &&
+      (typeof requestedCompany !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedCompany))) {
+      return NextResponse.json({ error: "Archivio aziendale non valido." }, { status: 400 });
+    }
+    if (requestedCompany) {
+      const { data: selectedCompany, error: companyError } = await admin
+        .from("financial_companies").select("id")
+        .eq("user_id", user.id).eq("id", requestedCompany).maybeSingle();
+      if (companyError || !selectedCompany)
+        return NextResponse.json({ error: "Azienda non accessibile." }, { status: 403 });
+    }
+    const inWorkspace = (query: any) => requestedCompany
+      ? query.eq("company_id", requestedCompany)
+      : query.is("company_id", null);
+
     const [practiceResult, documentResult, attachmentResult] = await Promise.all([
-      admin
+      inWorkspace(admin
         .from("practices")
         .select("id,title,practice_type,description,status,opened_at")
-        .eq("user_id", user.id)
+        .eq("user_id", user.id))
         .limit(250),
-      admin
+      inWorkspace(admin
         .from("documents")
         .select(
           "id,practice_id,title,file_name,storage_path,category,summary,keywords,expiry_date,payment_status,total_amount,paid_amount,remaining_amount,payment_method",
         )
-        .eq("user_id", user.id)
+        .eq("user_id", user.id))
         .limit(1000),
       admin
         .from("document_attachments")
