@@ -4,6 +4,7 @@ begin;
 
 alter table public.documents
   add column if not exists file_sha256 text,
+  add column if not exists file_hash_checked_at timestamptz,
   add column if not exists duplicate_of uuid references public.documents(id) on delete set null;
 alter table public.documents drop constraint if exists documents_file_sha256_format_check;
 alter table public.documents add constraint documents_file_sha256_format_check
