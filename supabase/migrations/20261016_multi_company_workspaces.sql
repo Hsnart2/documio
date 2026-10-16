@@ -302,4 +302,29 @@ grant all on public.financial_contract_reviews to service_role;
 create index if not exists financial_contract_reviews_owner_idx
   on public.financial_contract_reviews(user_id,company_id,reviewed_at desc);
 
+-- Mai spostare un documento dopo che una scrittura contabile o revisione
+-- gli è stata associata. Prima occorre una procedura esplicita di
+-- riclassificazione con audit e verifica professionale.
+create or replace function public.documio_document_scope_change_guard()
+returns trigger language plpgsql security invoker set search_path=public as $
+begin
+  if old.company_id is distinct from new.company_id or
+     old.user_id is distinct from new.user_id then
+    if exists(select 1 from public.financial_invoices
+              where document_id=old.id) or
+       exists(select 1 from public.financial_accounting_records
+              where document_id=old.id) or
+       exists(select 1 from public.financial_contract_reviews
+              where document_id=old.id) then
+      raise exception 'Documento collegato a registrazioni: non puo essere spostato fra archivi';
+    end if;
+  end if;
+  return new;
+end; $;
+revoke all on function public.documio_document_scope_change_guard() from public,anon;
+drop trigger if exists documio_document_scope_change_guard on public.documents;
+create trigger documio_document_scope_change_guard
+  before update of company_id,user_id on public.documents
+  for each row execute function public.documio_document_scope_change_guard();
+
 commit;
