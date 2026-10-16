@@ -2659,31 +2659,6 @@ export default function Home() {
       return;
     }
 
-    // Impronta SHA-256 dell'intero file, prima dello Storage.
-    // Ogni azienda ha un proprio controllo: non confluiscono file di
-    // altre aziende dello stesso account.
-    let sha:string;
-    let duplicateOf:string|null=null;
-    try {
-      sha=await fileSha256(file);
-      const duplicate=await findFileDuplicate(
-        supabase,user.id,doc.companyId??companyId,sha);
-      if(duplicate) {
-        const keepCopy=window.confirm(
-          `Questo file è IDENTICO al documento già archiviato: "${duplicate.title}".
-Premi OK solo se vuoi conservarne una seconda copia.
-Premi Annulla per aprire il documento esistente senza occupare altro spazio.`);
-        if(!keepCopy) {
-          await openExistingFile(supabase,duplicate);
-          return;
-        }
-        duplicateOf=duplicate.id;
-      }
-    } catch(problem) {
-      alert(problem instanceof Error?problem.message:"Impossibile confrontare il file con l'archivio.");
-      return;
-    }
-
     const safeName = file.name
       .normalize("NFKD")
       .replace(/[^a-zA-Z0-9._-]+/g, "-")
@@ -2778,6 +2753,31 @@ Premi Annulla per aprire il documento esistente senza occupare altro spazio.`);
 
     if (userError || !user) {
       alert(t.invalidSession);
+      return;
+    }
+
+    // Impronta SHA-256 dell'intero file, prima dello Storage.
+    // Ogni azienda ha un proprio controllo: non confluiscono file di
+    // altre aziende dello stesso account.
+    let sha:string;
+    let duplicateOf:string|null=null;
+    try {
+      sha=await fileSha256(file);
+      const duplicate=await findFileDuplicate(
+        supabase,user.id,doc.companyId??companyId,sha);
+      if(duplicate) {
+        const keepCopy=window.confirm(
+          `Questo file è IDENTICO al documento già archiviato: "${duplicate.title}".
+Premi OK solo se vuoi conservarne una seconda copia.
+Premi Annulla per aprire il documento esistente senza occupare altro spazio.`);
+        if(!keepCopy) {
+          await openExistingFile(supabase,duplicate);
+          return;
+        }
+        duplicateOf=duplicate.id;
+      }
+    } catch(problem) {
+      alert(problem instanceof Error?problem.message:"Impossibile confrontare il file con l'archivio.");
       return;
     }
 
