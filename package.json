@@ -18,6 +18,7 @@
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
     "@supabase/supabase-js": "^2.109.0",
+    "fflate": "0.8.3",
     "lucide-react": "latest",
     "next": "16.4.1",
     "openai": "latest",
