@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
   ArrowRight,
@@ -100,6 +101,7 @@ function hasActionableExpiry(document: any, tracked: boolean) {
 }
 
 export default function SmartHomeV2() {
+  const pathname = usePathname();
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [name, setName] = useState("");
   const [documents, setDocuments] = useState<any[]>([]);
@@ -135,7 +137,7 @@ export default function SmartHomeV2() {
     };
   },[]);
   useEffect(() => {
-    if (window.location.pathname !== "/") return;
+    if (pathname !== "/") return;
     const supabase = getSupabaseClient();
     if (!supabase) {
       setLoading(false);
@@ -248,7 +250,7 @@ export default function SmartHomeV2() {
       data.subscription.unsubscribe();
       removeHome();
     };
-  }, []);
+  }, [pathname]);
 
   const visibleDocuments=useMemo(()=>documents.filter((item)=>
     (item.company_id??null)===companyId),[documents,companyId]);
