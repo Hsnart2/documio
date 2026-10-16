@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./fast-upload.css";
 import "./loading-fix.css";
 import "./attachment-scroll-fix.css";
 import "./smart-home.css";

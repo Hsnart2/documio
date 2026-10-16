@@ -1,52 +1,47 @@
-# Documio — prototipo iniziale
+# DocuMio
 
-Una web app installabile pensata per organizzare e trovare documenti personali e aziendali.
+**Un assistente documentale e amministrativo per privati, professionisti e aziende.**
 
-## Cosa funziona già
+DocuMio nasce come archivio di documenti e pratiche con ricerca intelligente e cresce verso un centro di controllo per scadenze, fatture, incassi, pagamenti, contratti e attività da svolgere.
 
-- Dashboard responsive per computer e telefono
-- Categorie documenti
-- Ricerca immediata
-- Caricamento PDF o fotografia
-- Classificazione base automatica
-- Salvataggio locale nel browser
-- Analisi AI facoltativa tramite OpenAI API
-- Base Supabase e schema di sicurezza inclusi
+## Funzionalità principali
 
-> In questa prima versione il file vero non viene ancora caricato online: viene salvata localmente la scheda del documento. È una scelta intenzionale per testare subito l’esperienza senza configurazioni complesse.
+- Accesso personale con Supabase, documenti e allegati privati, pratiche, note e scadenze.
+- Analisi AI dei documenti e ricerca contestuale, con avvertenze sulle risposte non verificate.
+- Collegamento Gmail facoltativo, importazione e classificazione delle comunicazioni autorizzate.
+- Centro attività, automazioni e promemoria con email e notifiche push, configurabili dall'utente.
+- Area `/controllo` (**nuova fase su branch dedicata**): fatture emesse/ricevute, CSV bancari, import FatturaPA XML, riconciliazione manuale, scadenze generiche e primo motore di analisi dei costi e degli incassi.
+- Connettore Open Banking PSD2 **solo lettura**, disabilitato finché non vengono configurate credenziali provider e richiesto il consenso bancario dell'utente.
 
-## Avvio
+## Sviluppo locale
 
-1. Installa Node.js.
-2. Apri questa cartella in Visual Studio Code.
-3. Apri il terminale e lancia:
+Prerequisito: Node.js 22.
 
 ```bash
-npm install
+npm ci
+npm run test:finance
 npm run dev
 ```
 
-4. Apri `http://localhost:3000`.
+L'app è disponibile all'indirizzo `http://localhost:3000`. Per la build:
 
-## Attivare l’AI
-
-Copia `.env.example` in `.env.local` e inserisci:
-
-```env
-OPENAI_API_KEY=la_tua_chiave
+```bash
+npm run build
 ```
 
-Poi riavvia `npm run dev`.
+La configurazione Supabase/Auth/Storage/AI/Gmail usa variabili ambiente definite nel progetto Vercel; le chiavi riservate **devono essere esclusivamente server-side**. La connessione al database e il funzionamento delle automazioni richiedono le migrazioni Supabase applicate.
 
-La prima integrazione AI classifica il documento usando nome file e nota dell’utente. Nella fase successiva collegheremo la lettura effettiva del PDF e delle immagini.
+## Centro di controllo: attivazione
 
-## Collegare Supabase
+Il codice del Centro di controllo da solo **non abilita** tabelle, accesso ai conti bancari o verifiche istituzionali. Per attivare il modulo occorre applicare `supabase/migrations/20261015_financial_control_center.sql`, verificare RLS e configurare il provider, quindi eseguire i controlli su una preview.
 
-1. Crea un progetto Supabase.
-2. Copia URL e chiave anonima in `.env.local`.
-3. Esegui `supabase/schema.sql` nell’editor SQL di Supabase.
-4. Crea un bucket privato chiamato `documents`.
+Leggi [docs/financial-control-center.md](docs/financial-control-center.md) per limiti, migrazione, variabili necessarie e test di privacy/sicurezza.
 
-## Prossimo passo consigliato
+I servizi ACI e pagoPA in questa fase sono **link a fonti ufficiali**: non viene effettuata alcuna interrogazione automatica dei database di bolli o multe. La funzione AI offre supporto operativo e documentale ma non sostituisce i professionisti o gli adempimenti regolamentati.
 
-Aggiungere autenticazione, caricamento privato dei file su Supabase Storage e lettura reale dei PDF tramite OpenAI.
+## Documentazione
+
+- [Checklist di lancio](docs/LAUNCH-CHECKLIST.md)
+- [Centro di controllo](docs/financial-control-center.md)
+- [Integrazione Gmail](docs/gmail-integration.md)
+- [Sicurezza e processi GDPR](docs/legal/GDPR_OPERATIONS.md)

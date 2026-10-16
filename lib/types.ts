@@ -48,6 +48,9 @@ export type StoredDocument = {
   uploadedAt: string;
   summary: string;
   keywords: string[];
+  aiStatus?: "queued" | "processing" | "completed" | "needs_review" | "failed";
+  aiUserNote?: string | null;
+  aiAnalyzedAt?: string | null;
   practiceId?: string | null;
   financialDirection?: FinancialDirection | null;
   amountMeaning?: AmountMeaning | null;

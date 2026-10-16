@@ -1,0 +1,31 @@
+/* Caricamento rapido: indicatori chiari, senza progressi inventati */
+.documio-fast-upload-actions { display:flex;flex-direction:column;gap:10px;margin-top:16px; }
+.documio-fast-upload-actions button { min-height:46px; }
+.documio-deep-analysis-button {
+  cursor:pointer; border:1px solid #8a91da; background:#f4f4ff; color:#29277f;
+  border-radius:12px; padding:12px 16px; font-weight:800; width:100%;
+}
+.documio-deep-analysis-button:hover:not(:disabled) { background:#e8e9ff; }
+.documio-deep-analysis-button:disabled { opacity:.6;cursor:not-allowed; }
+.documio-fast-upload-hint { font-size:12px;line-height:1.55;color:#516075;margin:0; }
+.documio-fast-upload-error { display:block; padding:10px 12px;
+  border-radius:10px;color:#9f2e28;background:#fff1f1;border:1px solid #f5c6c3;font-size:13px; }
+.documio-ai-indicator { display:flex;align-items:center;gap:9px;justify-content:space-between;
+  flex-wrap:wrap;padding:10px 12px;border-radius:11px;margin:11px 0;
+  font-size:12px;line-height:1.5;font-weight:700; }
+.documio-ai-indicator.queued,
+.documio-ai-indicator.processing { color:#145c8a;background:#edf6ff;border:1px solid #b8d8f4; }
+.documio-ai-indicator.failed { color:#9f3c36;background:#fff2ee;border:1px solid #f0c7be; }
+.documio-ai-indicator.needs_review { color:#83551c;background:#fff7e6;border:1px solid #f2d7a8; }
+.documio-ai-indicator button {
+  background:#fff;border:1px solid currentColor;border-radius:8px;
+  padding:5px 9px;cursor:pointer;font-size:12px;font-weight:750;color:inherit;
+}
+.documio-ai-indicator button:hover { filter:brightness(.97); }
+@media(max-width:650px){.documio-fast-upload-actions {gap:9px}.documio-ai-indicator {font-size:11px}}
+
+.documio-batch-upload-link{display:flex;justify-content:center;align-items:center;
+  min-height:42px;border:1px solid #abd6cc;background:#effaf6;border-radius:11px;
+  color:#09655d!important;text-decoration:none!important;font-weight:750;
+  padding:9px 12px;font-size:13px}
+.documio-batch-upload-link:hover{background:#e1f4ed}

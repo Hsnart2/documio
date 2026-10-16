@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bell,
@@ -38,6 +38,7 @@ import type {
   StoredDocument,
 } from "@/lib/types";
 import { getSupabaseClient } from "@/lib/supabase";
+import { prepareFileForUpload as prepareUpload } from "@/lib/prepare-upload-file";
 
 type Language = "it" | "en";
 type ActiveView = "documents" | "practices";
@@ -818,90 +819,8 @@ async function getApiAuthHeaders(contentType?: string) {
   };
 }
 
-async function compressImageForUpload(file: File): Promise<File> {
-  if (!file.type.startsWith("image/") || file.size < 900_000) return file;
-
-  const bitmap = await createImageBitmap(file);
-  const maxSide = 1800;
-  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    bitmap.close();
-    return file;
-  }
-
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/jpeg", 0.78),
-  );
-
-  if (!blob || blob.size >= file.size) return file;
-
-  const baseName = file.name.replace(/\.[^.]+$/, "");
-  return new File([blob], `${baseName}.jpg`, {
-    type: "image/jpeg",
-    lastModified: Date.now(),
-  });
-}
-
-async function compressPdfForUpload(file: File): Promise<File> {
-  const isPdf =
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-
-  if (!isPdf || file.size < 2 * 1024 * 1024) return file;
-
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    const response = await fetch("/api/compress-file", {
-      method: "POST",
-      body: formData,
-    });
-
-    const contentType = response.headers.get("content-type") ?? "";
-
-    if (!response.ok || contentType.includes("application/json")) {
-      const errorData = contentType.includes("application/json")
-        ? await response.json().catch(() => null)
-        : null;
-
-      console.warn(
-        "Compressione PDF saltata:",
-        errorData?.error ?? response.statusText,
-      );
-      return file;
-    }
-
-    const blob = await response.blob();
-
-    if (!blob.size || blob.size >= file.size) return file;
-
-    return new File([blob], file.name, {
-      type: "application/pdf",
-      lastModified: Date.now(),
-    });
-  } catch (error) {
-    console.warn("Compressione PDF non disponibile, uso l’originale:", error);
-    return file;
-  }
-}
-
 async function prepareFileForUpload(file: File): Promise<File> {
-  const isPdf =
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-
-  if (isPdf) {
-    return compressPdfForUpload(file);
-  }
-
-  return compressImageForUpload(file);
+  return (await prepareUpload(file)).file;
 }
 
 function rankDocumentsForQuestion(
@@ -997,6 +916,8 @@ export default function Home() {
   const [aiSearching, setAiSearching] = useState(false);
   const [activeCategory, setActiveCategory] = useState<ActiveCategory>("Tutti");
   const [showUpload, setShowUpload] = useState(false);
+  const [fastUploadAvailable, setFastUploadAvailable] = useState(false);
+  const aiKickStarted = useRef(new Set<string>());
   const [showAssistant, setShowAssistant] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -1021,6 +942,80 @@ export default function Home() {
   const [expandedAttachmentDocuments, setExpandedAttachmentDocuments] =
     useState<Set<string>>(() => new Set());
   const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!userId) { setFastUploadAvailable(false); return; }
+    let active = true;
+    void (async () => {
+      try {
+        const response = await fetch("/api/document-ai/trigger", {
+          headers: await getApiAuthHeaders(), cache: "no-store",
+        });
+        const data = await response.json();
+        if (active) setFastUploadAvailable(response.ok && Boolean(data.available));
+      } catch {
+        if (active) setFastUploadAvailable(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [userId]);
+
+  // Se il caricamento e' stato confermato, il job e' gia' nella coda DB.
+  // Avviarlo una sola volta; uscire dalla pagina non cancella il file.
+  useEffect(() => {
+    if (!userId || !fastUploadAvailable) return;
+    const queued = documents.filter((doc) => doc.aiStatus === "queued"
+      && !aiKickStarted.current.has(doc.id)).slice(0, 3);
+    for (const doc of queued) {
+      aiKickStarted.current.add(doc.id);
+      void (async () => {
+        try {
+          await fetch("/api/document-ai/trigger", {
+            method: "POST",
+            headers: await getApiAuthHeaders("application/json"),
+            body: JSON.stringify({ documentId: doc.id }),
+          });
+        } catch {
+          // Il lavoro resta in Supabase: un nuovo accesso puo' ritentarlo.
+        }
+      })();
+    }
+  }, [userId, fastUploadAvailable, documents]);
+
+  useEffect(() => {
+    if (!userId || !fastUploadAvailable) return;
+    const pendingIds = documents
+      .filter((doc) => doc.aiStatus === "queued" ||
+        doc.aiStatus === "processing" || doc.aiStatus === "failed")
+      .slice(0, 100).map((doc) => doc.id);
+    if (!pendingIds.length) return;
+    let polling = false;
+    const timer = window.setInterval(async () => {
+      if (polling || document.visibilityState !== "visible") return;
+      polling = true;
+      try {
+        const supabase = getSupabaseClient();
+        if (!supabase) return;
+        const { data, error } = await supabase.from("documents")
+          .select("id,title,category,summary,keywords,expiry_date,appointment_time,ai_status,ai_analyzed_at")
+          .eq("user_id", userId).in("id", pendingIds);
+        if (error || !data) return;
+        setDocuments((current) => current.map((item) => {
+          const row = data.find((entry) => entry.id === item.id);
+          if (!row || (row.ai_status === item.aiStatus && row.summary === item.summary)) return item;
+          return {
+            ...item, title: row.title, category: row.category as DocumentCategory,
+            summary: row.summary, keywords: row.keywords ?? [],
+            expiryDate: row.expiry_date, appointmentTime: row.appointment_time,
+            aiStatus: row.ai_status, aiAnalyzedAt: row.ai_analyzed_at,
+          };
+        }));
+      } finally {
+        polling = false;
+      }
+    }, 6500);
+    return () => window.clearInterval(timer);
+  }, [userId, fastUploadAvailable, documents]);
 
   function toggleAttachments(documentId: string) {
     setExpandedAttachmentDocuments((current) => {
@@ -1128,12 +1123,15 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let active = true;
     async function loadDocuments() {
       if (!authReady) return;
 
       if (!userId) {
         setDocuments([]);
         setPractices([]);
+        setAttachments({});
+        aiKickStarted.current.clear();
         setIsLoaded(true);
         return;
       }
@@ -1147,11 +1145,27 @@ export default function Home() {
 
       setIsLoaded(false);
 
-      const { data: practiceRows, error: practiceError } = await supabase
-        .from("practices")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+      // Prima erano 4 richieste in SEQUENZA. Parallelizzandole la
+      // dashboard non attende ogni round-trip prima del successivo.
+      const [
+        { data: practiceRows, error: practiceError },
+        { data, error },
+        { data: attachmentRows, error: attachmentError },
+        { data: preference },
+      ] = await Promise.all([
+        supabase.from("practices").select("*")
+          .eq("user_id", userId).order("created_at", { ascending: false }),
+        supabase.from("documents").select("*")
+          .eq("user_id", userId).order("uploaded_at", { ascending: false }),
+        supabase.from("document_attachments").select("*")
+          .eq("user_id", userId).order("uploaded_at", { ascending: false }),
+        supabase.from("notification_preferences")
+          .select("email_enabled, weekly_digest_enabled, browser_enabled")
+          .eq("user_id", userId).maybeSingle(),
+      ]);
+      // Un login/logout mentre le query sono in corso non deve esporre
+      // il risultato della sessione precedente.
+      if (!active) return;
 
       if (practiceError) {
         alert(practiceError.message);
@@ -1174,12 +1188,6 @@ export default function Home() {
         })),
       );
 
-      const { data, error } = await supabase
-        .from("documents")
-        .select("*")
-        .eq("user_id", userId)
-        .order("uploaded_at", { ascending: false });
-
       if (error) {
         alert(error.message);
         setIsLoaded(true);
@@ -1194,6 +1202,9 @@ export default function Home() {
         uploadedAt: item.uploaded_at,
         summary: item.summary,
         keywords: item.keywords ?? [],
+        aiStatus: item.ai_status ?? "completed",
+        aiUserNote: item.ai_user_note ?? null,
+        aiAnalyzedAt: item.ai_analyzed_at ?? null,
         practiceId: item.practice_id ?? null,
         expiryDate: item.expiry_date,
         appointmentTime: item.appointment_time
@@ -1221,12 +1232,6 @@ export default function Home() {
       }));
 
       setDocuments(loadedDocuments);
-
-      const { data: attachmentRows, error: attachmentError } = await supabase
-        .from("document_attachments")
-        .select("*")
-        .eq("user_id", userId)
-        .order("uploaded_at", { ascending: false });
 
       if (attachmentError) {
         alert(attachmentError.message);
@@ -1259,12 +1264,6 @@ export default function Home() {
         setAttachments(grouped);
       }
 
-      const { data: preference } = await supabase
-        .from("notification_preferences")
-        .select("email_enabled, weekly_digest_enabled, browser_enabled")
-        .eq("user_id", userId)
-        .maybeSingle();
-
       if (preference) {
         const hasLocalPreferences = Boolean(
           localStorage.getItem("documio-notification-preferences"),
@@ -1285,7 +1284,8 @@ export default function Home() {
       setIsLoaded(true);
     }
 
-    loadDocuments();
+    void loadDocuments();
+    return () => { active = false; };
   }, [authReady, userId]);
 
   async function signUp() {
@@ -1768,36 +1768,12 @@ export default function Home() {
     setActiveCategory("Tutti");
 
     try {
+      // La ricerca e' effettuata sul server con il JWT e RLS.
+      // Non spedire ogni volta l'intero archivio dal browser.
       const response = await fetch("/api/search", {
         method: "POST",
         headers: await getApiAuthHeaders("application/json"),
-        body: JSON.stringify({
-          query: cleanQuery,
-          language,
-          documents: documents.map((document) => ({
-            id: document.id,
-            title: document.title,
-            fileName: document.fileName,
-            category: document.category,
-            summary: document.summary,
-            keywords: document.keywords,
-            expiryDate: document.expiryDate,
-            appointmentTime: document.appointmentTime,
-            paymentStatus: getPaymentSnapshot(
-              document,
-              attachments[document.id] ?? [],
-            ).status,
-            totalAmount: document.totalAmount,
-            paidAmount: document.paidAmount,
-            attachments: (attachments[document.id] ?? []).map((item) => ({
-              title: item.title,
-              type: item.attachmentType,
-              fileName: item.fileName,
-              paymentMethod: item.paymentMethod,
-              notes: item.notes,
-            })),
-          })),
-        }),
+        body: JSON.stringify({ query: cleanQuery, language }),
       });
 
       const data = await response.json();
@@ -2152,6 +2128,9 @@ export default function Home() {
           financing_total_amount: updatedDocument.financingTotalAmount ?? null,
           first_installment_date: updatedDocument.firstInstallmentDate || null,
           is_financing: Boolean(updatedDocument.isFinancing),
+          ...(updatedDocument.aiStatus &&
+            updatedDocument.aiStatus !== "completed"
+            ? { ai_status: "completed" } : {}),
         })
         .eq("id", updatedDocument.id)
         .eq("user_id", currentUser.id)
@@ -2173,7 +2152,8 @@ export default function Home() {
 
       setDocuments((current) =>
         current.map((document) =>
-          document.id === updatedDocument.id ? updatedDocument : document,
+          document.id === updatedDocument.id
+            ? { ...updatedDocument, aiStatus: "completed" } : document,
         ),
       );
       setEditingDocument(null);
@@ -2681,6 +2661,10 @@ export default function Home() {
         reminder_snoozed_until: doc.reminderSnoozedUntil ?? null,
         summary: doc.summary,
         keywords: doc.keywords,
+        ...(doc.aiStatus === "queued" ? {
+          ai_status: "queued",
+          ai_user_note: (doc.aiUserNote ?? "").slice(0, 1000),
+        } : {}),
         size: doc.size ?? null,
         storage_path: storagePath,
         payment_status: doc.paymentStatus ?? "Da pagare",
@@ -2716,6 +2700,9 @@ export default function Home() {
       uploadedAt: data.uploaded_at,
       summary: data.summary,
       keywords: data.keywords ?? [],
+      aiStatus: data.ai_status ?? "completed",
+      aiUserNote: data.ai_user_note ?? null,
+      aiAnalyzedAt: data.ai_analyzed_at ?? null,
       practiceId: data.practice_id ?? null,
       expiryDate: data.expiry_date,
       appointmentTime: data.appointment_time
@@ -3090,6 +3077,29 @@ export default function Home() {
         </div>
 
         <div className="topbar-actions">
+          <a
+            href="/controllo"
+            title={language === "it" ? "Centro di controllo amministrativo" : "Financial control center"}
+            aria-label={language === "it" ? "Apri Centro di controllo" : "Open Financial Control Center"}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 7,
+              padding: "9px 12px",
+              borderRadius: 11,
+              fontSize: 13,
+              fontWeight: 750,
+              color: "#0b7066",
+              background: "#eaf7f2",
+              border: "1px solid #b8ded1",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <Landmark size={18} />
+            <span>{language === "it" ? "Controllo" : "Control"}</span>
+          </a>
           <button
             type="button"
             className="topbar-icon-button"
@@ -3464,6 +3474,44 @@ export default function Home() {
                   </span>
                   <h3>{doc.title}</h3>
                   <p>{doc.summary}</p>
+                  {doc.aiStatus &&
+                    ["queued","processing","failed","needs_review"].includes(doc.aiStatus) && (
+                      <div className={`documio-ai-indicator ${doc.aiStatus}`} role="status">
+                        <span>
+                          {doc.aiStatus === "queued"
+                            ? language === "it" ? "✓ File al sicuro · AI in coda" : "✓ File saved · AI queued"
+                            : doc.aiStatus === "processing"
+                              ? language === "it" ? "✓ File al sicuro · AI in elaborazione" : "✓ File saved · AI processing"
+                              : doc.aiStatus === "needs_review"
+                                ? language === "it" ? "Controlla la classificazione, scadenza e possibili ricevute" : "Review classification and possible receipts"
+                                : language === "it" ? "File al sicuro · analisi AI non completata" : "File saved · AI processing failed"}
+                        </span>
+                        {doc.aiStatus === "failed" && (
+                          <button type="button" onClick={async () => {
+                            try {
+                              const res = await fetch("/api/document-ai/trigger", {
+                                method: "POST",
+                                headers: await getApiAuthHeaders("application/json"),
+                                body: JSON.stringify({ documentId: doc.id }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok || data.status !== "processing") {
+                                window.alert(language === "it"
+                                  ? "Riprova fra qualche minuto; il documento resta salvato. Se il problema continua puoi modificare la scheda manualmente."
+                                  : "Try later; your file is safe. You can edit its details manually.");
+                              } else {
+                                setDocuments((current)=>current.map((item)=>
+                                  item.id===doc.id ? { ...item, aiStatus:"processing" } : item));
+                              }
+                            } catch {
+                              window.alert(language === "it" ? "Riprova più tardi." : "Please retry later.");
+                            }
+                          }}>
+                            {language === "it" ? "Riprova AI" : "Retry AI"}
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                   {getFinancingTerms(doc).isFinancing &&
                     getFinancingTerms(doc).installmentCount != null &&
@@ -4815,6 +4863,7 @@ export default function Home() {
       {showUpload && (
         <UploadModal
           language={language}
+          fastUploadAvailable={fastUploadAvailable}
           documents={documents}
           attachments={attachments}
           onClose={() => setShowUpload(false)}
@@ -5997,6 +6046,7 @@ function AttachmentModal({
 
 function UploadModal({
   language,
+  fastUploadAvailable,
   documents,
   attachments,
   onClose,
@@ -6004,6 +6054,7 @@ function UploadModal({
   onLinkedAttachment,
 }: {
   language: Language;
+  fastUploadAvailable: boolean;
   documents: StoredDocument[];
   attachments: Record<string, DocumentAttachment[]>;
   onClose: () => void;
@@ -6050,6 +6101,9 @@ function UploadModal({
 
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [fileError, setFileError] = useState("");
+  const selectedFileSequence = useRef(0);
   const [expiryDate, setExpiryDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<SmartAnalysis | null>(null);
@@ -6157,29 +6211,65 @@ function UploadModal({
     if (!file) {
       throw new Error(language === "it" ? "File mancante." : "Missing file.");
     }
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("userNote", note);
-    formData.append("language", language);
-    formData.append("mode", mode);
-    formData.append("candidateDocuments", JSON.stringify(candidateDocuments));
-
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: await getApiAuthHeaders(),
-      body: formData,
-    });
-
-    const data = (await response.json()) as SmartAnalysis & {
-      error?: string;
-    };
-
-    if (!response.ok) {
-      throw new Error(data.error || "Analysis failed");
+    // Manteniamo la modalita' approfondita per collegare ricevute e pratiche.
+    // Per la modalita' veloce il file viene salvato UNA volta ed elaborato
+    // in un job separato, senza attendere il risultato dell'AI.
+    const maxFileBytes = 20 * 1024 * 1024;
+    const inlineBytes = 4 * 1024 * 1024;
+    if (file.size > maxFileBytes) {
+      throw new Error(language === "it"
+        ? "Limite massimo 20 MB per file." : "File limit is 20 MB.");
     }
-
-    return data;
+    let temporaryStoragePath: string | null = null;
+    try {
+      let response: Response;
+      if (file.size > inlineBytes) {
+        const supabase = getSupabaseClient();
+        if (!supabase) throw new Error(t.notConfigured);
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (!user || userError) throw new Error(t.invalidSession);
+        const safeName = file.name.normalize("NFKD")
+          .replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
+        temporaryStoragePath =
+          `${user.id}/analisi-temporanea/${crypto.randomUUID()}-${safeName}`;
+        const { error: uploadError } = await supabase.storage.from("documents")
+          .upload(temporaryStoragePath, file, {
+            cacheControl: "3600", contentType: file.type || undefined,
+            upsert: false,
+          });
+        if (uploadError) throw new Error(uploadError.message);
+        response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: await getApiAuthHeaders("application/json"),
+          body: JSON.stringify({
+            storagePath: temporaryStoragePath, fileName: file.name,
+            userNote: note, language, mode, candidateDocuments,
+          }),
+        });
+      } else {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("userNote", note);
+        form.append("language", language);
+        form.append("mode", mode);
+        form.append("candidateDocuments", JSON.stringify(candidateDocuments));
+        response = await fetch("/api/analyze", {
+          method: "POST", headers: await getApiAuthHeaders(), body: form,
+        });
+      }
+      const data = (await response.json()) as SmartAnalysis & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Analysis failed");
+      return data;
+    } finally {
+      if (temporaryStoragePath) {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { error: cleanup } = await supabase.storage.from("documents")
+            .remove([temporaryStoragePath]);
+          if (cleanup) console.warn("Impossibile rimuovere il file di analisi temporaneo.");
+        }
+      }
+    }
   }
 
   async function analyze() {
@@ -6192,14 +6282,6 @@ function UploadModal({
     setSelectedDocumentId("");
 
     try {
-      if (file.size > 4 * 1024 * 1024) {
-        throw new Error(
-          language === "it"
-            ? "Il file supera 4 MB. Scegli un file più piccolo."
-            : "The file is larger than 4 MB. Choose a smaller file.",
-        );
-      }
-
       // Prima passata: l'IA estrae solo i dati del file, senza ricevere
       // l'intero archivio dell'utente.
       const extracted = await requestAnalysis([], "document");
@@ -6350,6 +6432,44 @@ function UploadModal({
       );
     } catch (error) {
       window.alert(error instanceof Error ? error.message : t.archiveError);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveQuickDocument() {
+    if (!file || !fastUploadAvailable || loading || preparing) return;
+    setLoading(true);
+    setFileError("");
+    try {
+      // Il titolo provvisorio e la nota non sono un parere AI: il file verra'
+      // archiviato subito e il trigger PostgreSQL ne accoda l'analisi.
+      // Non inferire mai l'importo, il pagamento o il tipo di ricevuta qui.
+      await onSaved({
+        id: crypto.randomUUID(),
+        title: file.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").slice(0,180),
+        category: "Altro",
+        fileName: file.name,
+        uploadedAt: new Date().toISOString(),
+        summary: language === "it"
+          ? "Documento salvato. Analisi AI in preparazione."
+          : "Document saved. AI analysis pending.",
+        keywords: [],
+        aiStatus: "queued",
+        aiUserNote: note.trim().slice(0,1000) || null,
+        expiryDate: expiryDate || null,
+        appointmentTime: null,
+        size: file.size,
+        storagePath: null,
+        paymentStatus: "Da pagare",
+        totalAmount: null,
+        paidAmount: null,
+        remainingAmount: null,
+        isFinancing: false,
+      }, file);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message :
+        (language === "it" ? "Caricamento non riuscito." : "Upload failed."));
     } finally {
       setLoading(false);
     }
@@ -6553,27 +6673,48 @@ function UploadModal({
         <label className="dropzone">
           <input
             type="file"
-            accept="application/pdf,image/*"
+            accept="application/pdf,image/*,.heic,.heif"
             onChange={async (event) => {
               const selected = event.target.files?.[0] || null;
+              const sequence = ++selectedFileSequence.current;
               setAnalysis(null);
               setMatchedDocuments([]);
               setSelectedDocumentId("");
-              if (!selected) {
-                setFile(null);
+              setFileError("");
+              setFile(null);
+              if (!selected) return;
+              if (selected.size > 20 * 1024 * 1024 || selected.size < 1) {
+                setFileError(language === "it"
+                  ? "Seleziona un PDF o una foto fino a 20 MB."
+                  : "Choose a PDF or photo up to 20 MB.");
                 return;
               }
+              setPreparing(true);
               try {
-                setFile(await prepareFileForUpload(selected));
-              } catch {
-                setFile(selected);
+                const prepared = await prepareFileForUpload(selected);
+                if (sequence !== selectedFileSequence.current) return;
+                if (!/\.(pdf|jpe?g|png)$/i.test(prepared.name)) {
+                  throw new Error(language === "it"
+                    ? "Formato non supportato: usa PDF, JPG o PNG."
+                    : "Unsupported file: use PDF, JPG or PNG.");
+                }
+                setFile(prepared);
+              } catch (error) {
+                if (sequence !== selectedFileSequence.current) return;
+                setFileError(error instanceof Error ? error.message :
+                  (language === "it" ? "Impossibile preparare il file." : "File preparation failed."));
+              } finally {
+                if (sequence === selectedFileSequence.current) setPreparing(false);
               }
             }}
           />
           <Upload size={28} />
-          <strong>{file ? file.name : t.chooseFile}</strong>
-          <span>{t.fileFormats}</span>
+          <strong>{preparing ? (language === "it" ? "Preparo la foto…" : "Preparing image…")
+            : file ? file.name : t.chooseFile}</strong>
+          <span>{language === "it" ? "PDF, JPG, PNG · massimo 20 MB" : "PDF, JPG, PNG · up to 20 MB"}</span>
         </label>
+
+        {fileError && <p className="documio-fast-upload-error" role="alert">{fileError}</p>}
 
         {file && (
           <div
@@ -6594,8 +6735,12 @@ function UploadModal({
             <span aria-hidden="true">✓</span>
             <span>
               {language === "it"
-                ? "Foto o file acquisito correttamente. Ora premi Analizza e archivia."
-                : "Photo or file captured successfully. Now press Analyze and archive."}
+                ? fastUploadAvailable
+                  ? "File pronto. Premi «Carica subito» per salvarlo senza aspettare l'analisi."
+                  : "Foto o file acquisito correttamente. Ora premi Analizza e archivia."
+                : fastUploadAvailable
+                  ? "File ready. Save it now without waiting for AI analysis."
+                  : "Photo or file captured successfully. Now press Analyze and archive."}
             </span>
           </div>
         )}
@@ -6619,15 +6764,50 @@ function UploadModal({
           />
         </label>
 
-        <div className="upload-actions">
+        <div className="upload-actions documio-fast-upload-actions">
+          {fastUploadAvailable && (
+            <>
+              <a href="/carica" className="documio-batch-upload-link">
+                {language === "it"
+                  ? "Carica più documenti insieme →"
+                  : "Upload multiple documents →"}
+              </a>
+              <button
+                type="button"
+                className="primary full upload-submit"
+                disabled={!file || loading || preparing}
+                onClick={() => void saveQuickDocument()}
+              >
+                {loading
+                  ? (language === "it" ? "Salvataggio sicuro in corso…" : "Secure upload in progress…")
+                  : (language === "it" ? "⚡ Carica subito · AI dopo" : "⚡ Save now · AI afterwards")}
+              </button>
+              <p className="documio-fast-upload-hint">
+                {language === "it"
+                  ? "Il file entra subito nell'archivio. L'AI lo classifica successivamente, anche se chiudi questa finestra. Per le ricevute, verifica sempre il collegamento prima di considerarle pagate."
+                  : "Your file is stored first. AI classifies it afterwards; always verify payment receipts manually."}
+              </p>
+            </>
+          )}
           <button
-            className="primary full upload-submit"
-            disabled={!file || loading}
-            onClick={analyze}
+            type="button"
+            className={fastUploadAvailable ? "documio-deep-analysis-button" : "primary full upload-submit"}
+            disabled={!file || loading || preparing}
+            onClick={() => void analyze()}
             aria-label={loading ? t.organizing : t.analyzeAndArchive}
           >
-            <span>{loading ? t.organizing : t.analyzeAndArchive}</span>
+            <span>{loading ? t.organizing
+              : fastUploadAvailable
+                ? (language === "it" ? "Analisi approfondita e collegamento ricevute" : "Detailed analysis and receipt matching")
+                : t.analyzeAndArchive}</span>
           </button>
+          {!fastUploadAvailable && (
+            <p className="documio-fast-upload-hint">
+              {language === "it"
+                ? "Il caricamento immediato sarà disponibile quando il database AI sarà attivato. La modalità approfondita continua a funzionare."
+                : "Instant save requires the AI queue database. Detailed analysis remains available."}
+            </p>
+          )}
         </div>
       </div>
     </div>
