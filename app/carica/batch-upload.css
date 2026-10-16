@@ -68,3 +68,17 @@
   .du-hero h1{font-size:28px}.du-results{padding:16px 12px}.du-drop{padding:24px 13px}
   .du-row{padding:10px}.du-file-icon{width:30px;height:30px;flex-basis:30px}}
 @media(prefers-reduced-motion:reduce){.du-spinner{animation:none}}
+
+.du-workspace-picker{display:grid;gap:12px;margin:20px 0 16px;background:white;border:1px solid #dce6f0;
+ padding:17px;border-radius:15px;box-shadow:0 3px 14px #14304b0c}
+.du-workspace-heading{display:flex;gap:10px;align-items:center}
+.du-workspace-heading>svg{color:#4f46e5;flex-shrink:0}
+.du-workspace-heading strong{display:block;color:#253951;font-size:14px}
+.du-workspace-heading small{display:block;color:#8491a2;font-size:11px;margin-top:3px}
+.du-workspace-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+.du-workspace-fields label{display:grid;gap:7px;font-size:12px;font-weight:800;color:#4c617b}
+.du-workspace-fields select{width:100%;min-width:0;min-height:44px;padding:10px;border-radius:10px;
+ border:1px solid #ccd9e8;background:#fff;color:#1c304d;font-size:13px}
+.du-workspace-picker>a{font-size:12px;font-weight:750;color:#4f46e5;text-decoration:none}
+.du-workspace-picker>a:hover{text-decoration:underline}
+@media(max-width:650px){.du-workspace-picker{padding:13px}.du-workspace-fields{grid-template-columns:1fr}}
