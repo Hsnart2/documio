@@ -103,6 +103,7 @@ export default function SmartHomeV2() {
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [name, setName] = useState("");
   const [documents, setDocuments] = useState<any[]>([]);
+  const [companyId,setCompanyId] = useState<string|null>(null);
   const [attachments, setAttachments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeCard, setActiveCard] = useState("deadlines");
@@ -111,6 +112,19 @@ export default function SmartHomeV2() {
   const [messages, setMessages] = useState<any[]>([]);
   const [error, setError] = useState("");
 
+  useEffect(()=>{
+    const update=()=>{
+      const requested=new URLSearchParams(window.location.search).get("company");
+      setCompanyId(requested&&requested!=="personal"?requested:null);
+    };
+    update();
+    window.addEventListener("popstate",update);
+    window.addEventListener("documio:workspace",update);
+    return()=>{
+      window.removeEventListener("popstate",update);
+      window.removeEventListener("documio:workspace",update);
+    };
+  },[]);
   useEffect(() => {
     if (window.location.pathname !== "/") return;
     const supabase = getSupabaseClient();
@@ -194,7 +208,7 @@ export default function SmartHomeV2() {
       const [docs, files] = await Promise.all([
         supabase
           .from("documents")
-          .select("id,title,file_name,storage_path,category,uploaded_at,expiry_date,payment_status,total_amount,paid_amount,remaining_amount,installment_count,installment_amount,financing_total_amount,first_installment_date,is_financing,paid_installments,appointment_completed_at")
+          .select("id,title,file_name,storage_path,category,uploaded_at,expiry_date,payment_status,total_amount,paid_amount,remaining_amount,installment_count,installment_amount,financing_total_amount,first_installment_date,is_financing,paid_installments,appointment_completed_at,company_id")
           .eq("user_id", user.id)
           .order("uploaded_at", { ascending: false })
           .limit(1000),
@@ -227,6 +241,9 @@ export default function SmartHomeV2() {
     };
   }, []);
 
+  const visibleDocuments=useMemo(()=>documents.filter((item)=>
+    (item.company_id??null)===companyId),[documents,companyId]);
+
   const summary = useMemo(() => {
     const today = todayStart();
     const thirtyDays = new Date(today.getTime() + 30 * DAY);
@@ -246,7 +263,7 @@ export default function SmartHomeV2() {
     let dueNowTotal = 0;
 
     const groups = new Map<string, any[]>();
-    documents.forEach((document) => {
+    visibleDocuments.forEach((document) => {
       const key = normalizedTitle(document.title);
       if (key.length >= 5) groups.set(key, [...(groups.get(key) ?? []), document]);
     });
@@ -261,7 +278,7 @@ export default function SmartHomeV2() {
       }
     });
 
-    documents.forEach((document) => {
+    visibleDocuments.forEach((document) => {
       const linked = byDocument.get(document.id) ?? [];
       const receipts = linked.filter((item) => paymentTypes.has(item.attachment_type));
       const receiptPaid = receipts.reduce(
@@ -358,7 +375,7 @@ export default function SmartHomeV2() {
     deadlines.sort((a, b) => (a.date?.getTime() ?? Infinity) - (b.date?.getTime() ?? Infinity));
     recent.sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
     return { payments, deadlines, recent, advice, dueNowTotal };
-  }, [documents, attachments]);
+  }, [visibleDocuments, attachments]);
 
   const details = activeCard === "payments"
     ? summary.payments
@@ -509,8 +526,8 @@ export default function SmartHomeV2() {
           </span>
           <h1>Buongiorno{name ? ` ${name}` : ""}</h1>
           <p>
-            Qui trovi subito cosa richiede attenzione. L’archivio completo rimane
-            disponibile più sotto.
+            Qui trovi subito cosa richiede attenzione nell'archivio selezionato.
+            I documenti delle altre aziende restano separati.
           </p>
         </div>
         <div className="smart-home-status">
