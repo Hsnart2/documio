@@ -82,3 +82,31 @@
 .du-workspace-picker>a{font-size:12px;font-weight:750;color:#4f46e5;text-decoration:none}
 .du-workspace-picker>a:hover{text-decoration:underline}
 @media(max-width:650px){.du-workspace-picker{padding:13px}.du-workspace-fields{grid-template-columns:1fr}}
+
+/* Impronte SHA-256: prima di salvare, riconoscimento identico per azienda */
+.du-row.duplicate{border-color:#f0d6a3;background:#fffcf5}
+.du-row.duplicate .du-file-info small{color:#9a671c}
+.du-duplicate-actions{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap;flex:1 1 250px}
+.du-duplicate-actions small{flex:1 1 100%;font-size:11px;color:#98621b;text-align:right;overflow-wrap:anywhere}
+.du-duplicate-actions button{min-height:43px;border-radius:10px;border:1px solid #d8c8a3;background:#fffaf0;
+ color:#784a15;padding:9px 11px;font-size:11px;font-weight:800;cursor:pointer}
+.du-duplicate-actions button:last-child{background:#eef0ff;border-color:#c6cbf5;color:#3832a6}
+.du-duplicate-actions button:disabled{opacity:.55;cursor:not-allowed}
+.du-legacy-scan{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:17px;margin-bottom:17px;
+ border-radius:15px;border:1px solid #dce6f0;background:#fff}
+.du-legacy-scan>div{display:grid;gap:5px;min-width:0;flex:1 1 320px}
+.du-legacy-scan strong{display:flex;align-items:center;gap:7px;font-size:14px;color:#2a3d57}
+.du-legacy-scan small{font-size:12px;color:#697b94;line-height:1.5}
+.du-legacy-scan>button{min-height:44px;border:1px solid #c4c8ef;background:#f1f1ff;
+ color:#423bad;border-radius:11px;padding:10px 13px;font-weight:780;font-size:12px;
+ cursor:pointer;display:flex;align-items:center;gap:8px}
+.du-legacy-scan>button:disabled{opacity:.55;cursor:progress}
+.du-legacy-scan p{margin:0;flex:1 1 100%;font-size:12px;color:#286955;line-height:1.5}
+@media(max-width:650px){
+ .du-row.duplicate{flex-wrap:wrap}
+ .du-duplicate-actions{justify-content:stretch;flex-basis:100%}
+ .du-duplicate-actions small{text-align:left}
+ .du-duplicate-actions button{flex:1 1 auto;min-width:130px}
+ .du-legacy-scan{padding:13px}
+ .du-legacy-scan>button{width:100%;justify-content:center}
+}
