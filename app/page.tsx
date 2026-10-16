@@ -3044,89 +3044,115 @@ export default function Home() {
 
   if (!authReady) {
     return (
-      <main style={{ maxWidth: 420, margin: "80px auto", padding: 24 }}>
-        <h1>DocuMio</h1>
+      <main className="dm-auth-loading" aria-live="polite">
+        <span className="dm-auth-mark"><FileText size={23} /></span>
+        <strong>DocuMio</strong>
+        <p>{language === "it" ? "Sto preparando il tuo spazio…" : "Preparing your workspace…"}</p>
       </main>
     );
   }
 
   if (!userId) {
     return (
-      <main style={{ maxWidth: 420, margin: "80px auto", padding: 24 }}>
-        <div
-          style={{ display: "flex", justifyContent: "space-between", gap: 12 }}
-        >
-          <h1>{t.loginTitle}</h1>
-          <button
-            type="button"
-            onClick={() => setLanguage(language === "it" ? "en" : "it")}
-            style={{ height: 42, padding: "0 12px" }}
-          >
-            {language === "it" ? "EN" : "IT"}
-          </button>
-        </div>
-
-        <input
-          type="email"
-          placeholder={t.email}
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          style={{ width: "100%", padding: 12, marginBottom: 12 }}
-        />
-
-        <input
-          type="password"
-          placeholder={t.password}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") signIn();
-          }}
-          style={{ width: "100%", padding: 12, marginBottom: 12 }}
-        />
-
-        <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 9,
-            margin: "4px 0 14px",
-            fontSize: 14,
-            lineHeight: 1.45,
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={privacyAccepted}
-            onChange={(event) => setPrivacyAccepted(event.target.checked)}
-            style={{ marginTop: 3 }}
-          />
-          <span>
-            {language === "it"
-              ? "Ho letto e accetto "
-              : "I have read and accept the "}
-            <a href="/privacy" target="_blank">
-              Privacy Policy
-            </a>
-            {language === "it" ? " e i " : " and "}
-            <a href="/terms" target="_blank">
-              {language === "it" ? "Termini beta" : "beta Terms"}
-            </a>
-            .
+      <main id="dm-main-content" className="dm-auth-layout">
+        <section className="dm-auth-intro" aria-label="Benvenuto su DocuMio">
+          <div className="dm-auth-logo">
+            <span className="dm-auth-mark"><FileText size={26} /></span>
+            <strong>DocuMio</strong>
+          </div>
+          <span className="dm-auth-kicker">
+            <Sparkles size={16} /> {language === "it" ? "Il tuo spazio documentale" : "Your document workspace"}
           </span>
-        </label>
+          <h1>
+            {language === "it"
+              ? "Meno disordine. Più tempo per ciò che conta."
+              : "Less clutter. More time for what matters."}
+          </h1>
+          <p>
+            {language === "it"
+              ? "Documenti, scadenze e pratiche organizzati in un unico posto, con l'aiuto dell'intelligenza artificiale."
+              : "Organize documents, deadlines and cases in one place, with AI to help you."}
+          </p>
+          <div className="dm-auth-highlights">
+            <div><FileText size={19} /><span>{language === "it" ? "Archivio privato e ricercabile" : "Private, searchable archive"}</span></div>
+            <div><CalendarDays size={19} /><span>{language === "it" ? "Scadenze e pagamenti sotto controllo" : "Deadlines and payments at a glance"}</span></div>
+            <div><Bot size={19} /><span>{language === "it" ? "Un assistente per trovare ciò che ti serve" : "An assistant to find what you need"}</span></div>
+          </div>
+        </section>
 
-        <button onClick={signIn} style={{ width: "100%", padding: 12 }}>
-          {t.signIn}
-        </button>
-
-        <button
-          onClick={signUp}
-          disabled={!privacyAccepted}
-          style={{ width: "100%", padding: 12, marginTop: 10 }}
-        >
-          {t.signUp}
-        </button>
+        <section className="dm-auth-panel" aria-labelledby="dm-auth-title">
+          <div className="dm-auth-panel-heading">
+            <div>
+              <span>{language === "it" ? "BENTORNATO" : "WELCOME BACK"}</span>
+              <h2 id="dm-auth-title">{t.loginTitle}</h2>
+            </div>
+            <button
+              type="button"
+              className="dm-auth-language"
+              onClick={() => setLanguage(language === "it" ? "en" : "it")}
+              aria-label={language === "it" ? "Switch to English" : "Passa all'italiano"}
+            >
+              {language === "it" ? "EN" : "IT"}
+            </button>
+          </div>
+          <p className="dm-auth-subtitle">
+            {language === "it"
+              ? "Accedi per ritrovare il tuo archivio e continuare da dove eri rimasto."
+              : "Sign in to access your archive and pick up where you left off."}
+          </p>
+          <div className="dm-auth-fields">
+            <label>
+              <span>{t.email}</span>
+              <input
+                type="email"
+                autoComplete="email"
+                placeholder={language === "it" ? "La tua email" : "Your email"}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>{t.password}</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                placeholder={language === "it" ? "La tua password" : "Your password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") signIn();
+                }}
+              />
+            </label>
+          </div>
+          <label className="dm-auth-consent">
+            <input
+              type="checkbox"
+              checked={privacyAccepted}
+              onChange={(event) => setPrivacyAccepted(event.target.checked)}
+            />
+            <span>
+              {language === "it" ? "Ho letto e accetto " : "I have read and accept the "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+              {language === "it" ? " e i " : " and "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer">
+                {language === "it" ? "Termini beta" : "beta Terms"}
+              </a>.
+            </span>
+          </label>
+          <div className="dm-auth-actions">
+            <button type="button" className="dm-auth-sign-in" onClick={signIn}>
+              {t.signIn}
+            </button>
+            <button type="button" className="dm-auth-sign-up" onClick={signUp} disabled={!privacyAccepted}>
+              {t.signUp}
+            </button>
+          </div>
+          <div data-documio-login-actions className="dm-auth-passkey-slot" />
+          <p className="dm-auth-security"><ShieldCheck size={16} />
+            {language === "it" ? "Il tuo archivio rimane privato." : "Your archive stays private."}
+          </p>
+        </section>
       </main>
     );
   }
