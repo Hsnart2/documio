@@ -962,6 +962,8 @@ export default function Home() {
   const [showUpload, setShowUpload] = useState(false);
   const [fastUploadAvailable, setFastUploadAvailable] = useState(false);
   const aiKickStarted = useRef(new Set<string>());
+  const assistantRequestVersion = useRef(0);
+  const searchRequestVersion = useRef(0);
   const [showAssistant, setShowAssistant] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -1193,6 +1195,12 @@ export default function Home() {
     if(nextId)next.searchParams.set("company",nextId);
     else next.searchParams.set("company","personal");
     window.history.replaceState(null,"",next);
+    assistantRequestVersion.current++;
+    searchRequestVersion.current++;
+    setAssistantLoading(false);setAiSearching(false);
+    setSelectedPractice(null);setEditingDocument(null);
+    setAttachmentDocument(null);setShowAssistant(false);
+    setShowUpload(false);setShowPracticeModal(false);
     setCompanyId(nextId);setQuery("");setAiResultIds(null);
     // Un dialogo della societa' A non deve restare visibile nella B.
     setAssistantMessages([]);setAssistantInput("");
@@ -1854,6 +1862,7 @@ export default function Home() {
       return;
     }
 
+    const epoch = searchRequestVersion.current;
     setAiSearching(true);
     setActiveCategory("Tutti");
 
@@ -1867,6 +1876,7 @@ export default function Home() {
       });
 
       const data = await response.json();
+      if (epoch !== searchRequestVersion.current) return;
 
       if (!response.ok) {
         throw new Error(data.error || "Search failed");
@@ -1874,10 +1884,11 @@ export default function Home() {
 
       setAiResultIds(Array.isArray(data.documentIds) ? data.documentIds : []);
     } catch (error) {
+      if (epoch !== searchRequestVersion.current) return;
       console.error("AI search failed:", error);
       setAiResultIds(null);
     } finally {
-      setAiSearching(false);
+      if (epoch === searchRequestVersion.current) setAiSearching(false);
     }
   }
 
@@ -1885,6 +1896,7 @@ export default function Home() {
     const cleanQuestion = (question ?? assistantInput).trim();
 
     if (!cleanQuestion || assistantLoading) return;
+    const epoch = assistantRequestVersion.current;
 
     const userMessage: AssistantMessage = {
       id: crypto.randomUUID(),
@@ -1961,6 +1973,7 @@ export default function Home() {
       });
 
       const data = await response.json();
+      if (epoch !== assistantRequestVersion.current) return;
 
       if (!response.ok) {
         throw new Error(data.error || "Assistant failed");
@@ -1976,6 +1989,7 @@ export default function Home() {
         },
       ]);
     } catch (error) {
+      if (epoch !== assistantRequestVersion.current) return;
       console.error("Assistant error:", error);
       setAssistantMessages((current) => [
         ...current,
@@ -1986,7 +2000,7 @@ export default function Home() {
         },
       ]);
     } finally {
-      setAssistantLoading(false);
+      if (epoch === assistantRequestVersion.current) setAssistantLoading(false);
     }
   }
 
