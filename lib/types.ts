@@ -29,6 +29,7 @@ export type PracticeStatus = "In corso" | "Aperta" | "Chiusa";
 
 export type Practice = {
   id: string;
+  companyId?: string | null;
   userId: string;
   title: string;
   practiceType: string;
@@ -42,6 +43,9 @@ export type Practice = {
 
 export type StoredDocument = {
   id: string;
+  companyId?: string | null;
+  financialDocumentType?: string | null;
+  accountingReviewStatus?: "not_applicable"|"needs_review"|"confirmed";
   title: string;
   category: DocumentCategory;
   fileName: string;
