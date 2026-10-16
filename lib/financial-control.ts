@@ -252,6 +252,16 @@ export function parseFatturaPaXml(xml: string, direction: InvoiceDirection,
     const currency = contentNamed(doc, "Divisa").toUpperCase() || "EUR";
     const amount = decimal(contentNamed(doc, "ImportoTotaleDocumento"));
     const expiry = contentNamed(body, "DataScadenzaPagamento");
+    // Testo realmente dichiarato nelle righe FatturaPA: le parole in
+    // descrizione sono più affidabili della ragione sociale per classificare.
+    const descriptions=[...body.getElementsByTagName("*")]
+      .filter((node)=>node.localName==="DettaglioLinee")
+      .map((line)=>contentNamed(line,"Descrizione").slice(0,200))
+      .filter(Boolean);
+    const causali=[...body.getElementsByTagName("*")]
+      .filter((node)=>node.localName==="Causale")
+      .map((node)=>node.textContent?.trim().slice(0,180)||"").filter(Boolean);
+    const invoice_description=[...descriptions,...causali].join(" | ").slice(0,1800);
     // L'IVA è solo quella esposta nei riepiloghi XML: nessuna
     // aliquota o detraibilità viene indovinata dall'app.
     const taxSummaries = [...body.getElementsByTagName("*")]
@@ -269,7 +279,8 @@ export function parseFatturaPaXml(xml: string, direction: InvoiceDirection,
       direction, source: "xml" as const, invoice_number, issue_date,
       due_date: dateIso(expiry), counterparty: counterparty.name,
       vat_number: counterparty.vat || null, amount, vat_amount,
-      currency, notes: "Importata dai dati XML FatturaPA, da verificare.",
+      currency, invoice_description,
+      notes: "Importata dai dati XML FatturaPA, da verificare.",
     };
   });
 }
