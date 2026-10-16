@@ -60,3 +60,77 @@ test("Componenti JSX senza errori sintattici", () => {
     assert.equal(source.parseDiagnostics.length, 0, path);
   }
 });
+
+
+test("Menu mobile compatto con accesso a Pratiche e Posta", () => {
+  assert.match(navigation, /dm-mobile-more-trigger/);
+  assert.match(navigation, /aria-expanded=\{moreOpen\}/);
+  assert.match(navigation, /aria-controls="dm-mobile-more-panel"/);
+  assert.match(navigation, /dm-mobile-more-sheet/);
+  assert.match(navigation, /aria-modal="true"/);
+  assert.match(navigation, /event\.key === "Escape"/);
+  assert.match(navigation, /moreTriggerRef\.current\?\.focus\(\)/);
+  assert.match(navigation, /\[links\[0\], links\[1\], links\[3\], links\[4\]\]/);
+});
+
+test("La home mostra prima il riepilogo e poi le scorciatoie", () => {
+  assert.match(smartHome, /main\.insertBefore\(mount, quickActions \?\? hero\)/);
+  assert.match(smartHome, /quickActions = main\.querySelector/);
+  const polish = read("../app/documio-polish.css");
+  assert.match(polish, /smart-home > #documio-today-action-root/);
+  assert.match(polish, /smart-home-welcome/);
+});
+
+test("I documenti sono ordinabili e le azioni distruttive restano nel menu", () => {
+  assert.match(home, /type DocumentSort = "recent" \| "oldest" \| "title" \| "expiry"/);
+  assert.match(home, /sortedDocuments\.map\(\(doc\)/);
+  assert.match(home, /className="dm-sort-control"/);
+  assert.match(home, /className="dm-document-menu"/);
+  assert.match(home, /<details className="dm-document-menu">/);
+  assert.match(home, /void deleteDocument\(doc\.id\)/);
+  const polish = read("../app/documio-polish.css");
+  assert.match(polish, /dm-document-menu:not\(\[open\]\).*dm-document-menu-panel/);
+  assert.match(polish, /dm-mobile-more-container/);
+  assert.match(polish, /safe-area-inset-bottom/);
+  assert.match(polish, /max-width: 359px/);
+});
+
+test("Accesso leggibile e Face ID conservato nella scheda corretta", () => {
+  assert.match(home, /className="dm-auth-layout"/);
+  assert.match(home, /className="dm-auth-panel"/);
+  assert.match(home, /className="dm-auth-form"/);
+  assert.match(home, /data-documio-login-actions/);
+  assert.match(home, /type="submit" className="dm-auth-sign-in"/);
+  const passkey = read("../app/PasskeyControls.tsx");
+  assert.match(passkey, /data-documio-login-actions/);
+  const polish = read("../app/documio-polish.css");
+  assert.match(polish, /\.dm-auth-layout/);
+  assert.match(polish, /\.dm-auth-fields input:focus/);
+});
+
+test("Salta al contenuto su archivio, caricamento, finanze e posta", () => {
+  for (const path of [
+    "../app/page.tsx",
+    "../app/carica/page.tsx",
+    "../app/controllo/page.tsx",
+    "../app/email/page.tsx",
+  ]) {
+    assert.match(read(path), /id="dm-main-content"/, path);
+  }
+  assert.match(navigation, /href="#dm-main-content"/);
+});
+
+test("Tutte le nuove sezioni TSX sono sintatticamente valide", () => {
+  for (const path of [
+    "../app/AppShellNavigation.tsx",
+    "../app/page.tsx",
+    "../app/SmartHomeV2.tsx",
+    "../app/PasskeyControls.tsx",
+    "../app/carica/page.tsx",
+    "../app/controllo/page.tsx",
+    "../app/email/page.tsx",
+  ]) {
+    const parsed = ts.createSourceFile(path, read(path), ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+    assert.equal(parsed.parseDiagnostics.length, 0, path);
+  }
+});
