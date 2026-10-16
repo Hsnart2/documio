@@ -45,7 +45,7 @@ test("Leasing, affitti, trasporto e manutenzione hanno destinazioni distinte",()
     ["Canone affitto capannone","affitti_canoni"],
     ["Servizio trasporto pallet","trasporti"],
     ["Intervento manutenzione fustellatrice","manutenzioni"],
-    ["Smaltimento rifiuti cartacei","da_verificare"],
+    ["Smaltimento rifiuti cartacei","smaltimento"],
   ];
   for(const [description,category] of cases) {
     const found=b.classifyInvoice("expense","Fornitore",null,description,[]);
