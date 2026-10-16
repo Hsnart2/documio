@@ -453,7 +453,7 @@ export default function SmartHomeV2() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ question: clean, language: "it" }),
+        body: JSON.stringify({ question: clean, language: "it", companyId }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Risposta non disponibile.");
