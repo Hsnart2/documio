@@ -517,8 +517,11 @@ export default function FinancialControlCenter() {
     let archivedId:string|null=null;
     const supabase=getSupabaseClient()!;
     try {
+      if (companyId && !currentCompany?.vat_number)
+        throw new Error("Prima di importare XML in questa azienda, inserisci la sua partita IVA nella sezione Aziende.");
       const xml=await file.text();
-      const rows=parseFatturaPaXml(xml,xmlDirection);
+      const rows=parseFatturaPaXml(xml,xmlDirection,
+        companyId ? currentCompany?.vat_number : null);
       const payload=await Promise.all(rows.map(async(row)=>({
         ...row,user_id:userId,company_id:companyId,
         cost_category:suggestCategory(row.direction,`${row.counterparty} ${row.notes||""}`).category,
