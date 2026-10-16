@@ -11,6 +11,7 @@
     "lint": "next lint",
     "test:finance": "node scripts/test-financial-control.mjs",
     "test:archive": "node scripts/test-archive.mjs",
+    "test:ui": "node scripts/test-responsive-ui.mjs",
     "vapid:generate": "node scripts/generate-vapid-keys.mjs"
   },
   "dependencies": {
