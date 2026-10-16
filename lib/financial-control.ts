@@ -184,7 +184,8 @@ function xmlCounterparty(element: Element | null) {
   const vat = contentNamed(element, "IdCodice") || contentNamed(element, "CodiceFiscale");
   return { name: name.slice(0,220), vat: vat.slice(0,30) };
 }
-export function parseFatturaPaXml(xml: string, direction: InvoiceDirection) {
+export function parseFatturaPaXml(xml: string, direction: InvoiceDirection,
+  expectedOwnerVat?: string | null) {
   if (typeof DOMParser === "undefined") throw new Error("Lettura XML disponibile dal browser.");
   const document = new DOMParser().parseFromString(xml, "application/xml");
   if (document.getElementsByTagName("parsererror").length)
@@ -193,6 +194,19 @@ export function parseFatturaPaXml(xml: string, direction: InvoiceDirection) {
   const party = header && firstNamed(header,
     direction === "income" ? "CessionarioCommittente" : "CedentePrestatore");
   const counterparty = xmlCounterparty(party);
+  // Per evitare attribuzioni tra aziende diverse il soggetto proprio
+  // deve corrispondere alla P. IVA dell'azienda selezionata.
+  const ownParty = header && firstNamed(header,
+    direction === "income" ? "CedentePrestatore" : "CessionarioCommittente");
+  const ownVat = xmlCounterparty(ownParty).vat;
+  const normalizeVat = (value:string) => value.toUpperCase()
+    .replace(/[^A-Z0-9]/g,"").replace(/^IT(?=\d{11}$)/,"");
+  if(expectedOwnerVat) {
+    if(!ownVat)
+      throw new Error("Identificativo aziendale assente nell'XML: verifica l'intestatario.");
+    if(normalizeVat(ownVat)!==normalizeVat(expectedOwnerVat))
+      throw new Error("La partita IVA dell'XML non corrisponde all'azienda selezionata. Nessuna fattura importata.");
+  }
   const bodies = [...document.getElementsByTagName("*")].filter(
     (element) => element.localName === "FatturaElettronicaBody",
   );
