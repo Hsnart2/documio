@@ -11,7 +11,7 @@ const smartHome = read("../app/SmartHomeV2.tsx");
 const styles = read("../app/documio-ui.css");
 
 test("La navigazione contiene solo link a pagine reali dell'app", () => {
-  const entries = [...navigation.matchAll(/id: "(home|documents|practices|upload|finance|email)", href: "([^"]+)"/g)]
+  const entries = [...navigation.matchAll(/id: "(home|documents|practices|upload|finance|email|companies)", href: "([^"]+)"/g)]
     .map((m) => [m[1], m[2]]);
   assert.deepEqual(entries, [
     ["home", "/"],
@@ -19,9 +19,10 @@ test("La navigazione contiene solo link a pagine reali dell'app", () => {
     ["practices", "/?view=practices#documio-library"],
     ["upload", "/carica"],
     ["finance", "/controllo"],
+    ["companies", "/aziende"],
     ["email", "/email"],
   ]);
-  assert.equal(new Set(entries.map((entry) => entry[0])).size, 6);
+  assert.equal(new Set(entries.map((entry) => entry[0])).size, 7);
   assert.match(navigation, /signedIn && supportedRoutes\.has\(pathname\)/);
   assert.match(navigation, /onAuthStateChange/);
   assert.match(navigation, /aria-current/);
@@ -50,6 +51,7 @@ test("Il menu rispetta schermi desktop, tablet e safe area smartphone", () => {
   assert.match(styles, /:has\(\.modal-backdrop\)/);
   assert.match(styles, /advanced-email-automation/);
   assert.match(layout, /<AppShellNavigation \/>/);
+  assert.match(navigation, /\/aziende/);
   assert.match(layout, /import "\.\/documio-ui\.css";/);
 });
 
