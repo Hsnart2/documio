@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { recordOpenAIUsage } from "@/lib/owner-metering";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -83,6 +84,11 @@ type ArchiveFile = {
 type OpenAIResponse = {
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
   error?: { message?: string };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number } | null;
+  };
 };
 
 function getBearerToken(request: Request) {
@@ -573,6 +579,11 @@ export async function POST(request: Request) {
     });
 
     const result = (await response.json()) as OpenAIResponse;
+    await recordOpenAIUsage(admin, {
+      userId: user.id, companyId: requestedCompany,
+      feature: "Assistente AI", model: "gpt-5-mini",
+      ok: response.ok, usage: result.usage,
+    });
     if (!response.ok) {
       console.error("Assistant OpenAI error", result.error?.message);
       return NextResponse.json(
