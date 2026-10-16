@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { usePathname } from "next/navigation";
 import {
   ArrowUpRight,
+  Building2,
   FileText,
   FolderKanban,
   House,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 
-type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email";
+type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email" | "companies";
 
 type MenuItem = {
   id: Destination;
@@ -33,10 +34,11 @@ const links: MenuItem[] = [
   { id: "practices", href: "/?view=practices#documio-library", label: "Pratiche", shortLabel: "Pratiche", icon: FolderKanban },
   { id: "upload", href: "/carica", label: "Carica documenti", shortLabel: "Carica", icon: Plus },
   { id: "finance", href: "/controllo", label: "Controllo", shortLabel: "Finanze", icon: Landmark },
+  { id: "companies", href: "/aziende", label: "Le mie aziende", shortLabel: "Aziende", icon: Building2 },
   { id: "email", href: "/email", label: "Posta", shortLabel: "Posta", icon: Mail },
 ];
 
-const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email"]);
+const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email", "/aziende"]);
 
 function currentHomeTab(): Destination {
   if (typeof window === "undefined") return "home";
@@ -49,6 +51,7 @@ export default function AppShellNavigation() {
   const pathname = usePathname();
   const [signedIn, setSignedIn] = useState(false);
   const [homeTab, setHomeTab] = useState<Destination>("home");
+  const [workspaceId, setWorkspaceId] = useState<string|null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const moreWasOpen = useRef(false);
@@ -67,15 +70,32 @@ export default function AppShellNavigation() {
   }, []);
 
   useEffect(() => {
-    const refresh = () => setHomeTab(currentHomeTab());
+    const refresh = () => {
+      setHomeTab(currentHomeTab());
+      const requested = new URLSearchParams(window.location.search).get("company");
+      setWorkspaceId(requested &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested)
+          ? requested : null);
+    };
     refresh();
     window.addEventListener("popstate", refresh);
     window.addEventListener("documio:view", refresh);
+    window.addEventListener("documio:workspace", refresh);
     return () => {
       window.removeEventListener("popstate", refresh);
       window.removeEventListener("documio:view", refresh);
+      window.removeEventListener("documio:workspace", refresh);
     };
   }, [pathname]);
+
+  function workspaceHref(href: string) {
+    if (!workspaceId || href === "/aziende" || href === "/email") return href;
+    const separator = href.includes("?") ? "&" : "?";
+    const hashAt = href.indexOf("#");
+    const firstPart = hashAt>=0 ? href.slice(0,hashAt) : href;
+    const hashPart = hashAt>=0 ? href.slice(hashAt) : "";
+    return firstPart + separator + "company=" + encodeURIComponent(workspaceId) + hashPart;
+  }
 
   // Chiudi il menu quando cambi schermata o premi Esc.
   useEffect(() => { setMoreOpen(false); }, [pathname]);
@@ -109,13 +129,14 @@ export default function AppShellNavigation() {
   const selected: Destination =
     pathname === "/" ? homeTab :
       pathname === "/carica" ? "upload" :
-      pathname === "/controllo" ? "finance" : "email";
+      pathname === "/controllo" ? "finance" :
+      pathname === "/aziende" ? "companies" : "email";
 
   function follow(event: MouseEvent<HTMLAnchorElement>, item: MenuItem) {
     // Mantieni la vista archivio/pratiche senza ricaricare la pagina.
     if (pathname !== "/" || !["home", "documents", "practices"].includes(item.id)) return;
     event.preventDefault();
-    window.history.pushState(null, "", item.href);
+    window.history.pushState(null, "", workspaceHref(item.href));
     setHomeTab(item.id);
     window.dispatchEvent(new CustomEvent("documio:navigate", { detail: { view: item.id } }));
     if (item.id === "home") {
@@ -135,7 +156,7 @@ export default function AppShellNavigation() {
     return (
       <a
         key={item.id}
-        href={item.href}
+        href={workspaceHref(item.href)}
         className={[
           compact ? "dm-mobile-link" : "dm-side-link",
           active ? "is-active" : "",
@@ -156,7 +177,7 @@ export default function AppShellNavigation() {
     <>
       <a href="#dm-main-content" className="dm-skip-link">Vai al contenuto</a>
       <aside className="dm-sidebar" aria-label="Menu di DocuMio">
-        <a className="dm-sidebar-brand" href="/" onClick={(event) => follow(event, links[0])}>
+        <a className="dm-sidebar-brand" href={workspaceHref("/")} onClick={(event) => follow(event, links[0])}>
           <span className="dm-sidebar-mark"><FileText size={23} /></span>
           <span><strong>DocuMio</strong><small>Il tuo spazio digitale</small></span>
         </a>
@@ -170,7 +191,7 @@ export default function AppShellNavigation() {
           {links.slice(3).map((link) => renderLink(link, false))}
         </nav>
         <div className="dm-sidebar-spacer" />
-        <a className="dm-sidebar-feature" href="/carica">
+        <a className="dm-sidebar-feature" href={workspaceHref("/carica")}>
           <span className="dm-sidebar-feature-icon"><Sparkles size={18} /></span>
           <strong>Archivia più velocemente</strong>
           <small>Carica più documenti in un'unica volta.</small>
@@ -212,9 +233,14 @@ export default function AppShellNavigation() {
               </button>
             </header>
             <nav aria-label="Altre sezioni di DocuMio">
-              <a href={links[2].href} onClick={(event) => { setMoreOpen(false); follow(event, links[2]); }}>
+              <a href={workspaceHref(links[2].href)} onClick={(event) => { setMoreOpen(false); follow(event, links[2]); }}>
                 <span className="dm-more-sheet-icon"><FolderKanban size={21} /></span>
                 <span><strong>Pratiche</strong><small>Documenti e attività collegate</small></span>
+                <ArrowUpRight size={17} />
+              </a>
+              <a href="/aziende" onClick={() => setMoreOpen(false)}>
+                <span className="dm-more-sheet-icon"><Building2 size={21} /></span>
+                <span><strong>Le mie aziende</strong><small>Gestisci una o più attività</small></span>
                 <ArrowUpRight size={17} />
               </a>
               <a href={links[5].href} onClick={() => setMoreOpen(false)}>

@@ -1,0 +1,78 @@
+/* DocuMio: scelta ambito e riconciliazioni aziendali, mobile-first. */
+.fc-workspace-switch{
+  display:flex;align-items:center;justify-content:space-between;gap:18px;
+  padding:18px 20px;background:#fff;border:1px solid #dbe4f0;border-radius:17px;
+  margin-bottom:17px;box-shadow:0 3px 14px #1c34500a;
+}
+.fc-workspace-caption{display:flex;align-items:center;gap:12px;min-width:0}
+.fc-workspace-symbol{flex:0 0 46px;height:46px;display:grid;place-items:center;border-radius:14px;background:#eef0ff;color:#5049c8}
+.fc-workspace-caption>div{min-width:0}
+.fc-workspace-caption small{display:block;color:#8795a9;font-size:10px;letter-spacing:.12em;font-weight:850}
+.fc-workspace-caption strong{display:block;color:#20324e;font-size:17px;font-weight:850;overflow-wrap:anywhere;margin:3px 0}
+.fc-workspace-caption p{margin:0;color:#79889b;font-size:11px;line-height:1.5}
+.fc-workspace-tools{display:grid;grid-template-columns:minmax(140px,210px) auto;align-items:end;gap:8px}
+.fc-workspace-tools label{grid-column:1/-1;color:#7b8999;font-weight:800;font-size:11px;margin-bottom:-3px}
+.fc-workspace-tools select{min-width:0;height:43px;padding:0 11px;border:1px solid #d4deee;border-radius:10px;
+ color:#23344e;background:white;font-size:13px;max-width:230px;font-weight:750}
+.fc-company-add{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+ min-height:43px;border-radius:10px;padding:10px 12px;font-size:12px;font-weight:810;color:#fff!important;
+ background:#5046d9!important}
+.fc-company-add:hover{background:#3f35c2!important}
+.fc-balance-preview{margin-top:12px}
+.fc-balance-preview h3{margin:21px 0 10px;font-size:15px;letter-spacing:-.02em}
+.fc-balance-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.fc-balance-metrics>div{display:grid;gap:10px;border:1px solid #e2e9f2;border-radius:12px;padding:14px;
+ background:#f9fbff;min-width:0}
+.fc-balance-metrics span{font-size:11px;color:#67778c;font-weight:750}
+.fc-balance-metrics strong{font-variant-numeric:tabular-nums;font-size:clamp(17px,1.6vw,23px);overflow-wrap:anywhere}
+.fc-category-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.fc-category-summary>div{display:flex;align-items:center;justify-content:space-between;gap:9px;padding:10px 13px;
+ background:#f7fafc;border:1px solid #e3e9f2;border-radius:10px}
+.fc-category-summary span{font-size:12px;color:#53667c}
+.fc-category-summary strong{font-size:13px;font-variant-numeric:tabular-nums;text-align:right}
+.fc-invoice-category{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;
+ margin-top:12px;border-top:1px solid #e3edf2;padding:12px 0}
+.fc-invoice-category label{display:flex;flex-direction:column;gap:5px;font-size:11px;font-weight:770;color:#596b80;min-width:0;flex:1 1 205px}
+.fc-invoice-category select{background:#fff;border:1px solid #d4deee;border-radius:9px;padding:9px;min-height:40px;
+ max-width:350px;width:100%;font-size:12px;color:#27394e}
+.fc-invoice-category small{max-width:260px;font-size:11px;color:#7b8799;line-height:1.5}
+.fc-match-suggestion{display:grid;gap:8px;border:1px solid #bde4d3;border-radius:11px;padding:12px;background:#f1fbf6}
+.fc-match-suggestion strong{display:flex;align-items:center;gap:7px;color:#106b55;font-size:12px}
+.fc-match-suggestion small{font-size:11px;color:#497c6c;line-height:1.5}
+.fc-match-suggestion button{max-width:fit-content}
+.fc-accounting-form{margin-top:20px;border-top:1px solid #e5ebf2;padding-top:17px}
+@media(max-width:900px){
+ .fc-workspace-switch{display:block}
+ .fc-workspace-tools{margin-top:13px;grid-template-columns:minmax(0,1fr) auto}
+ .fc-workspace-tools select{max-width:none;width:100%}
+ .fc-balance-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .fc-balance-metrics>div:last-child{grid-column:1/-1}
+}
+@media(max-width:650px){
+ .fc-workspace-switch{padding:15px 13px;border-radius:14px}
+ .fc-workspace-caption strong{font-size:15px}
+ .fc-workspace-caption p{font-size:11px}
+ .fc-workspace-tools{grid-template-columns:minmax(0,1fr) auto}
+ .fc-company-add{padding:9px 9px;font-size:11px;white-space:normal;text-align:center}
+ .fc-balance-metrics{gap:8px}
+ .fc-balance-metrics>div{padding:11px}
+ .fc-balance-metrics strong{font-size:19px}
+ .fc-category-summary{grid-template-columns:1fr}
+ .fc-invoice-category{align-items:stretch}
+ .fc-invoice-category select{max-width:100%}
+}
+
+.fc-contract-review h3{font-size:15px;margin:20px 0 12px;color:#243852}
+.fc-contract-issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:11px}
+.fc-contract-issues article{border:1px solid #e0e7f1;background:#fafbff;border-radius:14px;padding:15px;min-width:0}
+.fc-contract-issues article>span{display:inline-block;border-radius:100px;padding:4px 9px;
+ background:#eef1fa;color:#54657d;font-size:10px;font-weight:800;margin-bottom:10px}
+.fc-contract-issues article>span.warn{background:#fff0da;color:#945f21}
+.fc-contract-issues article>strong{display:block;font-size:14px;margin:3px 0 10px}
+.fc-contract-issues blockquote{color:#384e67;border-left:3px solid #a7afe6;background:#f1f4ff;
+ padding:10px 12px;margin:0 0 12px;border-radius:0 8px 8px 0;font-size:12px;line-height:1.55;
+ overflow-wrap:anywhere}
+.fc-contract-issues p{font-size:12px;line-height:1.62;color:#5b6d82;margin:0 0 10px}
+.fc-contract-issues small{display:block;font-size:11px;line-height:1.5;color:#375d83;font-weight:750}
+.fc-contract-checklist{padding-left:22px;color:#54677e;font-size:12px;line-height:1.72}
+.fc-contract-checklist li{margin:5px 0}
