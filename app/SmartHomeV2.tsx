@@ -112,6 +112,12 @@ export default function SmartHomeV2() {
   const [messages, setMessages] = useState<any[]>([]);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    setMessages([]);
+    setInput("");
+    setError("");
+  }, [companyId]);
+
   useEffect(()=>{
     const update=()=>{
       const requested=new URLSearchParams(window.location.search).get("company");
