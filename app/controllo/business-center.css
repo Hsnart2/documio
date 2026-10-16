@@ -61,3 +61,18 @@
  .fc-invoice-category{align-items:stretch}
  .fc-invoice-category select{max-width:100%}
 }
+
+.fc-contract-review h3{font-size:15px;margin:20px 0 12px;color:#243852}
+.fc-contract-issues{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:11px}
+.fc-contract-issues article{border:1px solid #e0e7f1;background:#fafbff;border-radius:14px;padding:15px;min-width:0}
+.fc-contract-issues article>span{display:inline-block;border-radius:100px;padding:4px 9px;
+ background:#eef1fa;color:#54657d;font-size:10px;font-weight:800;margin-bottom:10px}
+.fc-contract-issues article>span.warn{background:#fff0da;color:#945f21}
+.fc-contract-issues article>strong{display:block;font-size:14px;margin:3px 0 10px}
+.fc-contract-issues blockquote{color:#384e67;border-left:3px solid #a7afe6;background:#f1f4ff;
+ padding:10px 12px;margin:0 0 12px;border-radius:0 8px 8px 0;font-size:12px;line-height:1.55;
+ overflow-wrap:anywhere}
+.fc-contract-issues p{font-size:12px;line-height:1.62;color:#5b6d82;margin:0 0 10px}
+.fc-contract-issues small{display:block;font-size:11px;line-height:1.5;color:#375d83;font-weight:750}
+.fc-contract-checklist{padding-left:22px;color:#54677e;font-size:12px;line-height:1.72}
+.fc-contract-checklist li{margin:5px 0}
