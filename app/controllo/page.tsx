@@ -265,6 +265,7 @@ export default function FinancialControlCenter() {
   );
   const currentCompany = companies.find((item)=>item.id===companyId);
   function selectCompany(value:string) {
+    if(working)return;
     const selected=value && companies.some((item)=>item.id===value)?value:null;
     const url=new URL(window.location.href);
     if(selected)url.searchParams.set("company",selected);
@@ -467,27 +468,79 @@ export default function FinancialControlCenter() {
   }
   async function importXml(file: File | undefined) {
     if (!file || !userId) return;
-    if (file.size > 5_000_000) { setError("XML troppo grande (massimo 5 MB)."); return; }
-    setWorking(true); setError(""); setMessage("");
+    if (file.size > 5_000_000 || file.size <= 0) {
+      setError("Seleziona un XML FatturaPA valido fino a 5 MB.");return;
+    }
+    setWorking(true);setError("");setMessage("");
+    let uploadedPath:string|null=null;
+    let archivedId:string|null=null;
+    const supabase=getSupabaseClient()!;
     try {
-      const rows = parseFatturaPaXml(await file.text(), xmlDirection);
-      const payload = await Promise.all(rows.map(async (row) => ({
-        ...row, user_id: userId, company_id: companyId,
-        cost_category: suggestCategory(row.direction,`${row.counterparty} ${row.notes||""}`).category,
-        category_status: "needs_review",
-        import_key: await fingerprint([
-          "xml", companyId ?? "personal", row.direction, row.invoice_number, row.issue_date,
-          row.counterparty.toLowerCase(), row.amount.toFixed(2), row.currency,
+      const xml=await file.text();
+      const rows=parseFatturaPaXml(xml,xmlDirection);
+      const payload=await Promise.all(rows.map(async(row)=>({
+        ...row,user_id:userId,company_id:companyId,
+        cost_category:suggestCategory(row.direction,`${row.counterparty} ${row.notes||""}`).category,
+        category_status:"needs_review",
+        import_key:await fingerprint([
+          "xml",companyId??"personal",row.direction,row.invoice_number,row.issue_date,
+          row.counterparty.toLowerCase(),row.amount.toFixed(2),row.currency,
         ].join("|")),
       })));
-      const { error: issue } = await getSupabaseClient()!.from("financial_invoices")
-        .upsert(payload, { onConflict: "user_id,import_key", ignoreDuplicates: true });
-      if (issue) throw issue;
-      setMessage(`Elaborate ${payload.length} fatture XML (duplicati ignorati). Salvi i dati, non il file originale: archivialo anche in DocuMio.`);
+      const keys=payload.map((item)=>item.import_key);
+      const {data:existing,error:existingError}=await supabase.from("financial_invoices")
+        .select("import_key").eq("user_id",userId).in("import_key",keys);
+      if(existingError)throw existingError;
+      const seen=new Set((existing??[]).map((item)=>item.import_key));
+      const newRows=payload.filter((item)=>!seen.has(item.import_key));
+      if(!newRows.length){
+        setMessage("Fattura già presente in questo archivio: nessuna duplicazione.");
+        await loadData(userId,companyId);
+        return;
+      }
+      // Il file originale rimane nell'archivio privato con la fattura.
+      const name=file.name.normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g,"-").slice(-110)||"fattura.xml";
+      const storagePath=`${userId}/fatture/${crypto.randomUUID()}-${name}`;
+      const {error:storeError}=await supabase.storage.from("documents")
+        .upload(storagePath,file,{contentType:"application/xml",upsert:false,cacheControl:"3600"});
+      if(storeError)throw new Error("Non posso archiviare l'XML originale: "+storeError.message);
+      uploadedPath=storagePath;
+      const first=newRows[0];
+      const {data:archived,error:archiveError}=await supabase.from("documents").insert({
+        user_id:userId,company_id:companyId,
+        title:`Fattura ${first.invoice_number} · ${first.counterparty}`.slice(0,180),
+        category:"Lavoro",file_name:file.name,
+        uploaded_at:new Date().toISOString(),
+        summary:"Fattura XML FatturaPA importata; dati e categoria da verificare.",
+        keywords:["fattura","XML",first.direction==="income"?"vendita":"acquisto"],
+        size:file.size,storage_path:storagePath,
+        financial_direction:first.direction,total_amount:first.amount,
+        expiry_date:first.due_date,ai_status:"completed",
+        financial_document_type:"invoice_xml",accounting_review_status:"needs_review",
+        payment_status:"Da pagare",
+      }).select("id").single();
+      if(archiveError||!archived?.id)throw new Error("Archivio documento non riuscito: "+(archiveError?.message??""));
+      archivedId=archived.id;
+      // Per XML con più corpi il documento si collega alla prima fattura;
+      // le altre sono registrate senza duplicare il riferimento al medesimo file.
+      const inserts=newRows.map((item,index)=>({
+        ...item,document_id:index===0?archived.id:null,
+      }));
+      const {error:issue}=await supabase.from("financial_invoices")
+        .upsert(inserts,{onConflict:"user_id,import_key",ignoreDuplicates:true});
+      if(issue)throw issue;
+      uploadedPath=null;archivedId=null;
+      setMessage(`Importate ${newRows.length} fatture XML in ${currentCompany?.legal_name||"personale"}:
+        file originale archiviato, dati e IVA da verificare. Nessun pagamento marcato automaticamente.`);
       await loadData(userId,companyId);
-    } catch (problem) { setError(problem instanceof Error ? problem.message : "Errore lettura XML."); }
-    setWorking(false);
+    } catch(problem) {
+      // Ripristina l'archivio solo se la scrittura della fattura non è riuscita.
+      if(archivedId)await supabase.from("documents").delete().eq("id",archivedId).eq("user_id",userId);
+      if(uploadedPath)await supabase.storage.from("documents").remove([uploadedPath]);
+      setError(problem instanceof Error?problem.message:"Importazione XML non riuscita.");
+    } finally {setWorking(false);}
   }
+
   async function importCsv(file: File | undefined) {
     if (!file || !userId) return;
     if (file.size > 5_000_000) { setError("CSV troppo grande (massimo 5 MB)."); return; }
@@ -636,7 +689,7 @@ export default function FinancialControlCenter() {
       </div>
       <div className="fc-workspace-tools">
         <label htmlFor="fc-workspace-select">Cambia archivio</label>
-        <select id="fc-workspace-select" value={companyId??""} disabled={!companyReady}
+        <select id="fc-workspace-select" value={companyId??""} disabled={!companyReady || working}
           onChange={(event)=>selectCompany(event.target.value)}>
           <option value="">Personale</option>
           {companies.map((company)=>
@@ -788,7 +841,8 @@ export default function FinancialControlCenter() {
             <input type="file" accept=".xml,text/xml,application/xml" disabled={working}
               onChange={(e)=>{void importXml(e.target.files?.[0]);e.currentTarget.value="";}}/>
           </label>
-          <small className="fc-muted">Vengono importati numero, controparte, importo, data e scadenza quando presenti. Il file originale va caricato anche nell'archivio.</small>
+          <small className="fc-muted">Importa numero, controparte, importo, IVA esposta, data e scadenza quando presenti.
+            Il file XML originale viene conservato nell'archivio selezionato; l'imputazione contabile resta da confermare.</small>
         </section>
       </div>
       <section className="fc-panel">
