@@ -363,6 +363,62 @@ export default function FinancialControlCenter() {
     return notices.slice(0, 8);
   }, [metrics, movements.length, deadlines.length]);
 
+  async function confirmInvoiceCategory(invoice:InvoiceRow,category:string) {
+    if(!userId || !accountingCategories.some((item)=>item.value===category))return;
+    setWorking(true);setError("");
+    const {error:issue}=await getSupabaseClient()!.from("financial_invoices")
+      .update({cost_category:category,category_status:"confirmed"})
+      .eq("id",invoice.id).eq("user_id",userId);
+    setWorking(false);
+    if(issue)setError(issue.message);
+    else {setMessage("Categoria confermata da te; non equivale a deducibilità fiscale.");
+      await loadData(userId,companyId);}
+  }
+
+  async function submitAccountingRecord(event:React.FormEvent) {
+    event.preventDefault();
+    if(!userId || working)return;
+    const amount=accountForm.amount.trim()
+      ? Number(accountForm.amount.replace(",",".")) : null;
+    const taxAmount=accountForm.tax_amount.trim()
+      ? Number(accountForm.tax_amount.replace(",",".")) : null;
+    if([amount,taxAmount].some((v)=>v!==null && (!Number.isFinite(v)||v<0))) {
+      setError("Controlla importi e tributi.");return;
+    }
+    if(accountForm.title.trim().length<2){setError("Inserisci una descrizione.");return;}
+    setWorking(true);setError("");setMessage("");
+    const {error:issue}=await getSupabaseClient()!.from("financial_accounting_records").insert({
+      user_id:userId,company_id:companyId,
+      record_type:accountForm.record_type,
+      title:accountForm.title.trim(),category:accountForm.category,
+      amount,tax_amount:taxAmount,
+      reference_period:accountForm.reference_period.trim()||null,
+      due_date:accountForm.due_date||null,
+      description:accountForm.description.trim()||null,
+      review_status:"needs_review",
+    });
+    setWorking(false);
+    if(issue)setError("Registrazione non riuscita: "+issue.message);
+    else {
+      setAccountForm({record_type:"f24",title:"",amount:"",tax_amount:"",
+        reference_period:"",due_date:"",description:"",category:"da_verificare"});
+      setMessage("Registrazione provvisoria inserita: controlla documento e correttezza fiscale.");
+      await loadData(userId,companyId);
+    }
+  }
+
+  async function confirmAccountingRecord(record:AccountingRecord) {
+    if(!userId||!window.confirm("Hai controllato l'importo e il documento originale?"))return;
+    setWorking(true);setError("");
+    const {error:issue}=await getSupabaseClient()!.from("financial_accounting_records")
+      .update({review_status:"confirmed"})
+      .eq("user_id",userId).eq("id",record.id);
+    setWorking(false);
+    if(issue)setError(issue.message);
+    else {setMessage("Registrazione marcata come verificata manualmente.");
+      await loadData(userId,companyId);}
+  }
+
   async function submitInvoice(event: React.FormEvent) {
     event.preventDefault();
     if (!userId) return;
@@ -975,6 +1031,91 @@ export default function FinancialControlCenter() {
             </div>)}</div>}
       </section>
     </>}
+    {storageReady === true && tab === "accounting" && <>
+      <div className="fc-two-col">
+        <section className="fc-panel">
+          <h2><Building2 size={21}/> F24, stipendi, CONAI e contratti</h2>
+          <p className="fc-muted">Registra gli estremi dei documenti e indica l'importo solo se certo.
+            È un registro di controllo, non una scrittura di partita doppia automatica.
+            Per i file usa il caricamento dell'archivio selezionato.</p>
+          <a className="fc-button secondary" href={companyId
+            ? `/carica?company=${encodeURIComponent(companyId)}` : "/carica"}>
+            <FileUp size={17}/> Carica documenti in questo archivio
+          </a>
+          <form className="fc-form fc-accounting-form" onSubmit={(event)=>void submitAccountingRecord(event)}>
+            <label>Tipo documento
+              <select value={accountForm.record_type} onChange={(event)=>
+                setAccountForm({...accountForm,record_type:event.target.value})}>
+                <option value="f24">F24 / versamento tributi</option>
+                <option value="payroll">Busta paga / stipendi</option>
+                <option value="conai">CONAI / contributi ambientali</option>
+                <option value="bank_statement">Estratto conto</option>
+                <option value="contract">Contratto</option>
+                <option value="other">Altro documento</option>
+              </select>
+            </label>
+            <label>Descrizione<input required maxLength={220} value={accountForm.title}
+              placeholder="Es. F24 settembre, cedolini ottobre, contratto fornitore..."
+              onChange={(event)=>setAccountForm({...accountForm,title:event.target.value})}/></label>
+            <div className="fc-fields">
+              <label>Importo (€), se certo<input inputMode="decimal" value={accountForm.amount}
+                onChange={(event)=>setAccountForm({...accountForm,amount:event.target.value})}/></label>
+              <label>Periodo di riferimento<input value={accountForm.reference_period} maxLength={60}
+                placeholder="Es. 10/2026"
+                onChange={(event)=>setAccountForm({...accountForm,reference_period:event.target.value})}/></label>
+            </div>
+            <div className="fc-fields">
+              <label>Quota tributi indicata (€), se presente<input inputMode="decimal" value={accountForm.tax_amount}
+                onChange={(event)=>setAccountForm({...accountForm,tax_amount:event.target.value})}/></label>
+              <label>Scadenza da verificare<input type="date" value={accountForm.due_date}
+                onChange={(event)=>setAccountForm({...accountForm,due_date:event.target.value})}/></label>
+            </div>
+            <label>Categoria proposta
+              <select value={accountForm.category} onChange={(event)=>
+                setAccountForm({...accountForm,category:event.target.value})}>
+                {accountingCategories.map((item)=>
+                  <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </label>
+            <label>Note<input maxLength={500} value={accountForm.description}
+              onChange={(event)=>setAccountForm({...accountForm,description:event.target.value})}/></label>
+            <button className="fc-button" type="submit" disabled={working}>
+              <Plus size={17}/> Registra per verifica
+            </button>
+          </form>
+        </section>
+        <section className="fc-panel">
+          <h2><FileText size={21}/> Registro documenti amministrativi</h2>
+          <p className="fc-muted">Non vengono sommati direttamente alle fatture per evitare duplicazioni.
+            Conserva buste paga e contratti nel tuo archivio privato; gli estremi e gli importi richiedono conferma.</p>
+          {!accountingRecords.length
+            ? <div className="fc-empty">Nessuna registrazione inserita in questo archivio.</div>
+            : <div className="fc-list">{accountingRecords.map((record)=>
+              <div className="fc-list-item" key={record.id}>
+                <div>
+                  <strong>{record.title}</strong>
+                  <small>{record.record_type.toUpperCase()} · {categoryLabel(record.category)}
+                    {record.reference_period ? " · "+record.reference_period : ""}
+                    {record.due_date ? " · scad. "+dateIt(record.due_date):""}
+                  </small>
+                  <small>{record.review_status==="confirmed" ? "Confermato manualmente" :
+                    "Da verificare con il documento originale"}</small>
+                </div>
+                <div className="fc-item-right">
+                  {record.amount!=null && <strong>{eur(Number(record.amount))}</strong>}
+                  {record.review_status!=="confirmed" && <button type="button"
+                    disabled={working} onClick={()=>void confirmAccountingRecord(record)}>
+                    <Check size={16}/> Conferma
+                  </button>}
+                </div>
+              </div>)}</div>}
+        </section>
+      </div>
+      <div className="fc-disclaimer">Non vengono elaborate o trasmesse dichiarazioni fiscali,
+        modelli F24, cedolini o bilanci ufficiali. DocuMio segnala ciò che manca,
+        organizza la documentazione e prepara dati controllabili dal professionista.</div>
+    </>}
+
     <footer className="fc-footer">
       <span>DocuMio · Dati privati protetti dal tuo account</span>
       <span>L'AI supporta l'analisi: atti, adempimenti e decisioni rilevanti richiedono verifica professionale.</span>
