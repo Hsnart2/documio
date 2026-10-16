@@ -3,6 +3,9 @@ import { matchScore, normalizeName, paidFor,
   type InvoiceDirection, type InvoiceRow, type MatchRow, type MovementRow } from "./financial-control";
 
 export const accountingCategories = [
+  { value: "materie_prime", label: "Materie prime: cartone, carta, inchiostri", group: "cost" },
+  { value: "leasing", label: "Leasing e rate beni strumentali", group: "cost" },
+  { value: "smaltimento", label: "Rifiuti e smaltimento", group: "cost" },
   { value: "acquisti_merci", label: "Acquisti merci e materie prime", group: "cost" },
   { value: "trasporti", label: "Trasporti e spedizioni", group: "cost" },
   { value: "carburanti", label: "Carburanti e automezzi", group: "cost" },
@@ -42,13 +45,16 @@ const rules: Array<{ category: CostCategory; rx: RegExp; reason: string }> = [
   {category:"carburanti",rx:/carburant|gasolio|diesel|benzina|riforniment|autostrada|pedagg/i,reason:"Riferimento a mezzi/carburanti"},
   {category:"manutenzioni",rx:/manutenzion|riparazion|intervento tecnico|ricambi|assistenza macchin|officina/i,reason:"Riferimento a manutenzioni"},
   {category:"utenze",rx:/bolletta|energia elettrica|\benel\b|\beni\b|gas naturale|idrico|acqua|telefonia|fibra|elettricita/i,reason:"Riferimento a utenze"},
-  {category:"affitti_canoni",rx:/affitt|canone|locazione|noleggio|leasing|rental/i,reason:"Riferimento a canoni o affitti"},
+  {category:"leasing",rx:/leasing|canone locazion[e]? finanziari[a]?/i,reason:"Riferimento a leasing e rate beni strumentali"},
+  {category:"affitti_canoni",rx:/affitt|canone|locazione|noleggio|rental/i,reason:"Riferimento a canoni o affitti"},
   {category:"consulenze",rx:/commercialista|consulenz|studio legale|parcella|onorari|avvocato|professionist/i,reason:"Riferimento a consulenze"},
   {category:"assicurazioni",rx:/polizza|assicurazion|premio rca|\brc auto\b/i,reason:"Riferimento a polizze assicurative"},
   {category:"interessi",rx:/interessi passivi|spese bancarie|commissioni bancarie|oneri finanziari|canone banc/i,reason:"Riferimento a oneri finanziari"},
   {category:"marketing",rx:/pubblicit|advertis|marketing|social ads|promozion|campagna ads/i,reason:"Riferimento a promozione/pubblicità"},
   {category:"software",rx:/\bsoftware\b|\bsaas\b|hosting|dominio web|cloud|applicativi|licenze digitali/i,reason:"Riferimento a software e servizi digitali"},
-  {category:"acquisti_merci",rx:/acquist|fornitura|materie prime|materiale|cartone|carta|imballaggi|consumabili|prodotto/i,reason:"Riferimento ad acquisti o materiali"},
+  {category:"materie_prime",rx:/materie prime|cartone|carta kraft|testliner|fluting|onda singola|onda doppia|foglio ondulato|bobina carta|inchiostri|colle industriali|liner kraft|white top|cartiera/i,reason:"Materie prime per produzione scatole pizza"},
+  {category:"smaltimento",rx:/smaltimento|ritiro rifiuti|rifiuti speciali|gestione scarti/i,reason:"Gestione e smaltimento rifiuti"},
+  {category:"acquisti_merci",rx:/acquist|fornitura|materiale|consumabili|prodotto/i,reason:"Riferimento ad acquisti o materiali"},
   {category:"rimborsi",rx:/rimborso|storno|restituzione|nota di credito/i,reason:"Riferimento a rimborso/storno: verificare il segno"},
 ];
 
@@ -70,6 +76,126 @@ export function suggestCategory(
       return {category:rule.category,reason:rule.reason,confidence:75,reviewRequired:true};
   }
   return {category:"da_verificare",reason:"Controparte e causale insufficienti",confidence:15,reviewRequired:true};
+}
+
+export type SupplierRule = {
+  id:string;
+  legal_name:string;
+  vat_number:string|null;
+  default_category:string;
+};
+
+export function normalizeVat(value:string|null|undefined):string {
+  const cleaned=(value??"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+  return /^IT\d{11}$/.test(cleaned)?cleaned.slice(2):cleaned;
+}
+export function supplierNameKey(name:string):string {
+  return normalizeName(name).replace(/[^a-z0-9]/g,"");
+}
+
+export function findSupplierRule(
+  suppliers:SupplierRule[], name:string, vat:string|null|undefined,
+):SupplierRule|null {
+  const normalizedVat=normalizeVat(vat);
+  if(normalizedVat) {
+    const found=suppliers.find((supplier)=>
+      supplier.vat_number&&normalizeVat(supplier.vat_number)===normalizedVat);
+    if(found)return found;
+  }
+  const identity=supplierNameKey(name);
+  if(identity.length<4)return null;
+  return suppliers.find((supplier)=>{
+    // P. IVA diverse: l'omonimia non è motivo per accorpare fornitori.
+    if(normalizedVat&&normalizeVat(supplier.vat_number)&&
+        normalizedVat!==normalizeVat(supplier.vat_number))return false;
+    return supplierNameKey(supplier.legal_name)===identity;
+  })??null;
+}
+
+export type AutoClassification = {
+  cost_category:CostCategory;
+  category_status:"suggested"|"needs_review"|"confirmed";
+  category_source:"description"|"supplier"|"rule"|"unclassified";
+  classification_reason:string;
+  classification_confidence:number;
+  supplier_id:string|null;
+};
+
+/** Descrizione delle righe XML più affidabile del nome fornitore.
+ * Due classi incompatibili in righe differenti richiedono un controllo.
+ * Il profilo fornitore prevale solo quando manca una descrizione chiara.
+ */
+const lineRules:Array<{category:CostCategory;regex:RegExp;label:string}>= [
+  {category:"leasing",regex:/\bleasing\b|rata\s+(di\s+)?leasing|locazione finanziaria/i,label:"leasing"},
+  {category:"affitti_canoni",regex:/\baffitt[oi]\b|locazione immobiliare|canone (affitto|locazione)|noleggio/i,label:"affitti e canoni"},
+  {category:"trasporti",regex:/trasport[oi]|spedizion[ei]|corriere|servizio logistico|consegna merci|vettura merce|nolo camion/i,label:"trasporti"},
+  {category:"manutenzioni",regex:/manutenzion[ei]|riparazion[ei]|sostituzione pezzi|intervento tecnico|assistenza macchin/i,label:"manutenzioni"},
+  {category:"materie_prime",regex:/carton[ei]|carta (kraft|alimentare|riciclata)|testliner|fluting|bobin[ae]|foglio ondulato|onda (singola|doppia)|inchiostr[io]|colla (vinilica|industriale)|liner|materi[ae] prim[ae]/i,label:"materie prime"},
+  {category:"smaltimento",regex:/smaltimento|ritiro rifiuti|rifiuti speciali|scarti di produzione/i,label:"smaltimento"},
+  {category:"carburanti",regex:/gasolio|benzina|carburante|rifornimento/i,label:"carburanti"},
+  {category:"utenze",regex:/energia elettrica|fornitura gas|utenze telefoniche|acqua potabile|bollett[ae]/i,label:"utenze"},
+  {category:"conai",regex:/\bconai\b|contributo ambientale/i,label:"CONAI"},
+  {category:"software",regex:/abbonamento software|licenza software|\bsaas\b|hosting|dominio web/i,label:"software"},
+  {category:"assicurazioni",regex:/premio assicurativo|\bpolizza\b|assicurazione\b/i,label:"assicurazioni"},
+  {category:"consulenze",regex:/consulenza|onorari|prestazioni professionali|commercialista|avvocato/i,label:"consulenze"},
+];
+
+/** Restituisce immediatamente la categoria e l'origine della decisione,
+ * senza inventare deducibilità fiscale né scritture di partita doppia.
+ */
+export function classifyInvoice(
+  direction:InvoiceDirection,
+  counterparty:string,
+  vatNumber:string|null,
+  description:string,
+  suppliers:SupplierRule[],
+):AutoClassification {
+  const matched=direction==="expense" ? findSupplierRule(suppliers,counterparty,vatNumber) : null;
+  if(direction==="income") {
+    const result=suggestCategory(direction,description||counterparty);
+    return {
+      cost_category:result.category,
+      category_status:result.category==="da_verificare"?"needs_review":"suggested",
+      category_source:"rule",classification_reason:result.reason,
+      classification_confidence:result.confidence,supplier_id:null,
+    };
+  }
+  const normalized=normalizeName(description);
+  const matches=normalized.length>=4
+    ?lineRules.filter(rule=>rule.regex.test(normalized)) : [];
+  const categoryKeys=[...new Set(matches.map(m=>m.category))];
+  if(categoryKeys.length>1) {
+    return {
+      cost_category:"da_verificare",category_status:"needs_review",
+      category_source:"unclassified",supplier_id:matched?.id??null,
+      classification_reason:"Fattura con possibili voci diverse: "+matches.map(x=>x.label).join(", ")+". Verifica eventuale ripartizione.",
+      classification_confidence:35,
+    };
+  }
+  if(matches.length===1) {
+    return {
+      cost_category:matches[0].category,category_status:"suggested",
+      category_source:"description",supplier_id:matched?.id??null,
+      classification_reason:"Descrizione riga fattura: "+matches[0].label,
+      classification_confidence:96,
+    };
+  }
+  if(matched&&matched.default_category!=="da_verificare") {
+    return {
+      cost_category:matched.default_category as CostCategory,
+      category_status:"confirmed",category_source:"supplier",supplier_id:matched.id,
+      classification_reason:"Regola approvata per il fornitore "+matched.legal_name,
+      classification_confidence:100,
+    };
+  }
+  const fallback=suggestCategory("expense",description||counterparty);
+  return {
+    cost_category:fallback.category,
+    category_status:fallback.category==="da_verificare"?"needs_review":"suggested",
+    category_source:fallback.category==="da_verificare"?"unclassified":"rule",
+    classification_reason:fallback.reason,
+    classification_confidence:fallback.confidence,supplier_id:matched?.id??null,
+  };
 }
 
 export type MatchSuggestion = {
