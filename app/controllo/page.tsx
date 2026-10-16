@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Banknote, CalendarClock, CheckCircle2,
   CircleAlert, FileUp, Landmark, Link2, LoaderCircle, Plus, Receipt,
-  RefreshCw, ShieldCheck, Sparkles, TrendingDown, TrendingUp, Wallet,
+  RefreshCw, ShieldCheck, Sparkles, TrendingDown, TrendingUp, Wallet, Building2, FolderOpen, Check,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 import {
@@ -13,7 +13,12 @@ import {
   type DeadlineRow, type InvoiceRow, type MatchRow, type MovementRow,
   type InvoiceDirection,
 } from "@/lib/financial-control";
+import {
+  accountingCategories, categoryLabel, grossInvoiceSummary,
+  suggestCategory, suggestReconciliations,
+} from "@/lib/business-accounting";
 import "./control-center.css";
+import "./business-center.css";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
@@ -34,11 +39,18 @@ type ArchiveDocument = {
   payment_status: string | null;
   uploaded_at: string | null;
 };
-type Section = "overview" | "invoices" | "accounts" | "deadlines";
+type Company = { id:string; legal_name:string; vat_number:string|null; status:"active"|"archived" };
+type AccountingRecord = {
+  id:string; record_type:string; title:string; category:string;
+  amount:number|null; tax_amount:number|null; due_date:string|null;
+  reference_period:string|null; review_status:string; document_id:string|null;
+  description:string|null;
+};
+type Section = "overview" | "invoices" | "accounts" | "deadlines" | "accounting";
 const blankInvoice = {
   direction: "income" as InvoiceDirection,
   invoice_number: "", counterparty: "", issue_date: "",
-  due_date: "", amount: "", notes: "",
+  due_date: "", amount: "", notes: "", cost_category: "",
 };
 const blankDeadline = {
   category: "bollo" as DeadlineRow["category"],
@@ -93,24 +105,37 @@ export default function FinancialControlCenter() {
   const [invoiceForm, setInvoiceForm] = useState(blankInvoice);
   const [deadlineForm, setDeadlineForm] = useState(blankDeadline);
   const [selectedTx, setSelectedTx] = useState<Record<string, string>>({});
+  const [companies,setCompanies] = useState<Company[]>([]);
+  const [companyId,setCompanyId] = useState<string|null>(null);
+  const [companyReady,setCompanyReady] = useState(false);
+  const [accountingRecords,setAccountingRecords] = useState<AccountingRecord[]>([]);
+  const [accountForm,setAccountForm] = useState({
+    record_type:"f24",title:"",amount:"",tax_amount:"",
+    reference_period:"",due_date:"",description:"",category:"da_verificare",
+  });
 
-  const loadData = useCallback(async (id: string) => {
+  const loadData = useCallback(async (id: string, scopeId: string | null) => {
     const supabase = getSupabaseClient();
     if (!supabase) { setError("Configurazione archivio non disponibile."); setLoading(false); return; }
     setLoading(true);
-    const [a, b, c, d, e] = await Promise.all([
-      supabase.from("financial_invoices").select("*").eq("user_id", id)
+    // Filtra sempre nel database per azienda/personale, mai soltanto nell'UI.
+    const scope = (query: any) => scopeId
+      ? query.eq("company_id", scopeId) : query.is("company_id", null);
+    const [a, b, c, d, e, f] = await Promise.all([
+      scope(supabase.from("financial_invoices").select("*").eq("user_id", id))
         .order("issue_date", { ascending: false }).limit(2000),
-      supabase.from("financial_transactions").select("*").eq("user_id", id)
+      scope(supabase.from("financial_transactions").select("*").eq("user_id", id))
         .order("booking_date", { ascending: false }).limit(4000),
-      supabase.from("financial_matches").select("*").eq("user_id", id).limit(4000),
-      supabase.from("financial_deadlines").select("*").eq("user_id", id)
+      scope(supabase.from("financial_matches").select("*").eq("user_id", id)).limit(4000),
+      scope(supabase.from("financial_deadlines").select("*").eq("user_id", id))
         .order("due_date", { ascending: true }).limit(1000),
-      supabase.from("documents")
+      scope(supabase.from("documents")
         .select("id,title,category,total_amount,expiry_date,financial_direction,payment_status,uploaded_at")
-        .eq("user_id", id).order("uploaded_at", { ascending: false }).limit(500),
+        .eq("user_id", id)).order("uploaded_at", { ascending: false }).limit(500),
+      scope(supabase.from("financial_accounting_records").select("*").eq("user_id", id))
+        .order("created_at", { ascending: false }).limit(500),
     ]);
-    const problem = a.error ?? b.error ?? c.error ?? d.error;
+    const problem = a.error ?? b.error ?? c.error ?? d.error ?? f.error;
     if (problem) {
       setStorageReady(false);
       setError("Il Centro di controllo non è ancora attivo nel database. Non vengono mostrati saldi o pagamenti incompleti.");
@@ -121,6 +146,7 @@ export default function FinancialControlCenter() {
       setMovements((b.data ?? []) as MovementRow[]);
       setMatches((c.data ?? []) as MatchRow[]);
       setDeadlines((d.data ?? []) as DeadlineRow[]);
+      setAccountingRecords((f.data ?? []) as AccountingRecord[]);
       // Il nuovo modulo resta utilizzabile anche se un archivio legacy
       // non presenta ancora tutte le colonne avanzate.
       setArchivedDocuments(e.error ? [] : (e.data ?? []) as ArchiveDocument[]);
@@ -160,19 +186,53 @@ export default function FinancialControlCenter() {
     return () => { mounted = false; listener.subscription.unsubscribe(); };
   }, []);
   useEffect(() => {
-    if (!userId) { setLoading(false); return; }
-    void loadData(userId);
-    void loadConnections();
-    if (typeof window !== "undefined" && window.location.search.includes("bank_return=1")) {
-      setMessage("Autorizzazione bancaria ricevuta. Premi Sincronizza per verificare il consenso e importare i movimenti.");
+    if (!userId) {setCompanyReady(false);setCompanies([]);return;}
+    let active=true;
+    const supabase=getSupabaseClient();
+    void (async()=>{
+      const {data,error} = await supabase!.from("financial_companies")
+        .select("id,legal_name,vat_number,status").eq("user_id",userId)
+        .order("legal_name",{ascending:true});
+      if(!active)return;
+      const list=(data??[]) as Company[];
+      setCompanies(list);
+      const requested = new URLSearchParams(window.location.search).get("company");
+      if(requested && list.some((item)=>item.id===requested))
+        setCompanyId(requested);
+      else {
+        setCompanyId(null);
+        if(requested && requested!=="personal")
+          setError("Azienda richiesta non disponibile per questo account.");
+      }
+      setCompanyReady(true);
+      if(error)setError("Archivio aziende in fase di attivazione.");
+    })();
+    return ()=>{active=false;};
+  },[userId]);
+  useEffect(() => {
+    if (!userId || !companyReady) {
+      if(!userId)setLoading(false);
+      return;
     }
-  }, [userId, loadData, loadConnections]);
+    setSelectedTx({});
+    setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
+    setAccountingRecords([]);setArchivedDocuments([]);
+    void loadData(userId,companyId);
+    if (companyId) {
+      // Le API PSD2 correnti sono personali: non mostrare i relativi
+      // conti/saldi in un contesto aziendale fino alla delega per impresa.
+      setConnections([]);setBankEnabled(false);setInstitutions([]);
+    } else void loadConnections();
+    if (!companyId && window.location.search.includes("bank_return=1")) {
+      setMessage("Autorizzazione bancaria ricevuta. Premi Sincronizza per verificare il consenso.");
+    }
+  }, [userId, companyId, companyReady, loadData, loadConnections]);
 
   const availableBalances = useMemo(() =>
-    connections.flatMap((connection) => connection.balances ?? [])
+    (companyId ? [] : connections).flatMap((connection) => connection.balances ?? [])
       .filter((balance) => balance.currency === "EUR" &&
         ["interimAvailable", "closingAvailable"].includes(balance.balanceType)),
-    [connections],
+    [connections,companyId],
   );
   const availableTotal = availableBalances.reduce((sum,balance) => sum + Number(balance.amount), 0);
 
@@ -302,7 +362,7 @@ export default function FinancialControlCenter() {
     if (issue) setError("Non è stato possibile registrare la fattura: " + issue.message);
     else { setInvoiceForm(blankInvoice); setLinkedDocumentId(null);
       setMessage("Fattura registrata; pagamento da verificare.");
-      await loadData(userId); }
+      await loadData(userId,companyId); }
   }
   async function submitDeadline(event: React.FormEvent) {
     event.preventDefault();
@@ -322,7 +382,7 @@ export default function FinancialControlCenter() {
     setWorking(false);
     if (issue) setError(issue.message);
     else { setDeadlineForm(blankDeadline); setMessage("Scadenza aggiunta.");
-      await loadData(userId); }
+      await loadData(userId,companyId); }
   }
   async function importXml(file: File | undefined) {
     if (!file || !userId) return;
@@ -341,7 +401,7 @@ export default function FinancialControlCenter() {
         .upsert(payload, { onConflict: "user_id,import_key", ignoreDuplicates: true });
       if (issue) throw issue;
       setMessage(`Elaborate ${payload.length} fatture XML (duplicati ignorati). Salvi i dati, non il file originale: archivialo anche in DocuMio.`);
-      await loadData(userId);
+      await loadData(userId,companyId);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Errore lettura XML."); }
     setWorking(false);
   }
@@ -372,7 +432,7 @@ export default function FinancialControlCenter() {
         if (issue) throw issue;
       }
       setMessage(`Analizzati ${payload.length} movimenti (righe non valide: ${parsed.rejected}). I duplicati già importati non sono reinseriti.`);
-      await loadData(userId);
+      await loadData(userId,companyId);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Errore di importazione."); }
     setWorking(false);
   }
@@ -396,14 +456,14 @@ export default function FinancialControlCenter() {
     setWorking(false);
     if (issue) setError(issue.message);
     else { setMessage("Pagamento collegato alla fattura e confermato da te.");
-      setSelectedTx((state) => ({ ...state, [invoice.id]: "" })); await loadData(userId); }
+      setSelectedTx((state) => ({ ...state, [invoice.id]: "" })); await loadData(userId,companyId); }
   }
   async function markDeadline(deadline: DeadlineRow) {
     if (!userId || !window.confirm("Confermi che questa scadenza è stata gestita?")) return;
     const { error: issue } = await getSupabaseClient()!.from("financial_deadlines")
       .update({ status: "settled" }).eq("id",deadline.id).eq("user_id",userId);
     if (issue) setError(issue.message);
-    else { setMessage("Scadenza confermata manualmente."); await loadData(userId); }
+    else { setMessage("Scadenza confermata manualmente."); await loadData(userId,companyId); }
   }
   async function bankApi(action: string, connectionId?: string, institutionId?: string) {
     const auth = await headers();
@@ -444,7 +504,7 @@ export default function FinancialControlCenter() {
     try {
       const result = await bankApi("sync",id);
       setMessage(result.message ?? `Sincronizzazione completata: ${result.imported ?? 0} nuovi movimenti. ${result.warnings?.join(" ") ?? ""}`);
-      await Promise.all([loadConnections(),loadData(userId)]);
+      await Promise.all([loadConnections(),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Sincronizzazione non riuscita."); }
     setWorking(false);
   }
@@ -456,7 +516,7 @@ export default function FinancialControlCenter() {
     try {
       await bankApi("disconnect",id);
       setMessage("Consenso revocato tramite provider e dati collegati rimossi.");
-      await Promise.all([loadConnections(),loadData(userId)]);
+      await Promise.all([loadConnections(),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Revoca non riuscita."); }
     setWorking(false);
   }
