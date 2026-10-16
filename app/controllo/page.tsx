@@ -461,9 +461,9 @@ export default function FinancialControlCenter() {
     setWorking(false);
   }
 
-  if (checkingLogin) return <main className="fc-page"><p>Verifico la sessione…</p></main>;
+  if (checkingLogin) return <main id="dm-main-content" className="fc-page"><p>Verifico la sessione…</p></main>;
   if (!userId) return (
-    <main className="fc-page"><div className="fc-login">
+    <main id="dm-main-content" className="fc-page"><div className="fc-login">
       <h1>Centro di controllo DocuMio</h1>
       <p>Questa area contiene dati economici privati. Accedi al tuo account.</p>
       <a className="fc-button" href="/">Torna all'accesso <ArrowRight size={16}/></a>
@@ -471,7 +471,7 @@ export default function FinancialControlCenter() {
   );
 
   const unmatched = movements.filter((m) => !matches.some((link) => link.transaction_id === m.id));
-  return <main className="fc-page">
+  return <main id="dm-main-content" className="fc-page">
     <header className="fc-header">
       <a href="/" className="fc-back"><ArrowLeft size={18}/> Archivio DocuMio</a>
       <span className="fc-secure"><ShieldCheck size={17}/> Accesso riservato</span>
