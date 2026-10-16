@@ -904,6 +904,47 @@ export default function Home() {
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
   const [practices, setPractices] = useState<Practice[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>("documents");
+
+  // Il menu comune apre Archivio/Pratiche senza ricaricare l'applicazione.
+  useEffect(() => {
+    const readRoute = () => {
+      const requested = new URLSearchParams(window.location.search).get("view");
+      setActiveView(requested === "practices" ? "practices" : "documents");
+    };
+    const onNavigate = (event: Event) => {
+      const view = (event as CustomEvent<{ view?: string }>).detail?.view;
+      if (view !== "documents" && view !== "practices") return;
+      setActiveView(view);
+      setActiveCategory("Tutti");
+      setQuery("");
+      setAiResultIds(null);
+    };
+    readRoute();
+    window.addEventListener("popstate", readRoute);
+    window.addEventListener("documio:navigate", onNavigate);
+    return () => {
+      window.removeEventListener("popstate", readRoute);
+      window.removeEventListener("documio:navigate", onNavigate);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || !userId || window.location.hash !== "#documio-library") return;
+    const frame = requestAnimationFrame(() =>
+      document.getElementById("documio-library")?.scrollIntoView({ block: "start" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [authReady, userId]);
+
+  function selectWorkspaceView(view: ActiveView) {
+    setActiveView(view);
+    const next = new URL(window.location.href);
+    next.searchParams.set("view", view);
+    next.hash = "documio-library";
+    window.history.replaceState(null, "", next.toString());
+    window.dispatchEvent(new Event("documio:view"));
+  }
+
   const [showPracticeModal, setShowPracticeModal] = useState(false);
   const [selectedPractice, setSelectedPractice] = useState<Practice | null>(null);
   const [sendingPracticeEmail, setSendingPracticeEmail] = useState(false);
@@ -3067,17 +3108,19 @@ export default function Home() {
   }
 
   return (
-    <main>
+    <main id="dm-main-content" className="dm-home-page">
       <header className="topbar">
         <div className="brand">
           <div className="logo">
             <FileText size={22} />
           </div>
-          <span>DocuMio</span>
+          <span className="dm-brand-full">DocuMio</span>
+          <span className="dm-brand-workspace">{language === "it" ? "La tua scrivania" : "Your workspace"}</span>
         </div>
 
         <div className="topbar-actions">
           <a
+            className="dm-legacy-control-link"
             href="/controllo"
             title={language === "it" ? "Centro di controllo amministrativo" : "Financial control center"}
             aria-label={language === "it" ? "Apri Centro di controllo" : "Open Financial Control Center"}
@@ -3151,6 +3194,50 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      <section className="dm-quick-actions" aria-label={language === "it" ? "Azioni rapide" : "Quick actions"}>
+        <div className="dm-quick-actions-heading">
+          <div>
+            <span>{language === "it" ? "ACCESSO RAPIDO" : "QUICK ACCESS"}</span>
+            <h2>{language === "it" ? "Cosa vuoi fare oggi?" : "What would you like to do?"}</h2>
+          </div>
+          <small>{language === "it" ? "Tutto organizzato in un unico posto" : "Everything in one place"}</small>
+        </div>
+        <div className="dm-quick-grid">
+          <a href="/carica" className="dm-quick-item dm-quick-upload">
+            <span><Upload size={21} /></span>
+            <span className="dm-quick-copy">
+              <strong>{language === "it" ? "Carica documenti" : "Upload files"}</strong>
+              <small>{language === "it" ? "Uno o più file insieme" : "One or several files"}</small>
+            </span>
+            <span className="dm-quick-arrow" aria-hidden="true">→</span>
+          </a>
+          <button type="button" className="dm-quick-item" onClick={() => setShowAssistant(true)}>
+            <span><Bot size={21} /></span>
+            <span className="dm-quick-copy">
+              <strong>{language === "it" ? "Chiedi a DocuMio" : "Ask DocuMio"}</strong>
+              <small>{language === "it" ? "Assistente intelligente" : "Smart assistant"}</small>
+            </span>
+            <span className="dm-quick-arrow" aria-hidden="true">→</span>
+          </button>
+          <a href="/controllo" className="dm-quick-item dm-quick-finance">
+            <span><Landmark size={21} /></span>
+            <span className="dm-quick-copy">
+              <strong>{language === "it" ? "Controllo e scadenze" : "Finance & deadlines"}</strong>
+              <small>{language === "it" ? "Fatture, conti, promemoria" : "Invoices and reminders"}</small>
+            </span>
+            <span className="dm-quick-arrow" aria-hidden="true">→</span>
+          </a>
+          <a href="/email" className="dm-quick-item dm-quick-email">
+            <span><Mail size={21} /></span>
+            <span className="dm-quick-copy">
+              <strong>{language === "it" ? "Posta intelligente" : "Smart inbox"}</strong>
+              <small>{language === "it" ? "Email e documenti collegati" : "Emails and attachments"}</small>
+            </span>
+            <span className="dm-quick-arrow" aria-hidden="true">→</span>
+          </a>
+        </div>
+      </section>
 
       <section className="hero" style={{ position: "relative" }}>
         <div>
@@ -3248,7 +3335,7 @@ export default function Home() {
         </div>
       )}
 
-      <section
+      <section id="documio-library" className="dm-view-tabs"
         style={{
           maxWidth: 1400,
           margin: "0 auto 20px",
@@ -3261,14 +3348,16 @@ export default function Home() {
         <button
           type="button"
           className={activeView === "documents" ? "primary" : ""}
-          onClick={() => setActiveView("documents")}
+          aria-pressed={activeView === "documents"}
+          onClick={() => selectWorkspaceView("documents")}
         >
           <FileText size={18} /> {language === "it" ? "Documenti" : "Documents"}
         </button>
         <button
           type="button"
           className={activeView === "practices" ? "primary" : ""}
-          onClick={() => setActiveView("practices")}
+          aria-pressed={activeView === "practices"}
+          onClick={() => selectWorkspaceView("practices")}
         >
           <FolderKanban size={18} /> {language === "it" ? "Pratiche" : "Cases"}
         </button>
@@ -3282,6 +3371,7 @@ export default function Home() {
 
       {activeView === "documents" && (
         <section
+          className="dm-summary-grid"
           style={{
             maxWidth: 1400,
             margin: "0 auto 26px",
