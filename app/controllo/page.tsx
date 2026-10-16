@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Banknote, CalendarClock, CheckCircle2,
-  CircleAlert, FileUp, Landmark, Link2, LoaderCircle, Plus, Receipt,
-  RefreshCw, ShieldCheck, Sparkles, TrendingDown, TrendingUp, Wallet,
+  CircleAlert, FileUp, FileText, Landmark, Link2, LoaderCircle, Plus, Receipt,
+  RefreshCw, ShieldCheck, Sparkles, TrendingDown, TrendingUp, Wallet, Building2, FolderOpen, Check,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 import {
@@ -13,7 +13,12 @@ import {
   type DeadlineRow, type InvoiceRow, type MatchRow, type MovementRow,
   type InvoiceDirection,
 } from "@/lib/financial-control";
+import {
+  accountingCategories, categoryLabel, grossInvoiceSummary,
+  suggestCategory, suggestReconciliations,
+} from "@/lib/business-accounting";
 import "./control-center.css";
+import "./business-center.css";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
@@ -34,11 +39,18 @@ type ArchiveDocument = {
   payment_status: string | null;
   uploaded_at: string | null;
 };
-type Section = "overview" | "invoices" | "accounts" | "deadlines";
+type Company = { id:string; legal_name:string; vat_number:string|null; status:"active"|"archived" };
+type AccountingRecord = {
+  id:string; record_type:string; title:string; category:string;
+  amount:number|null; tax_amount:number|null; due_date:string|null;
+  reference_period:string|null; review_status:string; document_id:string|null;
+  description:string|null;
+};
+type Section = "overview" | "invoices" | "accounts" | "deadlines" | "accounting";
 const blankInvoice = {
   direction: "income" as InvoiceDirection,
   invoice_number: "", counterparty: "", issue_date: "",
-  due_date: "", amount: "", notes: "",
+  due_date: "", amount: "", notes: "", cost_category: "",
 };
 const blankDeadline = {
   category: "bollo" as DeadlineRow["category"],
@@ -93,24 +105,46 @@ export default function FinancialControlCenter() {
   const [invoiceForm, setInvoiceForm] = useState(blankInvoice);
   const [deadlineForm, setDeadlineForm] = useState(blankDeadline);
   const [selectedTx, setSelectedTx] = useState<Record<string, string>>({});
+  const [companies,setCompanies] = useState<Company[]>([]);
+  const [companyId,setCompanyId] = useState<string|null>(null);
+  const [companyReady,setCompanyReady] = useState(false);
+  const loadVersion = useRef(0);
+  const [accountingRecords,setAccountingRecords] = useState<AccountingRecord[]>([]);
+  const [reviewingContract,setReviewingContract] = useState<string|null>(null);
+  const [contractReview,setContractReview] = useState<null|{
+    documentTitle:string;summary:string;
+    issues:Array<{topic:string;severity:string;passage:string;explanation:string;action:string}>;
+    checklist:string[];limitations:string;
+  }>(null);
+  const [accountForm,setAccountForm] = useState({
+    record_type:"f24",title:"",amount:"",tax_amount:"",
+    reference_period:"",due_date:"",description:"",category:"da_verificare",
+  });
 
-  const loadData = useCallback(async (id: string) => {
+  const loadData = useCallback(async (id: string, scopeId: string | null) => {
+    const version = ++loadVersion.current;
     const supabase = getSupabaseClient();
     if (!supabase) { setError("Configurazione archivio non disponibile."); setLoading(false); return; }
     setLoading(true);
-    const [a, b, c, d, e] = await Promise.all([
-      supabase.from("financial_invoices").select("*").eq("user_id", id)
+    // Filtra sempre nel database per azienda/personale, mai soltanto nell'UI.
+    const scope = (query: any) => scopeId
+      ? query.eq("company_id", scopeId) : query.is("company_id", null);
+    const [a, b, c, d, e, f] = await Promise.all([
+      scope(supabase.from("financial_invoices").select("*").eq("user_id", id))
         .order("issue_date", { ascending: false }).limit(2000),
-      supabase.from("financial_transactions").select("*").eq("user_id", id)
+      scope(supabase.from("financial_transactions").select("*").eq("user_id", id))
         .order("booking_date", { ascending: false }).limit(4000),
-      supabase.from("financial_matches").select("*").eq("user_id", id).limit(4000),
-      supabase.from("financial_deadlines").select("*").eq("user_id", id)
+      scope(supabase.from("financial_matches").select("*").eq("user_id", id)).limit(4000),
+      scope(supabase.from("financial_deadlines").select("*").eq("user_id", id))
         .order("due_date", { ascending: true }).limit(1000),
-      supabase.from("documents")
+      scope(supabase.from("documents")
         .select("id,title,category,total_amount,expiry_date,financial_direction,payment_status,uploaded_at")
-        .eq("user_id", id).order("uploaded_at", { ascending: false }).limit(500),
+        .eq("user_id", id)).order("uploaded_at", { ascending: false }).limit(500),
+      scope(supabase.from("financial_accounting_records").select("*").eq("user_id", id))
+        .order("created_at", { ascending: false }).limit(500),
     ]);
-    const problem = a.error ?? b.error ?? c.error ?? d.error;
+    if (version !== loadVersion.current) return;
+    const problem = a.error ?? b.error ?? c.error ?? d.error ?? f.error;
     if (problem) {
       setStorageReady(false);
       setError("Il Centro di controllo non è ancora attivo nel database. Non vengono mostrati saldi o pagamenti incompleti.");
@@ -121,6 +155,7 @@ export default function FinancialControlCenter() {
       setMovements((b.data ?? []) as MovementRow[]);
       setMatches((c.data ?? []) as MatchRow[]);
       setDeadlines((d.data ?? []) as DeadlineRow[]);
+      setAccountingRecords((f.data ?? []) as AccountingRecord[]);
       // Il nuovo modulo resta utilizzabile anche se un archivio legacy
       // non presenta ancora tutte le colonne avanzate.
       setArchivedDocuments(e.error ? [] : (e.data ?? []) as ArchiveDocument[]);
@@ -160,19 +195,54 @@ export default function FinancialControlCenter() {
     return () => { mounted = false; listener.subscription.unsubscribe(); };
   }, []);
   useEffect(() => {
-    if (!userId) { setLoading(false); return; }
-    void loadData(userId);
-    void loadConnections();
-    if (typeof window !== "undefined" && window.location.search.includes("bank_return=1")) {
-      setMessage("Autorizzazione bancaria ricevuta. Premi Sincronizza per verificare il consenso e importare i movimenti.");
+    if (!userId) {setCompanyReady(false);setCompanies([]);return;}
+    let active=true;
+    const supabase=getSupabaseClient();
+    void (async()=>{
+      const {data,error} = await supabase!.from("financial_companies")
+        .select("id,legal_name,vat_number,status").eq("user_id",userId)
+        .order("legal_name",{ascending:true});
+      if(!active)return;
+      const list=(data??[]) as Company[];
+      setCompanies(list);
+      const requested = new URLSearchParams(window.location.search).get("company");
+      if(requested && list.some((item)=>item.id===requested))
+        setCompanyId(requested);
+      else {
+        setCompanyId(null);
+        if(requested && requested!=="personal")
+          setError("Azienda richiesta non disponibile per questo account.");
+      }
+      setCompanyReady(true);
+      if(error)setError("Archivio aziende in fase di attivazione.");
+    })();
+    return ()=>{active=false;};
+  },[userId]);
+  useEffect(() => {
+    if (!userId || !companyReady) {
+      if(!userId)setLoading(false);
+      return;
     }
-  }, [userId, loadData, loadConnections]);
+    loadVersion.current++;
+    setSelectedTx({});
+    setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
+    setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);
+    void loadData(userId,companyId);
+    if (companyId) {
+      // Le API PSD2 correnti sono personali: non mostrare i relativi
+      // conti/saldi in un contesto aziendale fino alla delega per impresa.
+      setConnections([]);setBankEnabled(false);setInstitutions([]);
+    } else void loadConnections();
+    if (!companyId && window.location.search.includes("bank_return=1")) {
+      setMessage("Autorizzazione bancaria ricevuta. Premi Sincronizza per verificare il consenso.");
+    }
+  }, [userId, companyId, companyReady, loadData, loadConnections]);
 
   const availableBalances = useMemo(() =>
-    connections.flatMap((connection) => connection.balances ?? [])
+    (companyId ? [] : connections).flatMap((connection) => connection.balances ?? [])
       .filter((balance) => balance.currency === "EUR" &&
         ["interimAvailable", "closingAvailable"].includes(balance.balanceType)),
-    [connections],
+    [connections,companyId],
   );
   const availableTotal = availableBalances.reduce((sum,balance) => sum + Number(balance.amount), 0);
 
@@ -193,6 +263,24 @@ export default function FinancialControlCenter() {
       overdue: invoices.filter((i) => i.due_date && daysTo(i.due_date) < 0 &&
         Number(i.amount) - paid(i) > 0.01).length };
   }, [invoices, matches, movements]);
+
+  const provisional = useMemo(()=>grossInvoiceSummary(invoices),[invoices]);
+  const reconciliationSuggestions = useMemo(() =>
+    suggestReconciliations(invoices,movements,matches),
+    [invoices,movements,matches],
+  );
+  const currentCompany = companies.find((item)=>item.id===companyId);
+  function selectCompany(value:string) {
+    if(working)return;
+    const selected=value && companies.some((item)=>item.id===value)?value:null;
+    const url=new URL(window.location.href);
+    if(selected)url.searchParams.set("company",selected);
+    else url.searchParams.delete("company");
+    window.history.replaceState(null,"",url);
+    window.dispatchEvent(new Event("documio:workspace"));
+    setError("");setMessage("");setLinkedDocumentId(null);
+    setCompanyId(selected);setTab("overview");
+  }
 
   const actionItems = useMemo(() => {
     const invoiceActions = invoices.filter((invoice) => invoice.due_date &&
@@ -283,6 +371,96 @@ export default function FinancialControlCenter() {
     return notices.slice(0, 8);
   }, [metrics, movements.length, deadlines.length]);
 
+  async function confirmInvoiceCategory(invoice:InvoiceRow,category:string) {
+    if(!userId || !accountingCategories.some((item)=>item.value===category))return;
+    setWorking(true);setError("");
+    const {error:issue}=await getSupabaseClient()!.from("financial_invoices")
+      .update({cost_category:category,category_status:"confirmed"})
+      .eq("id",invoice.id).eq("user_id",userId);
+    setWorking(false);
+    if(issue)setError(issue.message);
+    else {setMessage("Categoria confermata da te; non equivale a deducibilità fiscale.");
+      await loadData(userId,companyId);}
+  }
+
+  async function submitAccountingRecord(event:React.FormEvent) {
+    event.preventDefault();
+    if(!userId || working)return;
+    const amount=accountForm.amount.trim()
+      ? Number(accountForm.amount.replace(",",".")) : null;
+    const taxAmount=accountForm.tax_amount.trim()
+      ? Number(accountForm.tax_amount.replace(",",".")) : null;
+    if([amount,taxAmount].some((v)=>v!==null && (!Number.isFinite(v)||v<0))) {
+      setError("Controlla importi e tributi.");return;
+    }
+    if(accountForm.title.trim().length<2){setError("Inserisci una descrizione.");return;}
+    setWorking(true);setError("");setMessage("");
+    const {error:issue}=await getSupabaseClient()!.from("financial_accounting_records").insert({
+      user_id:userId,company_id:companyId,
+      record_type:accountForm.record_type,
+      title:accountForm.title.trim(),category:accountForm.category,
+      amount,tax_amount:taxAmount,
+      reference_period:accountForm.reference_period.trim()||null,
+      due_date:accountForm.due_date||null,
+      description:accountForm.description.trim()||null,
+      review_status:"needs_review",
+    });
+    setWorking(false);
+    if(issue)setError("Registrazione non riuscita: "+issue.message);
+    else {
+      setAccountForm({record_type:"f24",title:"",amount:"",tax_amount:"",
+        reference_period:"",due_date:"",description:"",category:"da_verificare"});
+      setMessage("Registrazione provvisoria inserita: controlla documento e correttezza fiscale.");
+      await loadData(userId,companyId);
+    }
+  }
+
+  async function confirmAccountingRecord(record:AccountingRecord) {
+    if(!userId||!window.confirm("Hai controllato l'importo e il documento originale?"))return;
+    setWorking(true);setError("");
+    const {error:issue}=await getSupabaseClient()!.from("financial_accounting_records")
+      .update({review_status:"confirmed"})
+      .eq("user_id",userId).eq("id",record.id);
+    setWorking(false);
+    if(issue)setError(issue.message);
+    else {setMessage("Registrazione marcata come verificata manualmente.");
+      await loadData(userId,companyId);}
+  }
+
+  async function reviewContractFile(record:AccountingRecord) {
+    if(!record.document_id || reviewingContract)return;
+    if(!window.confirm(
+      "DocuMio invierà questo contratto al servizio AI per individuarne clausole e possibili criticità. Il risultato non è un parere legale. Procedere?"
+    ))return;
+    const auth=await headers();
+    if(!auth){setError("Sessione non valida.");return;}
+    setReviewingContract(record.document_id);setError("");setContractReview(null);
+    try{
+      const response=await fetch("/api/contracts/review",{
+        method:"POST",
+        headers:{...auth,"Content-Type":"application/json"},
+        body:JSON.stringify({documentId:record.document_id,consentToAi:true}),
+      });
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error??"Analisi non disponibile.");
+      setContractReview(result.review);
+      if(result.persisted===false)setMessage("Analisi visibile, ma il salvataggio è da ripetere.");
+      else setMessage("Analisi contrattuale recuperata. Verifica ogni passaggio nell'originale.");
+    }catch(problem){setError(problem instanceof Error?problem.message:"Contratto non analizzato.");}
+    finally{setReviewingContract(null);}
+  }
+  async function openAccountingOriginal(record:AccountingRecord) {
+    if(!record.document_id || !userId)return;
+    const supabase=getSupabaseClient()!;
+    const {data,error}=await supabase.from("documents").select("storage_path")
+      .eq("id",record.document_id).eq("user_id",userId).maybeSingle();
+    if(error||!data?.storage_path){setError("Documento originale non trovato.");return;}
+    const {data:signed,error:signedError}=await supabase.storage.from("documents")
+      .createSignedUrl(data.storage_path,120);
+    if(signedError||!signed?.signedUrl){setError("Impossibile aprire l'originale.");return;}
+    window.open(signed.signedUrl,"_blank","noopener,noreferrer");
+  }
+
   async function submitInvoice(event: React.FormEvent) {
     event.preventDefault();
     if (!userId) return;
@@ -291,18 +469,22 @@ export default function FinancialControlCenter() {
     setWorking(true); setError(""); setMessage("");
     const supabase = getSupabaseClient()!;
     const { error: issue } = await supabase.from("financial_invoices").insert({
-      user_id: userId, source: "manual", direction: invoiceForm.direction,
+      user_id: userId, company_id: companyId, source: "manual",
+      direction: invoiceForm.direction,
       invoice_number: invoiceForm.invoice_number.trim(),
       counterparty: invoiceForm.counterparty.trim(), issue_date: invoiceForm.issue_date,
       due_date: invoiceForm.due_date || null, amount, currency: "EUR",
       notes: invoiceForm.notes.trim() || null,
       document_id: linkedDocumentId,
+      cost_category: invoiceForm.cost_category ||
+        suggestCategory(invoiceForm.direction,`${invoiceForm.counterparty} ${invoiceForm.notes}`).category,
+      category_status: invoiceForm.cost_category ? "confirmed" : "needs_review",
     });
     setWorking(false);
     if (issue) setError("Non è stato possibile registrare la fattura: " + issue.message);
     else { setInvoiceForm(blankInvoice); setLinkedDocumentId(null);
       setMessage("Fattura registrata; pagamento da verificare.");
-      await loadData(userId); }
+      await loadData(userId,companyId); }
   }
   async function submitDeadline(event: React.FormEvent) {
     event.preventDefault();
@@ -314,7 +496,8 @@ export default function FinancialControlCenter() {
     }
     setWorking(true); setError(""); setMessage("");
     const { error: issue } = await getSupabaseClient()!.from("financial_deadlines").insert({
-      user_id: userId, source: "manual", category: deadlineForm.category,
+      user_id: userId, company_id: companyId,
+      source: "manual", category: deadlineForm.category,
       title: deadlineForm.title.trim(), due_date: deadlineForm.due_date,
       amount, reference_code: deadlineForm.reference_code.trim() || null,
       notes: deadlineForm.notes.trim() || null,
@@ -322,29 +505,86 @@ export default function FinancialControlCenter() {
     setWorking(false);
     if (issue) setError(issue.message);
     else { setDeadlineForm(blankDeadline); setMessage("Scadenza aggiunta.");
-      await loadData(userId); }
+      await loadData(userId,companyId); }
   }
   async function importXml(file: File | undefined) {
     if (!file || !userId) return;
-    if (file.size > 5_000_000) { setError("XML troppo grande (massimo 5 MB)."); return; }
-    setWorking(true); setError(""); setMessage("");
+    if (file.size > 5_000_000 || file.size <= 0) {
+      setError("Seleziona un XML FatturaPA valido fino a 5 MB.");return;
+    }
+    setWorking(true);setError("");setMessage("");
+    let uploadedPath:string|null=null;
+    let archivedId:string|null=null;
+    const supabase=getSupabaseClient()!;
     try {
-      const rows = parseFatturaPaXml(await file.text(), xmlDirection);
-      const payload = await Promise.all(rows.map(async (row) => ({
-        ...row, user_id: userId,
-        import_key: await fingerprint([
-          "xml", row.direction, row.invoice_number, row.issue_date,
-          row.counterparty.toLowerCase(), row.amount.toFixed(2), row.currency,
+      if (companyId && !currentCompany?.vat_number)
+        throw new Error("Prima di importare XML in questa azienda, inserisci la sua partita IVA nella sezione Aziende.");
+      const xml=await file.text();
+      const rows=parseFatturaPaXml(xml,xmlDirection,
+        companyId ? currentCompany?.vat_number : null);
+      const payload=await Promise.all(rows.map(async(row)=>({
+        ...row,user_id:userId,company_id:companyId,
+        cost_category:suggestCategory(row.direction,`${row.counterparty} ${row.notes||""}`).category,
+        category_status:"needs_review",
+        import_key:await fingerprint([
+          "xml",companyId??"personal",row.direction,row.invoice_number,row.issue_date,
+          row.counterparty.toLowerCase(),row.amount.toFixed(2),row.currency,
         ].join("|")),
       })));
-      const { error: issue } = await getSupabaseClient()!.from("financial_invoices")
-        .upsert(payload, { onConflict: "user_id,import_key", ignoreDuplicates: true });
-      if (issue) throw issue;
-      setMessage(`Elaborate ${payload.length} fatture XML (duplicati ignorati). Salvi i dati, non il file originale: archivialo anche in DocuMio.`);
-      await loadData(userId);
-    } catch (problem) { setError(problem instanceof Error ? problem.message : "Errore lettura XML."); }
-    setWorking(false);
+      const keys=payload.map((item)=>item.import_key);
+      const {data:existing,error:existingError}=await supabase.from("financial_invoices")
+        .select("import_key").eq("user_id",userId).in("import_key",keys);
+      if(existingError)throw existingError;
+      const seen=new Set((existing??[]).map((item)=>item.import_key));
+      const newRows=payload.filter((item)=>!seen.has(item.import_key));
+      if(!newRows.length){
+        setMessage("Fattura già presente in questo archivio: nessuna duplicazione.");
+        await loadData(userId,companyId);
+        return;
+      }
+      // Il file originale rimane nell'archivio privato con la fattura.
+      const name=file.name.normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g,"-").slice(-110)||"fattura.xml";
+      const storagePath=`${userId}/fatture/${crypto.randomUUID()}-${name}`;
+      const {error:storeError}=await supabase.storage.from("documents")
+        .upload(storagePath,file,{contentType:"application/xml",upsert:false,cacheControl:"3600"});
+      if(storeError)throw new Error("Non posso archiviare l'XML originale: "+storeError.message);
+      uploadedPath=storagePath;
+      const first=newRows[0];
+      const {data:archived,error:archiveError}=await supabase.from("documents").insert({
+        user_id:userId,company_id:companyId,
+        title:`Fattura ${first.invoice_number} · ${first.counterparty}`.slice(0,180),
+        category:"Lavoro",file_name:file.name,
+        uploaded_at:new Date().toISOString(),
+        summary:"Fattura XML FatturaPA importata; dati e categoria da verificare.",
+        keywords:["fattura","XML",first.direction==="income"?"vendita":"acquisto"],
+        size:file.size,storage_path:storagePath,
+        financial_direction:first.direction,total_amount:first.amount,
+        expiry_date:first.due_date,ai_status:"completed",
+        financial_document_type:"invoice_xml",accounting_review_status:"needs_review",
+        payment_status:"Da pagare",
+      }).select("id").single();
+      if(archiveError||!archived?.id)throw new Error("Archivio documento non riuscito: "+(archiveError?.message??""));
+      archivedId=archived.id;
+      // Per XML con più corpi il documento si collega alla prima fattura;
+      // le altre sono registrate senza duplicare il riferimento al medesimo file.
+      const inserts=newRows.map((item,index)=>({
+        ...item,document_id:index===0?archived.id:null,
+      }));
+      const {error:issue}=await supabase.from("financial_invoices")
+        .upsert(inserts,{onConflict:"user_id,import_key",ignoreDuplicates:true});
+      if(issue)throw issue;
+      uploadedPath=null;archivedId=null;
+      setMessage(`Importate ${newRows.length} fatture XML in ${currentCompany?.legal_name||"personale"}:
+        file originale archiviato, dati e IVA da verificare. Nessun pagamento marcato automaticamente.`);
+      await loadData(userId,companyId);
+    } catch(problem) {
+      // Ripristina l'archivio solo se la scrittura della fattura non è riuscita.
+      if(archivedId)await supabase.from("documents").delete().eq("id",archivedId).eq("user_id",userId);
+      if(uploadedPath)await supabase.storage.from("documents").remove([uploadedPath]);
+      setError(problem instanceof Error?problem.message:"Importazione XML non riuscita.");
+    } finally {setWorking(false);}
   }
+
   async function importCsv(file: File | undefined) {
     if (!file || !userId) return;
     if (file.size > 5_000_000) { setError("CSV troppo grande (massimo 5 MB)."); return; }
@@ -354,12 +594,16 @@ export default function FinancialControlCenter() {
       if (!parsed.rows.length) throw new Error("Nessun movimento valido trovato.");
       const occurrences = new Map<string, number>();
       const payload = await Promise.all(parsed.rows.map(async (row) => {
-        const raw = [accountLabel.trim(),row.booking_date,row.amount.toFixed(2),
+        const raw = [companyId ?? "personal",accountLabel.trim(),
+          row.booking_date,row.amount.toFixed(2),
           row.currency,row.description,row.counterparty].join("|");
         const repeat = (occurrences.get(raw) ?? 0) + 1;
         occurrences.set(raw, repeat);
         return {
-          ...row, user_id: userId, source: "csv",
+          ...row, user_id: userId, company_id: companyId, source: "csv",
+          suggested_category: suggestCategory(Number(row.amount)>0?"income":"expense",
+            `${row.counterparty} ${row.description}`).category,
+          category_status: "needs_review",
           account_label: accountLabel.trim().slice(0, 80) || "Conto CSV",
           import_key: "csv:" + await fingerprint(raw + "|" + repeat),
         };
@@ -372,7 +616,7 @@ export default function FinancialControlCenter() {
         if (issue) throw issue;
       }
       setMessage(`Analizzati ${payload.length} movimenti (righe non valide: ${parsed.rejected}). I duplicati già importati non sono reinseriti.`);
-      await loadData(userId);
+      await loadData(userId,companyId);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Errore di importazione."); }
     setWorking(false);
   }
@@ -390,22 +634,23 @@ export default function FinancialControlCenter() {
     if (!confirmed) return;
     setWorking(true); setError("");
     const { error: issue } = await getSupabaseClient()!.from("financial_matches").insert({
-      user_id: userId, invoice_id: invoice.id,
+      user_id: userId, company_id: companyId, invoice_id: invoice.id,
       transaction_id: bank.id, allocated_amount: allocation,
     });
     setWorking(false);
     if (issue) setError(issue.message);
     else { setMessage("Pagamento collegato alla fattura e confermato da te.");
-      setSelectedTx((state) => ({ ...state, [invoice.id]: "" })); await loadData(userId); }
+      setSelectedTx((state) => ({ ...state, [invoice.id]: "" })); await loadData(userId,companyId); }
   }
   async function markDeadline(deadline: DeadlineRow) {
     if (!userId || !window.confirm("Confermi che questa scadenza è stata gestita?")) return;
     const { error: issue } = await getSupabaseClient()!.from("financial_deadlines")
       .update({ status: "settled" }).eq("id",deadline.id).eq("user_id",userId);
     if (issue) setError(issue.message);
-    else { setMessage("Scadenza confermata manualmente."); await loadData(userId); }
+    else { setMessage("Scadenza confermata manualmente."); await loadData(userId,companyId); }
   }
   async function bankApi(action: string, connectionId?: string, institutionId?: string) {
+    if (companyId) throw new Error("Connessioni bancarie aziendali non ancora abilitate: utilizza l'importazione CSV.");
     const auth = await headers();
     if (!auth) throw new Error("Devi effettuare nuovamente l'accesso.");
     const response = await fetch("/api/finance/banks", {
@@ -444,7 +689,7 @@ export default function FinancialControlCenter() {
     try {
       const result = await bankApi("sync",id);
       setMessage(result.message ?? `Sincronizzazione completata: ${result.imported ?? 0} nuovi movimenti. ${result.warnings?.join(" ") ?? ""}`);
-      await Promise.all([loadConnections(),loadData(userId)]);
+      await Promise.all([loadConnections(),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Sincronizzazione non riuscita."); }
     setWorking(false);
   }
@@ -456,7 +701,7 @@ export default function FinancialControlCenter() {
     try {
       await bankApi("disconnect",id);
       setMessage("Consenso revocato tramite provider e dati collegati rimossi.");
-      await Promise.all([loadConnections(),loadData(userId)]);
+      await Promise.all([loadConnections(),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Revoca non riuscita."); }
     setWorking(false);
   }
@@ -477,6 +722,26 @@ export default function FinancialControlCenter() {
       <span className="fc-secure"><ShieldCheck size={17}/> Accesso riservato</span>
     </header>
 
+    <section className="fc-workspace-switch" aria-label="Scegli archivio">
+      <div className="fc-workspace-caption">
+        <span className="fc-workspace-symbol">{companyId?<Building2 size={23}/>:<FolderOpen size={23}/>}</span>
+        <div>
+          <small>AMBITO DI LAVORO</small>
+          <strong>{currentCompany?.legal_name||"Personale e famiglia"}</strong>
+          <p>Fatture, movimenti, costi e scadenze vengono separati per archivio.</p>
+        </div>
+      </div>
+      <div className="fc-workspace-tools">
+        <label htmlFor="fc-workspace-select">Cambia archivio</label>
+        <select id="fc-workspace-select" value={companyId??""} disabled={!companyReady || working}
+          onChange={(event)=>selectCompany(event.target.value)}>
+          <option value="">Personale</option>
+          {companies.map((company)=>
+            <option key={company.id} value={company.id}>{company.legal_name}</option>)}
+        </select>
+        <a href="/aziende" className="fc-company-add"><Plus size={17}/> Crea azienda / gestisci</a>
+      </div>
+    </section>
     <section className="fc-hero">
       <div>
         <span className="fc-overline"><Sparkles size={16}/> DocuMio · Centro di controllo</span>
@@ -490,6 +755,7 @@ export default function FinancialControlCenter() {
       {([
         ["overview","Panoramica",Sparkles],["invoices","Fatture",Receipt],
         ["accounts","Banche e movimenti",Landmark],["deadlines","Scadenze",CalendarClock],
+        ["accounting","Contabilità e documenti",Building2],
       ] as const).map(([key,label,Icon]) =>
         <button key={key} className={tab === key ? "active" : ""} type="button"
           onClick={() => {setTab(key);setError("");setMessage("");}}>
@@ -547,6 +813,22 @@ export default function FinancialControlCenter() {
             <p key={i}><BadgeCheck size={17}/>{note}</p>)}</div>
         </section>
       </div>
+      <section className="fc-panel fc-balance-preview">
+        <h2><Building2 size={21}/> Conto economico preliminare · fatture importate</h2>
+        <p className="fc-muted">Riepilogo lordo basato solo sulle fatture caricate per {currentCompany?.legal_name||"l'archivio personale"}.
+          Non è il bilancio ufficiale e non calcola l'utile fiscale.</p>
+        <div className="fc-balance-metrics">
+          <div><span>Fatture attive lorde</span><strong>{eur(provisional.income)}</strong></div>
+          <div><span>Fatture passive lorde</span><strong>{eur(provisional.expense)}</strong></div>
+          <div><span>Differenza grezza (non utile)</span><strong>{eur(provisional.provisionalDifference)}</strong></div>
+        </div>
+        <h3>Ripartizione provvisoria dei costi</h3>
+        {!provisional.categorized.length
+          ? <p className="fc-muted">Carica fatture e conferma le categorie per vedere la ripartizione.</p>
+          : <div className="fc-category-summary">{provisional.categorized.slice(0,12).map(([code,amount])=>
+            <div key={code}><span>{categoryLabel(code)}</span><strong>{eur(amount)}</strong></div>)}</div>}
+        <div className="fc-disclaimer">Le registrazioni F24, stipendi e CONAI sono separate dai totali fatture per evitare doppie contabilizzazioni. IVA indetraibile, ammortamenti, rimanenze, ratei, risconti e competenze non sono calcolati automaticamente.</div>
+      </section>
       <div className="fc-disclaimer">Questi importi rappresentano fatture e flussi bancari, non l'utile contabile né le imposte dovute. Le fonti potrebbero essere incomplete.</div>
     </>}
 
@@ -577,6 +859,14 @@ export default function FinancialControlCenter() {
               <label>Scadenza pagamento<input type="date" value={invoiceForm.due_date}
                 onChange={(e)=>setInvoiceForm({...invoiceForm,due_date:e.target.value})}/></label>
             </div>
+            <label>Categoria contabile
+              <select value={invoiceForm.cost_category}
+                onChange={(e)=>setInvoiceForm({...invoiceForm,cost_category:e.target.value})}>
+                <option value="">Suggeriscila automaticamente (da verificare)</option>
+                {accountingCategories.map((category)=><option key={category.value}
+                  value={category.value}>{category.label}</option>)}
+              </select>
+            </label>
             <label>Note<input maxLength={500} value={invoiceForm.notes}
               onChange={(e)=>setInvoiceForm({...invoiceForm,notes:e.target.value})}/></label>
             <button className="fc-button" disabled={working} type="submit"><Plus size={17}/> Registra</button>
@@ -595,7 +885,8 @@ export default function FinancialControlCenter() {
             <input type="file" accept=".xml,text/xml,application/xml" disabled={working}
               onChange={(e)=>{void importXml(e.target.files?.[0]);e.currentTarget.value="";}}/>
           </label>
-          <small className="fc-muted">Vengono importati numero, controparte, importo, data e scadenza quando presenti. Il file originale va caricato anche nell'archivio.</small>
+          <small className="fc-muted">Importa numero, controparte, importo, IVA esposta, data e scadenza quando presenti.
+            Il file XML originale viene conservato nell'archivio selezionato; l'imputazione contabile resta da confermare.</small>
         </section>
       </div>
       <section className="fc-panel">
@@ -655,6 +946,7 @@ export default function FinancialControlCenter() {
                   {invoice.direction === "income" ? "Emessa" : "Ricevuta"} ·
                   {" "}{invoice.invoice_number} · {dateIt(invoice.issue_date)}
                   {invoice.document_id ? " · Documento DocuMio collegato" : ""}
+                  {" · "}{categoryLabel(invoice.cost_category)}
                   {invoice.due_date ? ` · Scad. ${dateIt(invoice.due_date)}` : ""}
                 </small></div>
                 <span className={`fc-status ${status.kind}`}>{status.text}</span>
@@ -663,6 +955,18 @@ export default function FinancialControlCenter() {
                 <span>Totale <b>{money(Number(invoice.amount),invoice.currency)}</b></span>
                 <span>Riconciliato <b>{money(paid,invoice.currency)}</b></span>
                 <span>Residuo <b>{money(rem,invoice.currency)}</b></span>
+                {invoice.vat_amount!=null && <span>IVA esposta in XML
+                  <b>{money(Number(invoice.vat_amount),invoice.currency)}</b></span>}
+              </div>
+              <div className="fc-invoice-category">
+                <label>Imputazione contabile
+                  <select value={invoice.cost_category||"da_verificare"} disabled={working}
+                    onChange={(event)=>void confirmInvoiceCategory(invoice,event.target.value)}>
+                    {accountingCategories.map((c)=><option value={c.value} key={c.value}>{c.label}</option>)}
+                  </select>
+                </label>
+                <small>{invoice.category_status==="confirmed" ? "Categoria confermata" :
+                  "Categoria proposta: verifica la descrizione e scegli quella corretta."}</small>
               </div>
               {rem > 0.01 && <div className="fc-match">
                 <label>Abbina un movimento bancario (solo dopo controllo)
@@ -677,7 +981,19 @@ export default function FinancialControlCenter() {
                 </label>
                 <button type="button" disabled={working || !selectedTx[invoice.id]}
                   onClick={()=>void confirmMatch(invoice)}><Link2 size={16}/> Conferma abbinamento</button>
-                {suggested && <small>★ Prima opzione suggerita dall'importo e dalla descrizione; non confermata automaticamente.</small>}
+                {(() => {
+                  const proposed = reconciliationSuggestions.find((item)=>item.invoiceId===invoice.id);
+                  if (!proposed)return suggested ? <small>★ Controlla causale e importo prima di confermare.</small> : null;
+                  return <div className="fc-match-suggestion">
+                    <strong><Sparkles size={15}/> Movimento suggerito · {proposed.score}%</strong>
+                    <small>{proposed.reasons.join(" · ")}{proposed.requiresReview
+                      ? " · Possibile ambiguità: verifica prima di confermare." : ""}</small>
+                    <button type="button" disabled={working}
+                      onClick={()=>setSelectedTx((curr)=>({...curr,[invoice.id]:proposed.transactionId}))}>
+                      <Check size={15}/> Seleziona suggerimento (non conferma)
+                    </button>
+                  </div>;
+                })()}
               </div>}
             </article>;
           })}</div>}
@@ -688,6 +1004,11 @@ export default function FinancialControlCenter() {
       <div className="fc-two-col">
         <section className="fc-panel">
           <h2><Landmark size={21}/> Collega banca in sola lettura</h2>
+          {companyId && <div className="fc-disclaimer">
+            Per questa azienda l'accesso PSD2 non è ancora associato a una delega aziendale.
+            I saldi del tuo conto personale rimangono nascosti. Importa il CSV dell'azienda
+            qui a destra e verifica i movimenti proposti.
+          </div>}
           <p className="fc-muted">Il consenso è gestito dalla banca tramite provider Open Banking regolamentato. DocuMio non chiede password bancarie e non può inviare bonifici.</p>
           {connections.length ? <div className="fc-list">{connections.map((connection) =>
             <div className="fc-bank" key={connection.id}>
@@ -808,6 +1129,121 @@ export default function FinancialControlCenter() {
             </div>)}</div>}
       </section>
     </>}
+    {storageReady === true && tab === "accounting" && <>
+      <div className="fc-two-col">
+        <section className="fc-panel">
+          <h2><Building2 size={21}/> F24, stipendi, CONAI e contratti</h2>
+          <p className="fc-muted">Registra gli estremi dei documenti e indica l'importo solo se certo.
+            È un registro di controllo, non una scrittura di partita doppia automatica.
+            Per i file usa il caricamento dell'archivio selezionato.</p>
+          <a className="fc-button secondary" href={companyId
+            ? `/carica?company=${encodeURIComponent(companyId)}` : "/carica"}>
+            <FileUp size={17}/> Carica documenti in questo archivio
+          </a>
+          <form className="fc-form fc-accounting-form" onSubmit={(event)=>void submitAccountingRecord(event)}>
+            <label>Tipo documento
+              <select value={accountForm.record_type} onChange={(event)=>
+                setAccountForm({...accountForm,record_type:event.target.value})}>
+                <option value="f24">F24 / versamento tributi</option>
+                <option value="payroll">Busta paga / stipendi</option>
+                <option value="conai">CONAI / contributi ambientali</option>
+                <option value="bank_statement">Estratto conto</option>
+                <option value="contract">Contratto</option>
+                <option value="other">Altro documento</option>
+              </select>
+            </label>
+            <label>Descrizione<input required maxLength={220} value={accountForm.title}
+              placeholder="Es. F24 settembre, cedolini ottobre, contratto fornitore..."
+              onChange={(event)=>setAccountForm({...accountForm,title:event.target.value})}/></label>
+            <div className="fc-fields">
+              <label>Importo (€), se certo<input inputMode="decimal" value={accountForm.amount}
+                onChange={(event)=>setAccountForm({...accountForm,amount:event.target.value})}/></label>
+              <label>Periodo di riferimento<input value={accountForm.reference_period} maxLength={60}
+                placeholder="Es. 10/2026"
+                onChange={(event)=>setAccountForm({...accountForm,reference_period:event.target.value})}/></label>
+            </div>
+            <div className="fc-fields">
+              <label>Quota tributi indicata (€), se presente<input inputMode="decimal" value={accountForm.tax_amount}
+                onChange={(event)=>setAccountForm({...accountForm,tax_amount:event.target.value})}/></label>
+              <label>Scadenza da verificare<input type="date" value={accountForm.due_date}
+                onChange={(event)=>setAccountForm({...accountForm,due_date:event.target.value})}/></label>
+            </div>
+            <label>Categoria proposta
+              <select value={accountForm.category} onChange={(event)=>
+                setAccountForm({...accountForm,category:event.target.value})}>
+                {accountingCategories.map((item)=>
+                  <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </label>
+            <label>Note<input maxLength={500} value={accountForm.description}
+              onChange={(event)=>setAccountForm({...accountForm,description:event.target.value})}/></label>
+            <button className="fc-button" type="submit" disabled={working}>
+              <Plus size={17}/> Registra per verifica
+            </button>
+          </form>
+        </section>
+        <section className="fc-panel">
+          <h2><FileText size={21}/> Registro documenti amministrativi</h2>
+          <p className="fc-muted">Non vengono sommati direttamente alle fatture per evitare duplicazioni.
+            Conserva buste paga e contratti nel tuo archivio privato; gli estremi e gli importi richiedono conferma.</p>
+          {!accountingRecords.length
+            ? <div className="fc-empty">Nessuna registrazione inserita in questo archivio.</div>
+            : <div className="fc-list">{accountingRecords.map((record)=>
+              <div className="fc-list-item" key={record.id}>
+                <div>
+                  <strong>{record.title}</strong>
+                  <small>{record.record_type.toUpperCase()} · {categoryLabel(record.category)}
+                    {record.reference_period ? " · "+record.reference_period : ""}
+                    {record.due_date ? " · scad. "+dateIt(record.due_date):""}
+                  </small>
+                  <small>{record.review_status==="confirmed" ? "Confermato manualmente" :
+                    "Da verificare con il documento originale"}</small>
+                </div>
+                <div className="fc-item-right">
+                  {record.amount!=null && <strong>{eur(Number(record.amount))}</strong>}
+                  {record.document_id && <button type="button" disabled={working}
+                    onClick={()=>void openAccountingOriginal(record)}><FileText size={15}/> Originale</button>}
+                  {record.record_type==="contract" && record.document_id && (
+                    <button type="button" disabled={Boolean(reviewingContract)}
+                      onClick={()=>void reviewContractFile(record)}>
+                      {reviewingContract===record.document_id?<LoaderCircle size={15}/>:<Sparkles size={15}/>}
+                      {reviewingContract===record.document_id?"Analizzo…":"Esamina clausole"}
+                    </button>)}
+                  {record.review_status!=="confirmed" && <button type="button"
+                    disabled={working} onClick={()=>void confirmAccountingRecord(record)}>
+                    <Check size={16}/> Conferma
+                  </button>}
+                </div>
+              </div>)}</div>}
+        </section>
+      </div>
+      {contractReview && <section className="fc-panel fc-contract-review" role="region"
+        aria-label="Analisi AI del contratto">
+        <h2><Sparkles size={21}/> Contratto · {contractReview.documentTitle}</h2>
+        <p className="fc-muted">{contractReview.summary}</p>
+        <h3>Clausole e punti da verificare</h3>
+        {contractReview.issues.length
+          ? <div className="fc-contract-issues">{contractReview.issues.map((item,index)=>
+            <article key={index}>
+              <span className={item.severity==="important"?"warn":"neutral"}>
+                {item.severity==="important"?"Priorità di controllo":"Da verificare"}</span>
+              <strong>{item.topic}</strong>
+              <blockquote>{item.passage||"Passaggio non individuato"}</blockquote>
+              <p>{item.explanation}</p>
+              <small>Controllo suggerito: {item.action}</small>
+            </article>)}</div>
+          : <div className="fc-empty">Nessuna clausola segnalata dall'AI: non significa che il contratto sia privo di rischi.</div>}
+        <h3>Verifiche da fare</h3>
+        <ul className="fc-contract-checklist">
+          {contractReview.checklist.map((item,index)=><li key={index}>{item}</li>)}
+        </ul>
+        <div className="fc-disclaimer">{contractReview.limitations}</div>
+      </section>}
+      <div className="fc-disclaimer">Non vengono elaborate o trasmesse dichiarazioni fiscali,
+        modelli F24, cedolini o bilanci ufficiali. DocuMio segnala ciò che manca,
+        organizza la documentazione e prepara dati controllabili dal professionista.</div>
+    </>}
+
     <footer className="fc-footer">
       <span>DocuMio · Dati privati protetti dal tuo account</span>
       <span>L'AI supporta l'analisi: atti, adempimenti e decisioni rilevanti richiedono verifica professionale.</span>
