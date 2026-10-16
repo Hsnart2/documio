@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -96,8 +96,28 @@ export default function TodayActionCenter() {
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState("");
   const [message, setMessage] = useState("");
+  const [companyId, setCompanyId] = useState<string|null>(null);
+  const requestVersion = useRef(0);
+
+  useEffect(() => {
+    const refresh = () => {
+      const company = new URLSearchParams(window.location.search).get("company");
+      setCompanyId(company && company !== "personal" ? company : null);
+    };
+    refresh();
+    window.addEventListener("documio:workspace", refresh);
+    window.addEventListener("popstate", refresh);
+    return () => {
+      window.removeEventListener("documio:workspace", refresh);
+      window.removeEventListener("popstate", refresh);
+    };
+  }, []);
 
   const load = useCallback(async () => {
+    const thisRequest = ++requestVersion.current;
+    setLoading(true);
+    setDocuments([]);
+    setAttachments([]);
     const supabase = getSupabaseClient();
     if (!supabase) return;
     const { data: { user } } = await supabase.auth.getUser();
@@ -107,11 +127,11 @@ export default function TodayActionCenter() {
       setLoading(false);
       return;
     }
+    const docsQuery = supabase.from("documents")
+      .select("id,title,category,storage_path,expiry_date,appointment_time,appointment_completed_at,payment_status,total_amount,paid_amount,remaining_amount,installment_count,installment_amount,first_installment_date,is_financing,paid_installments")
+      .eq("user_id", user.id);
     const [documentResult, attachmentResult] = await Promise.all([
-      supabase
-        .from("documents")
-        .select("id,title,category,storage_path,expiry_date,appointment_time,appointment_completed_at,payment_status,total_amount,paid_amount,remaining_amount,installment_count,installment_amount,first_installment_date,is_financing,paid_installments")
-        .eq("user_id", user.id)
+      (companyId ? docsQuery.eq("company_id", companyId) : docsQuery.is("company_id",null))
         .order("uploaded_at", { ascending: false })
         .limit(1000),
       supabase
@@ -120,10 +140,11 @@ export default function TodayActionCenter() {
         .eq("user_id", user.id)
         .limit(3000),
     ]);
+    if (thisRequest !== requestVersion.current) return;
     if (!documentResult.error) setDocuments((documentResult.data ?? []) as DocumentRow[]);
     if (!attachmentResult.error) setAttachments((attachmentResult.data ?? []) as AttachmentRow[]);
     setLoading(false);
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
     const inspect = () => {
