@@ -21,6 +21,7 @@ import { extractInvoiceXmlZip, MAX_XML_BYTES } from "@/lib/financial-zip";
 import "./control-center.css";
 import "./business-center.css";
 import SupplierManager,{type RegisteredSupplier} from "./SupplierManager";
+import { fileSha256 } from "@/lib/document-fingerprint";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
@@ -563,6 +564,9 @@ export default function FinancialControlCenter() {
     let uploadedPath:string|null=null;
     let archivedId:string|null=null;
     try {
+      // Lo stesso hash è disponibile anche per gli XML: lo storico può
+      // confrontare i file reali indipendentemente dal nome.
+      const xmlHash=await fileSha256(file);
       // Ogni XML originale ha un proprio file privato. Non inviare lo ZIP.
       const name=file.name.normalize("NFKD")
         .replace(/[^a-zA-Z0-9._-]+/g,"-").slice(-110)||"fattura.xml";
@@ -575,6 +579,7 @@ export default function FinancialControlCenter() {
       const first=newRows[0];
       const {data:archived,error:archiveError}=await supabase.from("documents").insert({
         user_id:userId,company_id:companyId,
+        file_sha256:xmlHash,file_hash_checked_at:new Date().toISOString(),
         title:`Fattura ${first.invoice_number} · ${first.counterparty}`.slice(0,180),
         category:"Lavoro",file_name:file.name,
         uploaded_at:new Date().toISOString(),
