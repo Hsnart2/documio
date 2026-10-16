@@ -106,12 +106,12 @@ export default function CompanyWorkspacesPage() {
       window.location.assign("/controllo?company="+encodeURIComponent(data.id));
   }
 
-  if(!authReady)return <main className="cw-page"><p>Verifico la sessione…</p></main>;
-  if(!userId)return <main className="cw-page"><section className="cw-empty">
+  if(!authReady)return <main id="dm-main-content" className="cw-page"><p>Verifico la sessione…</p></main>;
+  if(!userId)return <main id="dm-main-content" className="cw-page"><section className="cw-empty">
     <ShieldCheck size={29}/><h1>Area aziende riservata</h1>
     <p>Accedi a DocuMio per gestire le tue aziende.</p><a href="/">Vai all'accesso <ArrowRight size={17}/></a>
   </section></main>;
-  return <main className="cw-page">
+  return <main id="dm-main-content" className="cw-page">
     <header className="cw-header">
       <a href="/controllo"><ArrowLeft size={18}/> Centro di controllo</a>
       <span><ShieldCheck size={16}/> Ogni archivio è separato</span>
