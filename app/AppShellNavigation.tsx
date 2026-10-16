@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 
-type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email" | "companies";
+type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email" | "companies" | "owner";
 
 type MenuItem = {
   id: Destination;
@@ -38,7 +38,8 @@ const links: MenuItem[] = [
   { id: "email", href: "/email", label: "Posta", shortLabel: "Posta", icon: Mail },
 ];
 
-const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email", "/aziende"]);
+const ownerMenuItem: MenuItem = {id:"owner",href:"/owner",label:"Pannello Owner",shortLabel:"Owner",icon:ShieldCheck};
+const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email", "/aziende", "/owner"]);
 
 function currentHomeTab(): Destination {
   if (typeof window === "undefined") return "home";
@@ -50,6 +51,8 @@ function currentHomeTab(): Destination {
 export default function AppShellNavigation() {
   const pathname = usePathname();
   const [signedIn, setSignedIn] = useState(false);
+  const [isOwner,setIsOwner] = useState(false);
+  const lastActivityRef = useRef(0);
   const [homeTab, setHomeTab] = useState<Destination>("home");
   const [workspaceId, setWorkspaceId] = useState<string|null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -61,10 +64,18 @@ export default function AppShellNavigation() {
     if (!supabase) return;
     let active = true;
     void supabase.auth.getSession().then(({ data }) => {
-      if (active) setSignedIn(Boolean(data.session?.user));
+      if (active) {
+        setSignedIn(Boolean(data.session?.user));
+        setIsOwner(data.session?.user?.email?.trim().toLowerCase() === "nextmindsoftware@gmail.com" &&
+          Boolean(data.session?.user?.email_confirmed_at));
+      }
     }).catch(() => { if (active) setSignedIn(false); });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) setSignedIn(Boolean(session?.user));
+      if (active) {
+        setSignedIn(Boolean(session?.user));
+        setIsOwner(session?.user?.email?.trim().toLowerCase() === "nextmindsoftware@gmail.com" &&
+          Boolean(session?.user?.email_confirmed_at));
+      }
     });
     return () => { active = false; listener.subscription.unsubscribe(); };
   }, []);
@@ -89,7 +100,7 @@ export default function AppShellNavigation() {
   }, [pathname]);
 
   function workspaceHref(href: string) {
-    if (!workspaceId || href === "/aziende" || href === "/email") return href;
+    if (!workspaceId || href === "/aziende" || href === "/email" || href === "/owner") return href;
     const separator = href.includes("?") ? "&" : "?";
     const hashAt = href.indexOf("#");
     const firstPart = hashAt>=0 ? href.slice(0,hashAt) : href;
@@ -118,6 +129,36 @@ export default function AppShellNavigation() {
     }
   }, [moreOpen]);
 
+  // Attività realmente osservata: una sola riga per giorno/utente,
+  // senza salvare IP, percorso visitato, termini di ricerca o contenuti.
+  useEffect(() => {
+    if (!signedIn) return;
+    let active = true;
+    async function recordActivity() {
+      if (!active || document.visibilityState !== "visible") return;
+      if (Date.now() - lastActivityRef.current < 5 * 60 * 1000) return;
+      const client = getSupabaseClient();
+      if (!client) return;
+      const { data } = await client.auth.getSession();
+      if (!active || !data.session?.access_token) return;
+      lastActivityRef.current = Date.now();
+      try {
+        await fetch("/api/telemetry/activity", {
+          method: "POST", cache: "no-store", keepalive: true,
+          headers: { Authorization: "Bearer " + data.session.access_token },
+        });
+      } catch { /* La telemetria non deve mai bloccare l'app. */ }
+    }
+    void recordActivity();
+    const timer = window.setInterval(() => void recordActivity(), 15 * 60 * 1000);
+    document.addEventListener("visibilitychange", recordActivity);
+    return () => {
+      active = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", recordActivity);
+    };
+  }, [signedIn, pathname]);
+
   const visible = signedIn && supportedRoutes.has(pathname);
   useEffect(() => {
     document.body.classList.toggle("dm-app-nav-visible", visible);
@@ -130,7 +171,8 @@ export default function AppShellNavigation() {
     pathname === "/" ? homeTab :
       pathname === "/carica" ? "upload" :
       pathname === "/controllo" ? "finance" :
-      pathname === "/aziende" ? "companies" : "email";
+      pathname === "/aziende" ? "companies" :
+      pathname === "/owner" ? "owner" : "email";
 
   function follow(event: MouseEvent<HTMLAnchorElement>, item: MenuItem) {
     // Mantieni la vista archivio/pratiche senza ricaricare la pagina.
@@ -190,6 +232,12 @@ export default function AppShellNavigation() {
         <nav className="dm-desktop-links" aria-label="Strumenti">
           {links.slice(3).map((link) => renderLink(link, false))}
         </nav>
+        {isOwner && <>
+          <div className="dm-nav-group-label dm-nav-group-second">AMMINISTRAZIONE</div>
+          <nav className="dm-desktop-links" aria-label="Amministrazione Owner">
+            {renderLink(ownerMenuItem,false)}
+          </nav>
+        </>}
         <div className="dm-sidebar-spacer" />
         <a className="dm-sidebar-feature" href={workspaceHref("/carica")}>
           <span className="dm-sidebar-feature-icon"><Sparkles size={18} /></span>
@@ -203,7 +251,7 @@ export default function AppShellNavigation() {
         {[links[0], links[1], links[3], links[4]].map((link) => renderLink(link, true))}
         <button
           type="button"
-          className={`dm-mobile-link dm-mobile-more-trigger ${moreOpen || selected === "practices" || selected === "email" ? "is-active" : ""}`}
+          className={`dm-mobile-link dm-mobile-more-trigger ${moreOpen || selected === "practices" || selected === "email" || selected === "owner" ? "is-active" : ""}`}
           ref={moreTriggerRef}
           aria-label="Altre sezioni"
           aria-expanded={moreOpen}
@@ -243,11 +291,16 @@ export default function AppShellNavigation() {
                 <span><strong>Le mie aziende</strong><small>Gestisci una o più attività</small></span>
                 <ArrowUpRight size={17} />
               </a>
-              <a href={links[5].href} onClick={() => setMoreOpen(false)}>
+              <a href={links[6].href} onClick={() => setMoreOpen(false)}>
                 <span className="dm-more-sheet-icon"><Mail size={21} /></span>
                 <span><strong>Posta intelligente</strong><small>Gestisci e organizza le email</small></span>
                 <ArrowUpRight size={17} />
               </a>
+              {isOwner && <a href="/owner" onClick={()=>setMoreOpen(false)}>
+                <span className="dm-more-sheet-icon"><ShieldCheck size={21}/></span>
+                <span><strong>Pannello Owner</strong><small>Clienti, statistiche e consumi API</small></span>
+                <ArrowUpRight size={17}/>
+              </a>}
             </nav>
             <p><ShieldCheck size={15} /> I tuoi documenti rimangono privati.</p>
           </section>
