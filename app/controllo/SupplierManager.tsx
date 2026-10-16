@@ -43,7 +43,8 @@ export default function SupplierManager({supabase,userId,companyId,invoices,supp
     const groups=new Map<string,SupplierGroup>();
     for(const invoice of invoices) {
       if(invoice.direction!=="expense")continue;
-      const supplier=findSupplierRule(suppliers,invoice.counterparty,invoice.vat_number);
+      const match=findSupplierRule(suppliers,invoice.counterparty,invoice.vat_number);
+      const supplier=match ? suppliers.find((item)=>item.id===match.id)??null : null;
       const vat=normalizeVat(invoice.vat_number);
       const key=supplier ? "supplier:"+supplier.id :
         vat ? "vat:"+vat : "name:"+supplierNameKey(invoice.counterparty);
