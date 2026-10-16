@@ -19,6 +19,16 @@ function token(request: Request) {
     ?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
 }
 
+/** Anche le query PostgREST devono usare il JWT verificato: senza questo
+ * header Supabase considera le SELECT come ruolo anon (403 per le tabelle RLS).
+ */
+function userClient(url: string, anon: string, jwt: string) {
+  return createClient(url, anon, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 export async function GET(request: Request) {
   // Non rivela se altre persone usano la funzione o hanno file in coda.
   const jwt = token(request);
@@ -26,9 +36,7 @@ export async function GET(request: Request) {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!jwt || !url || !anon) return response({ available: false }, 401);
-  const client = createClient(url, anon, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const client = userClient(url, anon, jwt);
   const { data: { user }, error } = await client.auth.getUser(jwt);
   if (error || !user) return response({ available: false }, 401);
   const [documentFields, jobs] = await Promise.all([
@@ -46,9 +54,7 @@ export async function POST(request: Request) {
   const admin = getDocumentAIAdmin();
   if (!jwt || !url || !anon || !admin)
     return response({ error: "Sessione o configurazione non disponibile." }, 401);
-  const client = createClient(url, anon, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const client = userClient(url, anon, jwt);
   const { data: { user }, error } = await client.auth.getUser(jwt);
   if (error || !user) return response({ error: "Accesso non autorizzato." }, 401);
 
