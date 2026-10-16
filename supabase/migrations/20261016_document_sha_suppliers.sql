@@ -47,7 +47,13 @@ create table if not exists public.financial_suppliers (
   legal_name text not null check (length(trim(legal_name)) between 2 and 220),
   vat_number text,
   default_category text not null default 'da_verificare'
-    check (length(default_category) between 3 and 64),
+    check (default_category in (
+      'materie_prime','acquisti_merci','leasing','affitti_canoni',
+      'trasporti','carburanti','manutenzioni','utenze','smaltimento',
+      'stipendi','contributi','conai','iva','imposte','consulenze',
+      'assicurazioni','interessi','marketing','software','rimborsi',
+      'altre_spese','da_verificare'
+    )),
   note text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -132,7 +138,7 @@ begin
     )
     and (p_include_manual or
       (inv.category_source not in ('manual','description') and
-       inv.category_status <> 'confirmed'));
+       (inv.category_status <> 'confirmed' or inv.category_source='supplier')));
   get diagnostics changed = row_count;
   return changed;
 end;
