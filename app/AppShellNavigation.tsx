@@ -4,6 +4,7 @@ import { useEffect, useState, type MouseEvent } from "react";
 import { usePathname } from "next/navigation";
 import {
   ArrowUpRight,
+  Building2,
   FileText,
   FolderKanban,
   House,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 
-type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email";
+type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email" | "companies";
 
 type MenuItem = {
   id: Destination;
@@ -31,10 +32,11 @@ const links: MenuItem[] = [
   { id: "practices", href: "/?view=practices#documio-library", label: "Pratiche", shortLabel: "Pratiche", icon: FolderKanban },
   { id: "upload", href: "/carica", label: "Carica documenti", shortLabel: "Carica", icon: Plus },
   { id: "finance", href: "/controllo", label: "Controllo", shortLabel: "Finanze", icon: Landmark },
+  { id: "companies", href: "/aziende", label: "Le mie aziende", shortLabel: "Aziende", icon: Building2 },
   { id: "email", href: "/email", label: "Posta", shortLabel: "Posta", icon: Mail },
 ];
 
-const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email"]);
+const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email", "/aziende"]);
 
 function currentHomeTab(): Destination {
   if (typeof window === "undefined") return "home";
@@ -83,7 +85,8 @@ export default function AppShellNavigation() {
   const selected: Destination =
     pathname === "/" ? homeTab :
       pathname === "/carica" ? "upload" :
-      pathname === "/controllo" ? "finance" : "email";
+      pathname === "/controllo" ? "finance" :
+      pathname === "/aziende" ? "companies" : "email";
 
   function follow(event: MouseEvent<HTMLAnchorElement>, item: MenuItem) {
     // Mantieni la vista archivio/pratiche senza ricaricare la pagina.
