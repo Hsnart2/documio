@@ -61,6 +61,10 @@ export default function BatchUploadPage() {
   const [companyReady,setCompanyReady] = useState(false);
   const [scopeError,setScopeError] = useState("");
   const [documentKind,setDocumentKind] = useState<DocumentKind>("other");
+  const [scanRunning,setScanRunning] = useState(false);
+  const [scanStatus,setScanStatus] = useState<null|{
+    processed:number;duplicates:number;skipped:number;remaining:number|null;
+  }>(null);
   const queueRef = useRef<QueuedFile[]>([]);
   const inFlightRef = useRef(0);
   const filesRef = useRef(new Map<string, QueuedFile>());
@@ -277,6 +281,37 @@ export default function BatchUploadPage() {
     catch(error) {setGeneralError(error instanceof Error?error.message:"Impossibile aprire il file.");}
   }
 
+  async function scanExistingDocuments() {
+    if(!userId||!companyReady||scanRunning)return;
+    const supabase=getSupabaseClient();
+    if(!supabase)return;
+    setScanRunning(true);setGeneralError("");setScanStatus(null);
+    let processed=0,duplicates=0,skipped=0;
+    try{
+      const {data}=await supabase.auth.getSession();
+      const token=data.session?.access_token;
+      if(!token)throw new Error("Sessione scaduta.");
+      // Richieste piccole: Vercel non deve elaborare tutti i documenti in una singola esecuzione.
+      for(let page=0;page<60;page++){
+        const response=await fetch("/api/documents/backfill-hashes",{
+          method:"POST",
+          headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+          body:JSON.stringify({companyId}),
+        });
+        const result=await response.json();
+        if(!response.ok)throw new Error(result.error??"Scansione non disponibile.");
+        processed+=Number(result.scanned||0);
+        duplicates+=Number(result.foundDuplicates||0);
+        skipped+=Number(result.skipped||0);
+        const remaining=typeof result.remaining==="number"?result.remaining:null;
+        setScanStatus({processed,duplicates,skipped,remaining});
+        if(remaining===0||remaining===null||Number(result.batchSize)===0)break;
+      }
+    }catch(error){
+      setGeneralError(error instanceof Error?error.message:"Scansione non riuscita.");
+    }finally{setScanRunning(false);}
+  }
+
   function retry(id:string) {
     const entry = filesRef.current.get(id);
     if (!entry || !userId || !available || !companyReady) return;
@@ -368,6 +403,24 @@ export default function BatchUploadPage() {
           }}/>
       </label>
       {scopeError && <p className="du-error" role="alert">{scopeError}</p>}
+      <section className="du-legacy-scan">
+        <div>
+          <strong><ShieldCheck size={18}/> Archivio senza doppioni</strong>
+          <small>Le nuove foto e i PDF sono confrontati per contenuto SHA-256.
+            Puoi verificare anche i documenti caricati prima dell'aggiornamento.</small>
+        </div>
+        <button type="button" onClick={()=>void scanExistingDocuments()}
+          disabled={scanRunning||!companyReady}>
+          {scanRunning?<LoaderCircle size={17}/>:<RefreshCw size={17}/>}
+          {scanRunning?"Scansione…":"Controlla documenti già presenti"}
+        </button>
+        {scanStatus&&<p role="status">
+          {scanStatus.processed} file controllati · {scanStatus.duplicates} copie identiche
+          · {scanStatus.skipped} non leggibili
+          {scanStatus.remaining!==null?` · ${scanStatus.remaining} ancora da esaminare`:""}
+          . Nessun file è stato cancellato.
+        </p>}
+      </section>
       {generalError && <p className="du-error" role="alert">{generalError}</p>}
       <section className="du-results">
         <div className="du-results-head">
