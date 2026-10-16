@@ -13,11 +13,13 @@
     "test:archive": "node scripts/test-archive.mjs",
     "test:ui": "node scripts/test-responsive-ui.mjs",
     "test:business": "node scripts/test-business-accounting.mjs",
-    "vapid:generate": "node scripts/generate-vapid-keys.mjs"
+    "vapid:generate": "node scripts/generate-vapid-keys.mjs",
+    "test:invoice-zip": "node scripts/test-financial-zip.mjs"
   },
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
     "@supabase/supabase-js": "^2.109.0",
+    "fflate": "0.8.3",
     "lucide-react": "latest",
     "next": "16.4.1",
     "openai": "latest",
