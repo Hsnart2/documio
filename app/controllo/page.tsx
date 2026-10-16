@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Banknote, CalendarClock, CheckCircle2,
   CircleAlert, FileUp, Landmark, Link2, LoaderCircle, Plus, Receipt,
@@ -108,6 +108,7 @@ export default function FinancialControlCenter() {
   const [companies,setCompanies] = useState<Company[]>([]);
   const [companyId,setCompanyId] = useState<string|null>(null);
   const [companyReady,setCompanyReady] = useState(false);
+  const loadVersion = useRef(0);
   const [accountingRecords,setAccountingRecords] = useState<AccountingRecord[]>([]);
   const [accountForm,setAccountForm] = useState({
     record_type:"f24",title:"",amount:"",tax_amount:"",
@@ -115,6 +116,7 @@ export default function FinancialControlCenter() {
   });
 
   const loadData = useCallback(async (id: string, scopeId: string | null) => {
+    const version = ++loadVersion.current;
     const supabase = getSupabaseClient();
     if (!supabase) { setError("Configurazione archivio non disponibile."); setLoading(false); return; }
     setLoading(true);
@@ -135,6 +137,7 @@ export default function FinancialControlCenter() {
       scope(supabase.from("financial_accounting_records").select("*").eq("user_id", id))
         .order("created_at", { ascending: false }).limit(500),
     ]);
+    if (version !== loadVersion.current) return;
     const problem = a.error ?? b.error ?? c.error ?? d.error ?? f.error;
     if (problem) {
       setStorageReady(false);
@@ -214,6 +217,7 @@ export default function FinancialControlCenter() {
       if(!userId)setLoading(false);
       return;
     }
+    loadVersion.current++;
     setSelectedTx({});
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
     setAccountingRecords([]);setArchivedDocuments([]);
@@ -253,6 +257,22 @@ export default function FinancialControlCenter() {
       overdue: invoices.filter((i) => i.due_date && daysTo(i.due_date) < 0 &&
         Number(i.amount) - paid(i) > 0.01).length };
   }, [invoices, matches, movements]);
+
+  const provisional = useMemo(()=>grossInvoiceSummary(invoices),[invoices]);
+  const reconciliationSuggestions = useMemo(() =>
+    suggestReconciliations(invoices,movements,matches),
+    [invoices,movements,matches],
+  );
+  const currentCompany = companies.find((item)=>item.id===companyId);
+  function selectCompany(value:string) {
+    const selected=value && companies.some((item)=>item.id===value)?value:null;
+    const url=new URL(window.location.href);
+    if(selected)url.searchParams.set("company",selected);
+    else url.searchParams.delete("company");
+    window.history.replaceState(null,"",url);
+    setError("");setMessage("");setLinkedDocumentId(null);
+    setCompanyId(selected);setTab("overview");
+  }
 
   const actionItems = useMemo(() => {
     const invoiceActions = invoices.filter((invoice) => invoice.due_date &&
@@ -351,12 +371,16 @@ export default function FinancialControlCenter() {
     setWorking(true); setError(""); setMessage("");
     const supabase = getSupabaseClient()!;
     const { error: issue } = await supabase.from("financial_invoices").insert({
-      user_id: userId, source: "manual", direction: invoiceForm.direction,
+      user_id: userId, company_id: companyId, source: "manual",
+      direction: invoiceForm.direction,
       invoice_number: invoiceForm.invoice_number.trim(),
       counterparty: invoiceForm.counterparty.trim(), issue_date: invoiceForm.issue_date,
       due_date: invoiceForm.due_date || null, amount, currency: "EUR",
       notes: invoiceForm.notes.trim() || null,
       document_id: linkedDocumentId,
+      cost_category: invoiceForm.cost_category ||
+        suggestCategory(invoiceForm.direction,`${invoiceForm.counterparty} ${invoiceForm.notes}`).category,
+      category_status: invoiceForm.cost_category ? "confirmed" : "needs_review",
     });
     setWorking(false);
     if (issue) setError("Non è stato possibile registrare la fattura: " + issue.message);
@@ -374,7 +398,8 @@ export default function FinancialControlCenter() {
     }
     setWorking(true); setError(""); setMessage("");
     const { error: issue } = await getSupabaseClient()!.from("financial_deadlines").insert({
-      user_id: userId, source: "manual", category: deadlineForm.category,
+      user_id: userId, company_id: companyId,
+      source: "manual", category: deadlineForm.category,
       title: deadlineForm.title.trim(), due_date: deadlineForm.due_date,
       amount, reference_code: deadlineForm.reference_code.trim() || null,
       notes: deadlineForm.notes.trim() || null,
@@ -391,9 +416,11 @@ export default function FinancialControlCenter() {
     try {
       const rows = parseFatturaPaXml(await file.text(), xmlDirection);
       const payload = await Promise.all(rows.map(async (row) => ({
-        ...row, user_id: userId,
+        ...row, user_id: userId, company_id: companyId,
+        cost_category: suggestCategory(row.direction,`${row.counterparty} ${row.notes||""}`).category,
+        category_status: "needs_review",
         import_key: await fingerprint([
-          "xml", row.direction, row.invoice_number, row.issue_date,
+          "xml", companyId ?? "personal", row.direction, row.invoice_number, row.issue_date,
           row.counterparty.toLowerCase(), row.amount.toFixed(2), row.currency,
         ].join("|")),
       })));
@@ -414,12 +441,16 @@ export default function FinancialControlCenter() {
       if (!parsed.rows.length) throw new Error("Nessun movimento valido trovato.");
       const occurrences = new Map<string, number>();
       const payload = await Promise.all(parsed.rows.map(async (row) => {
-        const raw = [accountLabel.trim(),row.booking_date,row.amount.toFixed(2),
+        const raw = [companyId ?? "personal",accountLabel.trim(),
+          row.booking_date,row.amount.toFixed(2),
           row.currency,row.description,row.counterparty].join("|");
         const repeat = (occurrences.get(raw) ?? 0) + 1;
         occurrences.set(raw, repeat);
         return {
-          ...row, user_id: userId, source: "csv",
+          ...row, user_id: userId, company_id: companyId, source: "csv",
+          suggested_category: suggestCategory(Number(row.amount)>0?"income":"expense",
+            `${row.counterparty} ${row.description}`).category,
+          category_status: "needs_review",
           account_label: accountLabel.trim().slice(0, 80) || "Conto CSV",
           import_key: "csv:" + await fingerprint(raw + "|" + repeat),
         };
@@ -450,7 +481,7 @@ export default function FinancialControlCenter() {
     if (!confirmed) return;
     setWorking(true); setError("");
     const { error: issue } = await getSupabaseClient()!.from("financial_matches").insert({
-      user_id: userId, invoice_id: invoice.id,
+      user_id: userId, company_id: companyId, invoice_id: invoice.id,
       transaction_id: bank.id, allocated_amount: allocation,
     });
     setWorking(false);
@@ -466,6 +497,7 @@ export default function FinancialControlCenter() {
     else { setMessage("Scadenza confermata manualmente."); await loadData(userId,companyId); }
   }
   async function bankApi(action: string, connectionId?: string, institutionId?: string) {
+    if (companyId) throw new Error("Connessioni bancarie aziendali non ancora abilitate: utilizza l'importazione CSV.");
     const auth = await headers();
     if (!auth) throw new Error("Devi effettuare nuovamente l'accesso.");
     const response = await fetch("/api/finance/banks", {
