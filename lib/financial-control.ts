@@ -9,6 +9,11 @@ export type InvoiceRow = {
   cost_category?: string | null;
   category_status?: "suggested" | "needs_review" | "confirmed";
   vat_amount?: number | null;
+  supplier_id?:string|null;
+  category_source?:"rule"|"description"|"supplier"|"manual"|"unclassified";
+  classification_reason?:string|null;
+  classification_confidence?:number|null;
+  invoice_description?:string|null;
   invoice_number: string;
   document_id: string | null;
   issue_date: string;
