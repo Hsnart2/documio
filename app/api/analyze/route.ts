@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { authenticatedUser, privilegedClient } from "@/lib/owner-auth";
+import { recordOpenAIUsage } from "@/lib/owner-metering";
 import { createClient } from "@supabase/supabase-js";
 import { promises as fs } from "fs";
 import os from "os";
@@ -92,6 +94,11 @@ type OpenAIResponse = {
     }>;
   }>;
   error?: { message?: string };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number } | null;
+  };
 };
 
 type AnalysisResult = {
@@ -121,6 +128,11 @@ type AnalysisResult = {
 
 export async function POST(request: Request) {
   try {
+    // Nessuna chiamata AI a pagamento senza sessione verificata.
+    const access = await authenticatedUser(request);
+    if (!access) return NextResponse.json({ error: "Accedi per analizzare i documenti." }, {
+      status: 401,
+    });
     const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
@@ -606,6 +618,12 @@ User note: ${userNote || "none"}`;
     });
 
     const result = (await response.json()) as OpenAIResponse;
+    const meter = privilegedClient();
+    if (meter) await recordOpenAIUsage(meter, {
+      userId: access.user.id, companyId: null,
+      feature: mode === "attachment" ? "Analisi allegato" : "Analisi documento",
+      model: "gpt-5-mini", ok: response.ok, usage: result.usage,
+    });
 
     if (!response.ok) {
       return NextResponse.json(
