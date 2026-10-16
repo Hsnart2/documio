@@ -111,6 +111,35 @@ test("Contratti con consenso, archivio verificato e risultato strutturato",()=>{
   assert.match(route,/file_data:dataUrl/);
   assert.match(route,/non un parere legale/);
 });
+test("Le API con service role non mischiano archivi aziendali",()=>{
+  const assistant=source("../app/api/assistant/route.ts");
+  const search=source("../app/api/search/route.ts");
+  const smartHome=source("../app/SmartHomeV2.tsx");
+  const actions=source("../app/TodayActionCenter.tsx");
+  const main=source("../app/page.tsx");
+  assert.match(assistant,/financial_companies/);
+  assert.match(assistant,/requestedCompany/);
+  assert.match(assistant,/inWorkspace\(admin/);
+  assert.match(assistant,/\.eq\("user_id", user.id\)/);
+  assert.match(search,/financial_companies/);
+  assert.match(search,/inScope\(client\.from\("documents"\)/);
+  assert.match(smartHome,/companyId \}/);
+  assert.match(actions,/\.is\("company_id",null\)/);
+  assert.match(main,/companyId,\s*documents: relevantDocuments/);
+});
+
+test("La navigazione e i selettori conservano l'azienda selezionata",()=>{
+  const nav=source("../app/AppShellNavigation.tsx");
+  const upload=source("../app/carica/page.tsx");
+  const finance=source("../app/controllo/page.tsx");
+  assert.match(nav,/workspaceHref\(item.href\)/);
+  assert.match(nav,/documio:workspace/);
+  assert.match(upload,/financial_document_type:entry.kind/);
+  assert.match(upload,/company_id:entry.companyId/);
+  assert.match(finance,/inScope|scope\(supabase\.from/);
+  assert.match(finance,/window\.dispatchEvent\(new Event\("documio:workspace"\)\)/);
+});
+
 test("Moduli aziendali TSX con sintassi valida",()=>{
   const paths=[
     "../app/aziende/page.tsx","../app/controllo/page.tsx",
