@@ -49,6 +49,7 @@ export default function AppShellNavigation() {
   const pathname = usePathname();
   const [signedIn, setSignedIn] = useState(false);
   const [homeTab, setHomeTab] = useState<Destination>("home");
+  const [workspaceId, setWorkspaceId] = useState<string|null>(null);
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -64,15 +65,32 @@ export default function AppShellNavigation() {
   }, []);
 
   useEffect(() => {
-    const refresh = () => setHomeTab(currentHomeTab());
+    const refresh = () => {
+      setHomeTab(currentHomeTab());
+      const requested = new URLSearchParams(window.location.search).get("company");
+      setWorkspaceId(requested &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requested)
+        ? requested : null);
+    };
     refresh();
     window.addEventListener("popstate", refresh);
     window.addEventListener("documio:view", refresh);
+    window.addEventListener("documio:workspace", refresh);
     return () => {
       window.removeEventListener("popstate", refresh);
       window.removeEventListener("documio:view", refresh);
+      window.removeEventListener("documio:workspace", refresh);
     };
   }, [pathname]);
+
+  function workspaceHref(href: string) {
+    if (!workspaceId || href === "/aziende" || href === "/email") return href;
+    const separator = href.includes("?") ? "&" : "?";
+    const hashAt = href.indexOf("#");
+    const firstPart = hashAt>=0 ? href.slice(0,hashAt) : href;
+    const hashPart = hashAt>=0 ? href.slice(hashAt) : "";
+    return firstPart + separator + "company=" + encodeURIComponent(workspaceId) + hashPart;
+  }
 
   const visible = signedIn && supportedRoutes.has(pathname);
   useEffect(() => {
@@ -92,7 +110,7 @@ export default function AppShellNavigation() {
     // Mantieni la vista archivio/pratiche senza ricaricare la pagina.
     if (pathname !== "/" || !["home", "documents", "practices"].includes(item.id)) return;
     event.preventDefault();
-    window.history.pushState(null, "", item.href);
+    window.history.pushState(null, "", workspaceHref(item.href));
     setHomeTab(item.id);
     window.dispatchEvent(new CustomEvent("documio:navigate", { detail: { view: item.id } }));
     if (item.id === "home") {
@@ -112,7 +130,7 @@ export default function AppShellNavigation() {
     return (
       <a
         key={item.id}
-        href={item.href}
+        href={workspaceHref(item.href)}
         className={[
           compact ? "dm-mobile-link" : "dm-side-link",
           active ? "is-active" : "",
@@ -133,7 +151,7 @@ export default function AppShellNavigation() {
     <>
       <a href="#dm-main-content" className="dm-skip-link">Vai al contenuto</a>
       <aside className="dm-sidebar" aria-label="Menu di DocuMio">
-        <a className="dm-sidebar-brand" href="/" onClick={(event) => follow(event, links[0])}>
+        <a className="dm-sidebar-brand" href={workspaceHref("/")} onClick={(event) => follow(event, links[0])}>
           <span className="dm-sidebar-mark"><FileText size={23} /></span>
           <span><strong>DocuMio</strong><small>Il tuo spazio digitale</small></span>
         </a>
@@ -147,7 +165,7 @@ export default function AppShellNavigation() {
           {links.slice(3).map((link) => renderLink(link, false))}
         </nav>
         <div className="dm-sidebar-spacer" />
-        <a className="dm-sidebar-feature" href="/carica">
+        <a className="dm-sidebar-feature" href={workspaceHref("/carica")}>
           <span className="dm-sidebar-feature-icon"><Sparkles size={18} /></span>
           <strong>Archivia più velocemente</strong>
           <small>Carica più documenti in un'unica volta.</small>
