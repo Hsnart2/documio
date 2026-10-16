@@ -41,6 +41,7 @@ import type {
 } from "@/lib/types";
 import { getSupabaseClient } from "@/lib/supabase";
 import { prepareFileForUpload as prepareUpload } from "@/lib/prepare-upload-file";
+import { fileSha256,findFileDuplicate,openExistingFile } from "@/lib/document-fingerprint";
 
 type Language = "it" | "en";
 type ActiveView = "documents" | "practices";
@@ -2755,6 +2756,31 @@ export default function Home() {
       return;
     }
 
+    // Impronta SHA-256 dell'intero file, prima dello Storage.
+    // Ogni azienda ha un proprio controllo: non confluiscono file di
+    // altre aziende dello stesso account.
+    let sha:string;
+    let duplicateOf:string|null=null;
+    try {
+      sha=await fileSha256(file);
+      const duplicate=await findFileDuplicate(
+        supabase,user.id,doc.companyId??companyId,sha);
+      if(duplicate) {
+        const keepCopy=window.confirm(
+          `Questo file è IDENTICO al documento già archiviato: "${duplicate.title}".
+Premi OK solo se vuoi conservarne una seconda copia.
+Premi Annulla per aprire il documento esistente senza occupare altro spazio.`);
+        if(!keepCopy) {
+          await openExistingFile(supabase,duplicate);
+          return;
+        }
+        duplicateOf=duplicate.id;
+      }
+    } catch(problem) {
+      alert(problem instanceof Error?problem.message:"Impossibile confrontare il file con l'archivio.");
+      return;
+    }
+
     const safeName = file.name
       .normalize("NFKD")
       .replace(/[^a-zA-Z0-9._-]+/g, "-")
@@ -2780,6 +2806,8 @@ export default function Home() {
       .insert({
         user_id: user.id,
         company_id: doc.companyId ?? companyId,
+        file_sha256: sha,
+        duplicate_of: duplicateOf,
         practice_id: doc.practiceId ?? null,
         title: doc.title,
         category: doc.category,

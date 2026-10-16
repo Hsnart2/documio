@@ -7,18 +7,23 @@ import {
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 import { prepareFileForUpload } from "@/lib/prepare-upload-file";
+import { fileSha256,findFileDuplicate,openExistingFile,type FileDuplicate } from "@/lib/document-fingerprint";
 import "./batch-upload.css";
 
-type Stage = "pending" | "preparing" | "uploading" | "saving" | "saved" | "failed";
+type Stage = "pending" | "preparing" | "duplicate" | "uploading" | "saving" | "saved" | "failed";
 type UploadEntry = {
   id: string;
   name: string;
   bytes: number;
   stage: Stage;
   error?: string;
+  duplicate?: FileDuplicate;
 };
 type DocumentKind = "other"|"invoice_pdf"|"bank_statement"|"payroll"|"f24"|"contract";
-type QueuedFile = { id: string; file: File; companyId:string|null; kind:DocumentKind };
+type QueuedFile = {
+  id:string;file:File;companyId:string|null;kind:DocumentKind;
+  allowDuplicate?:boolean;
+};
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_BATCH = 12;
 const MAX_PARALLEL = 3;
@@ -56,6 +61,10 @@ export default function BatchUploadPage() {
   const [companyReady,setCompanyReady] = useState(false);
   const [scopeError,setScopeError] = useState("");
   const [documentKind,setDocumentKind] = useState<DocumentKind>("other");
+  const [scanRunning,setScanRunning] = useState(false);
+  const [scanStatus,setScanStatus] = useState<null|{
+    processed:number;duplicates:number;skipped:number;remaining:number|null;
+  }>(null);
   const queueRef = useRef<QueuedFile[]>([]);
   const inFlightRef = useRef(0);
   const filesRef = useRef(new Map<string, QueuedFile>());
@@ -130,7 +139,11 @@ export default function BatchUploadPage() {
 
   function setStage(id:string, stage:Stage, error?:string) {
     setEntries((old)=>old.map((row)=>row.id === id
-      ? { ...row, stage, error } : row));
+      ? { ...row, stage, error, duplicate:stage==="duplicate"?row.duplicate:undefined } : row));
+  }
+  function setDuplicate(id:string,duplicate:FileDuplicate) {
+    setEntries((current)=>current.map((entry)=>entry.id===id
+      ? {...entry,stage:"duplicate",duplicate,error:undefined}:entry));
   }
 
   async function saveFile(entry: QueuedFile, owner: string) {
@@ -148,6 +161,12 @@ export default function BatchUploadPage() {
         !(await supportedFile(prepared)))
         throw new Error("File non leggibile, danneggiato o con formato non supportato.");
 
+      const hash=await fileSha256(prepared);
+      const existing=await findFileDuplicate(supabase,owner,entry.companyId,hash);
+      if(existing&&!entry.allowDuplicate) {
+        setDuplicate(entry.id,existing);
+        return;
+      }
       setStage(entry.id,"uploading");
       const path = owner + "/" + crypto.randomUUID() + "-" + safeName(prepared.name);
       const {error: uploadError} = await supabase.storage
@@ -160,6 +179,8 @@ export default function BatchUploadPage() {
       const {data,error:saveError} = await supabase.from("documents").insert({
         user_id:owner,
         company_id:entry.companyId,
+        file_sha256:hash,
+        duplicate_of:existing?.id??null,
         financial_document_type:entry.kind==="other"?null:entry.kind,
         accounting_review_status:entry.kind==="other"?"not_applicable":"needs_review",
         file_name:prepared.name,
@@ -246,6 +267,51 @@ export default function BatchUploadPage() {
     pump(userId);
   }
 
+  function saveAnotherCopy(id:string) {
+    const entry=filesRef.current.get(id);
+    if(!entry||!userId||!companyReady)return;
+    setStage(id,"pending");
+    queueRef.current.push({...entry,allowDuplicate:true});
+    pump(userId);
+  }
+  async function viewExisting(duplicate:FileDuplicate) {
+    const supabase=getSupabaseClient();
+    if(!supabase)return;
+    try {await openExistingFile(supabase,duplicate);}
+    catch(error) {setGeneralError(error instanceof Error?error.message:"Impossibile aprire il file.");}
+  }
+
+  async function scanExistingDocuments() {
+    if(!userId||!companyReady||scanRunning)return;
+    const supabase=getSupabaseClient();
+    if(!supabase)return;
+    setScanRunning(true);setGeneralError("");setScanStatus(null);
+    let processed=0,duplicates=0,skipped=0;
+    try{
+      const {data}=await supabase.auth.getSession();
+      const token=data.session?.access_token;
+      if(!token)throw new Error("Sessione scaduta.");
+      // Richieste piccole: Vercel non deve elaborare tutti i documenti in una singola esecuzione.
+      for(let page=0;page<60;page++){
+        const response=await fetch("/api/documents/backfill-hashes",{
+          method:"POST",
+          headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+          body:JSON.stringify({companyId}),
+        });
+        const result=await response.json();
+        if(!response.ok)throw new Error(result.error??"Scansione non disponibile.");
+        processed+=Number(result.scanned||0);
+        duplicates+=Number(result.foundDuplicates||0);
+        skipped+=Number(result.skipped||0);
+        const remaining=typeof result.remaining==="number"?result.remaining:null;
+        setScanStatus({processed,duplicates,skipped,remaining});
+        if(remaining===0||remaining===null||Number(result.batchSize)===0)break;
+      }
+    }catch(error){
+      setGeneralError(error instanceof Error?error.message:"Scansione non riuscita.");
+    }finally{setScanRunning(false);}
+  }
+
   function retry(id:string) {
     const entry = filesRef.current.get(id);
     if (!entry || !userId || !available || !companyReady) return;
@@ -256,6 +322,7 @@ export default function BatchUploadPage() {
 
   const saved=entries.filter((item)=>item.stage==="saved").length;
   const failed=entries.filter((item)=>item.stage==="failed").length;
+  const duplicateCount=entries.filter((item)=>item.stage==="duplicate").length;
   const active=entries.filter((item)=>
     ["pending","preparing","uploading","saving"].includes(item.stage)).length;
 
@@ -336,6 +403,24 @@ export default function BatchUploadPage() {
           }}/>
       </label>
       {scopeError && <p className="du-error" role="alert">{scopeError}</p>}
+      <section className="du-legacy-scan">
+        <div>
+          <strong><ShieldCheck size={18}/> Archivio senza doppioni</strong>
+          <small>Le nuove foto e i PDF sono confrontati per contenuto SHA-256.
+            Puoi verificare anche i documenti caricati prima dell'aggiornamento.</small>
+        </div>
+        <button type="button" onClick={()=>void scanExistingDocuments()}
+          disabled={scanRunning||!companyReady}>
+          {scanRunning?<LoaderCircle size={17}/>:<RefreshCw size={17}/>}
+          {scanRunning?"Scansione…":"Controlla documenti già presenti"}
+        </button>
+        {scanStatus&&<p role="status">
+          {scanStatus.processed} file controllati · {scanStatus.duplicates} copie identiche
+          · {scanStatus.skipped} non leggibili
+          {scanStatus.remaining!==null?` · ${scanStatus.remaining} ancora da esaminare`:""}
+          . Nessun file è stato cancellato.
+        </p>}
+      </section>
       {generalError && <p className="du-error" role="alert">{generalError}</p>}
       <section className="du-results">
         <div className="du-results-head">
@@ -347,6 +432,7 @@ export default function BatchUploadPage() {
             {saved>0 && <span><CheckCircle2 size={16}/> {saved} salvati</span>}
             {active>0 && <span><LoaderCircle size={16}/> {active} in corso</span>}
             {failed>0 && <span><CircleAlert size={16}/> {failed} da riprovare</span>}
+            {duplicateCount>0 && <span><CircleAlert size={16}/> {duplicateCount} già presenti</span>}
           </div>
         </div>
         {!entries.length && <div className="du-empty"><FolderOpen size={25}/>
@@ -356,7 +442,7 @@ export default function BatchUploadPage() {
             const label = ({
               pending:"In coda",preparing:"Preparo il file",uploading:"Trasferimento",
               saving:"Registro il documento",saved:"File salvato · AI separata",
-              failed:"Non completato",
+              duplicate:"Già presente nell'archivio selezionato",failed:"Non completato",
             } as Record<Stage,string>)[entry.stage];
             return <article key={entry.id} className={`du-row ${entry.stage}`}>
               <span className="du-file-icon"><FileText size={21}/></span>
@@ -366,6 +452,15 @@ export default function BatchUploadPage() {
                 {entry.error && <p role="alert">{entry.error}</p>}
               </div>
               {entry.stage==="saved" ? <CheckCircle2 size={23} className="du-check"/>
+               : entry.stage==="duplicate" && entry.duplicate
+                 ? <div className="du-duplicate-actions">
+                    <small>Identico a: {entry.duplicate.title}</small>
+                    <button type="button" onClick={()=>void viewExisting(entry.duplicate!)}>
+                      Apri esistente
+                    </button>
+                    <button type="button" disabled={inFlightRef.current>=MAX_PARALLEL+2}
+                      onClick={()=>saveAnotherCopy(entry.id)}>Salva comunque una copia</button>
+                  </div>
                : entry.stage==="failed" ? <button type="button"
                  onClick={()=>retry(entry.id)}><RefreshCw size={16}/> Riprova</button>
                : <LoaderCircle size={19} className="du-spinner"/>}

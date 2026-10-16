@@ -15,11 +15,13 @@ import {
 } from "@/lib/financial-control";
 import {
   accountingCategories, categoryLabel, grossInvoiceSummary,
-  suggestCategory, suggestReconciliations,
+  suggestCategory, suggestReconciliations, classifyInvoice,
 } from "@/lib/business-accounting";
 import { extractInvoiceXmlZip, MAX_XML_BYTES } from "@/lib/financial-zip";
 import "./control-center.css";
 import "./business-center.css";
+import SupplierManager,{type RegisteredSupplier} from "./SupplierManager";
+import { fileSha256 } from "@/lib/document-fingerprint";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
@@ -47,7 +49,7 @@ type AccountingRecord = {
   reference_period:string|null; review_status:string; document_id:string|null;
   description:string|null;
 };
-type Section = "overview" | "invoices" | "accounts" | "deadlines" | "accounting";
+type Section = "overview" | "invoices" | "accounts" | "deadlines" | "accounting" | "suppliers";
 const blankInvoice = {
   direction: "income" as InvoiceDirection,
   invoice_number: "", counterparty: "", issue_date: "",
@@ -117,6 +119,7 @@ export default function FinancialControlCenter() {
   const loadVersion = useRef(0);
   const bankLoadVersion = useRef(0);
   const [accountingRecords,setAccountingRecords] = useState<AccountingRecord[]>([]);
+  const [suppliers,setSuppliers] = useState<RegisteredSupplier[]>([]);
   const [reviewingContract,setReviewingContract] = useState<string|null>(null);
   const [contractReview,setContractReview] = useState<null|{
     documentTitle:string;summary:string;
@@ -136,7 +139,7 @@ export default function FinancialControlCenter() {
     // Filtra sempre nel database per azienda/personale, mai soltanto nell'UI.
     const scope = (query: any) => scopeId
       ? query.eq("company_id", scopeId) : query.is("company_id", null);
-    const [a, b, c, d, e, f] = await Promise.all([
+    const [a, b, c, d, e, f, g] = await Promise.all([
       scope(supabase.from("financial_invoices").select("*").eq("user_id", id))
         .order("issue_date", { ascending: false }).limit(2000),
       scope(supabase.from("financial_transactions").select("*").eq("user_id", id))
@@ -149,9 +152,11 @@ export default function FinancialControlCenter() {
         .eq("user_id", id)).order("uploaded_at", { ascending: false }).limit(500),
       scope(supabase.from("financial_accounting_records").select("*").eq("user_id", id))
         .order("created_at", { ascending: false }).limit(500),
+      scope(supabase.from("financial_suppliers").select("*").eq("user_id", id))
+        .order("legal_name", { ascending: true }).limit(1000),
     ]);
     if (version !== loadVersion.current) return;
-    const problem = a.error ?? b.error ?? c.error ?? d.error ?? f.error;
+    const problem = a.error ?? b.error ?? c.error ?? d.error ?? f.error ?? g.error;
     if (problem) {
       setStorageReady(false);
       setError("Il Centro di controllo non è ancora attivo nel database. Non vengono mostrati saldi o pagamenti incompleti.");
@@ -163,6 +168,7 @@ export default function FinancialControlCenter() {
       setMatches((c.data ?? []) as MatchRow[]);
       setDeadlines((d.data ?? []) as DeadlineRow[]);
       setAccountingRecords((f.data ?? []) as AccountingRecord[]);
+      setSuppliers((g.data ?? []) as RegisteredSupplier[]);
       // Il nuovo modulo resta utilizzabile anche se un archivio legacy
       // non presenta ancora tutte le colonne avanzate.
       setArchivedDocuments(e.error ? [] : (e.data ?? []) as ArchiveDocument[]);
@@ -235,7 +241,7 @@ export default function FinancialControlCenter() {
     bankLoadVersion.current++;
     setSelectedTx({});
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
-    setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);
+    setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);setSuppliers([]);
     void loadData(userId,companyId);
     if (companyId) {
       // Le API PSD2 correnti sono personali: non mostrare i relativi
@@ -385,7 +391,9 @@ export default function FinancialControlCenter() {
     if(!userId || !accountingCategories.some((item)=>item.value===category))return;
     setWorking(true);setError("");
     const {error:issue}=await getSupabaseClient()!.from("financial_invoices")
-      .update({cost_category:category,category_status:"confirmed"})
+      .update({cost_category:category,category_status:"confirmed",
+        category_source:"manual",classification_confidence:100,
+        classification_reason:"Categoria confermata manualmente dall'utente"})
       .eq("id",invoice.id).eq("user_id",userId);
     setWorking(false);
     if(issue)setError(issue.message);
@@ -478,6 +486,8 @@ export default function FinancialControlCenter() {
     if (!Number.isFinite(amount) || amount <= 0) { setError("Importo fattura non valido."); return; }
     setWorking(true); setError(""); setMessage("");
     const supabase = getSupabaseClient()!;
+    const auto=classifyInvoice(
+      invoiceForm.direction,invoiceForm.counterparty,null,invoiceForm.notes,suppliers);
     const { error: issue } = await supabase.from("financial_invoices").insert({
       user_id: userId, company_id: companyId, source: "manual",
       direction: invoiceForm.direction,
@@ -486,9 +496,12 @@ export default function FinancialControlCenter() {
       due_date: invoiceForm.due_date || null, amount, currency: "EUR",
       notes: invoiceForm.notes.trim() || null,
       document_id: linkedDocumentId,
-      cost_category: invoiceForm.cost_category ||
-        suggestCategory(invoiceForm.direction,`${invoiceForm.counterparty} ${invoiceForm.notes}`).category,
-      category_status: invoiceForm.cost_category ? "confirmed" : "needs_review",
+      ...auto,
+      ...(invoiceForm.cost_category?{
+        cost_category:invoiceForm.cost_category,category_status:"confirmed",
+        category_source:"manual",classification_confidence:100,
+        classification_reason:"Categoria scelta manualmente",
+      }:{}),
     });
     setWorking(false);
     if (issue) setError("Non è stato possibile registrare la fattura: " + issue.message);
@@ -533,8 +546,8 @@ export default function FinancialControlCenter() {
       companyId?currentCompany?.vat_number:null);
     const payload=await Promise.all(rows.map(async(row)=>({
       ...row,user_id:userId,company_id:companyId,
-      cost_category:suggestCategory(row.direction,`${row.counterparty} ${row.notes??""}`).category,
-      category_status:"needs_review",
+      ...classifyInvoice(row.direction,row.counterparty,row.vat_number,
+        row.invoice_description??"",suppliers),
       import_key:await fingerprint([
         "xml",companyId??"personal",row.direction,row.invoice_number,row.issue_date,
         row.counterparty.toLowerCase(),row.amount.toFixed(2),row.currency,
@@ -551,6 +564,9 @@ export default function FinancialControlCenter() {
     let uploadedPath:string|null=null;
     let archivedId:string|null=null;
     try {
+      // Lo stesso hash è disponibile anche per gli XML: lo storico può
+      // confrontare i file reali indipendentemente dal nome.
+      const xmlHash=await fileSha256(file);
       // Ogni XML originale ha un proprio file privato. Non inviare lo ZIP.
       const name=file.name.normalize("NFKD")
         .replace(/[^a-zA-Z0-9._-]+/g,"-").slice(-110)||"fattura.xml";
@@ -563,6 +579,7 @@ export default function FinancialControlCenter() {
       const first=newRows[0];
       const {data:archived,error:archiveError}=await supabase.from("documents").insert({
         user_id:userId,company_id:companyId,
+        file_sha256:xmlHash,file_hash_checked_at:new Date().toISOString(),
         title:`Fattura ${first.invoice_number} · ${first.counterparty}`.slice(0,180),
         category:"Lavoro",file_name:file.name,
         uploaded_at:new Date().toISOString(),
@@ -829,6 +846,7 @@ export default function FinancialControlCenter() {
         ["overview","Panoramica",Sparkles],["invoices","Fatture",Receipt],
         ["accounts","Banche e movimenti",Landmark],["deadlines","Scadenze",CalendarClock],
         ["accounting","Contabilità e documenti",Building2],
+        ["suppliers","Fornitori",Building2],
       ] as const).map(([key,label,Icon]) =>
         <button key={key} className={tab === key ? "active" : ""} type="button"
           onClick={() => {setTab(key);setError("");setMessage("");}}>
@@ -904,6 +922,15 @@ export default function FinancialControlCenter() {
       </section>
       <div className="fc-disclaimer">Questi importi rappresentano fatture e flussi bancari, non l'utile contabile né le imposte dovute. Le fonti potrebbero essere incomplete.</div>
     </>}
+
+    {storageReady === true && tab === "suppliers" && <SupplierManager
+      supabase={getSupabaseClient()}
+      userId={userId}
+      companyId={companyId}
+      invoices={invoices}
+      suppliers={suppliers}
+      onUpdated={async()=>{await loadData(userId,companyId);}}
+    />}
 
     {storageReady === true && tab === "invoices" && <>
       <div className="fc-two-col">
@@ -1061,6 +1088,8 @@ export default function FinancialControlCenter() {
                   {" "}{invoice.invoice_number} · {dateIt(invoice.issue_date)}
                   {invoice.document_id ? " · Documento DocuMio collegato" : ""}
                   {" · "}{categoryLabel(invoice.cost_category)}
+                  {invoice.category_source==="supplier"?" · Fornitore memorizzato":
+                   invoice.category_source==="description"?" · Da descrizione fattura":""}
                   {invoice.due_date ? ` · Scad. ${dateIt(invoice.due_date)}` : ""}
                 </small></div>
                 <span className={`fc-status ${status.kind}`}>{status.text}</span>
