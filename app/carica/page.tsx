@@ -17,7 +17,8 @@ type UploadEntry = {
   stage: Stage;
   error?: string;
 };
-type QueuedFile = { id: string; file: File };
+type DocumentKind = "other"|"invoice_pdf"|"bank_statement"|"payroll"|"f24"|"contract";
+type QueuedFile = { id: string; file: File; companyId:string|null; kind:DocumentKind };
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_BATCH = 12;
 const MAX_PARALLEL = 3;
@@ -50,9 +51,14 @@ export default function BatchUploadPage() {
   const [dragging, setDragging] = useState(false);
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [generalError, setGeneralError] = useState("");
+  const [companies,setCompanies] = useState<Array<{id:string;legal_name:string}>>([]);
+  const [companyId,setCompanyId] = useState<string|null>(null);
+  const [companyReady,setCompanyReady] = useState(false);
+  const [scopeError,setScopeError] = useState("");
+  const [documentKind,setDocumentKind] = useState<DocumentKind>("other");
   const queueRef = useRef<QueuedFile[]>([]);
   const inFlightRef = useRef(0);
-  const filesRef = useRef(new Map<string, File>());
+  const filesRef = useRef(new Map<string, QueuedFile>());
 
   useEffect(() => {
     const supabase = getSupabaseClient();
@@ -75,6 +81,31 @@ export default function BatchUploadPage() {
     });
     return () => { active = false; data.subscription.unsubscribe(); };
   }, []);
+
+  useEffect(()=>{
+    if(!userId){setCompanies([]);setCompanyReady(false);setCompanyId(null);return;}
+    let active=true;
+    void (async()=>{
+      const supabase=getSupabaseClient();
+      const {data,error}=await supabase!.from("financial_companies")
+        .select("id,legal_name").eq("user_id",userId)
+        .order("legal_name",{ascending:true});
+      if(!active)return;
+      const list=(data??[]) as Array<{id:string;legal_name:string}>;
+      setCompanies(list);
+      const requested=new URLSearchParams(window.location.search).get("company");
+      if(requested && requested!=="personal" && !list.some((x)=>x.id===requested)) {
+        setScopeError("L'azienda selezionata non appartiene a questo account o il modulo non è disponibile.");
+        setCompanyReady(false);
+      } else {
+        setScopeError("");
+        setCompanyId(requested&&requested!=="personal"?requested:null);
+        setCompanyReady(!error);
+        if(error)setScopeError("Impossibile verificare l'archivio aziendale.");
+      }
+    })();
+    return ()=>{active=false;};
+  },[userId]);
 
   useEffect(() => {
     if (!userId) { setAvailable(false); return; }
@@ -128,6 +159,9 @@ export default function BatchUploadPage() {
       setStage(entry.id,"saving");
       const {data,error:saveError} = await supabase.from("documents").insert({
         user_id:owner,
+        company_id:entry.companyId,
+        financial_document_type:entry.kind==="other"?null:entry.kind,
+        accounting_review_status:entry.kind==="other"?"not_applicable":"needs_review",
         file_name:prepared.name,
         title:prepared.name.replace(/\.[^.]+$/,"").replace(/[_-]+/g," ").slice(0,180),
         category:"Altro",
@@ -144,6 +178,17 @@ export default function BatchUploadPage() {
         throw new Error("Impossibile archiviare la scheda del file.");
       }
 
+      // F24/paghe/contratti restano "da verificare", anche dopo aver
+      // caricato il PDF. Una scheda amministrativa non inventa gli importi.
+      if(["f24","payroll","bank_statement","contract"].includes(entry.kind)) {
+        const {error:recordError}=await supabase.from("financial_accounting_records").insert({
+          user_id:owner,company_id:entry.companyId,
+          document_id:data.id,record_type:entry.kind,title:prepared.name,
+          category:"da_verificare",review_status:"needs_review",
+        });
+        if(recordError)setGeneralError(
+          "Alcune schede contabili non sono state create automaticamente. I file restano salvati; puoi completarle da Contabilità e documenti.");
+      }
       // Stato salvato = file nello Storage e scheda registrata.
       // La richiesta AI parte DOPO, senza bloccare questa conferma.
       setStage(entry.id,"saved");
@@ -182,14 +227,16 @@ export default function BatchUploadPage() {
   }
 
   function queueFiles(files: File[]) {
-    if (!userId || !available) return;
+    if (!userId || !available || !companyReady || scopeError) return;
     const batch = files.slice(0,MAX_BATCH);
     if (!batch.length) return;
     setGeneralError(files.length > MAX_BATCH
       ? "Per evitare sovraccarichi sono stati selezionati i primi 12 file. Potrai aggiungere gli altri in una seconda selezione."
       : "");
-    const queued = batch.map((file)=>({id:crypto.randomUUID(),file}));
-    queued.forEach((item)=>filesRef.current.set(item.id,item.file));
+    const queued = batch.map((file)=>({
+      id:crypto.randomUUID(),file,companyId,kind:documentKind,
+    }));
+    queued.forEach((item)=>filesRef.current.set(item.id,item));
     setEntries((current)=>[
       ...queued.map((item)=>({
         id:item.id,name:item.file.name,bytes:item.file.size,stage:"pending" as Stage,
@@ -200,10 +247,10 @@ export default function BatchUploadPage() {
   }
 
   function retry(id:string) {
-    const file = filesRef.current.get(id);
-    if (!file || !userId || !available) return;
+    const entry = filesRef.current.get(id);
+    if (!entry || !userId || !available || !companyReady) return;
     setStage(id,"pending");
-    queueRef.current.push({id,file});
+    queueRef.current.push(entry);
     pump(userId);
   }
 
@@ -235,6 +282,41 @@ export default function BatchUploadPage() {
       <a href="/">Torna all'archivio</a></div>
     </div>
     : <>
+      <section className="du-workspace-picker">
+        <div className="du-workspace-heading"><FolderOpen size={20}/>
+          <div><strong>In quale archivio?</strong>
+            <small>La scelta vale per tutti i file della prossima selezione.</small></div>
+        </div>
+        <div className="du-workspace-fields">
+          <label>Archivio
+            <select value={companyId??""} disabled={!companyReady} onChange={(event)=>{
+              const next=event.target.value;
+              setCompanyId(next||null);
+              const url=new URL(window.location.href);
+              if(next)url.searchParams.set("company",next); else url.searchParams.delete("company");
+              window.history.replaceState(null,"",url);
+            }}>
+              <option value="">Personale</option>
+              {companies.map((company)=><option key={company.id} value={company.id}>
+                {company.legal_name}</option>)}
+            </select>
+          </label>
+          <label>Tipo documento
+            <select value={documentKind}
+              onChange={(event)=>setDocumentKind(event.target.value as DocumentKind)}>
+              <option value="other">Documento generico</option>
+              <option value="invoice_pdf">Fattura PDF / immagine</option>
+              <option value="bank_statement">Estratto conto PDF</option>
+              <option value="f24">Modello F24</option>
+              <option value="payroll">Busta paga / cedolino</option>
+              <option value="contract">Contratto da controllare</option>
+            </select>
+          </label>
+        </div>
+        <a href={companyId? `/controllo?company=${encodeURIComponent(companyId)}` : "/controllo"}>
+          Per fatture elettroniche XML e movimenti CSV usa il Centro di controllo →
+        </a>
+      </section>
       <label className={`du-drop ${dragging ? "dragging":""}`}
         onDragOver={(event)=>{event.preventDefault();setDragging(true);}}
         onDragLeave={(event)=>{event.preventDefault();setDragging(false);}}
@@ -252,6 +334,7 @@ export default function BatchUploadPage() {
             event.currentTarget.value="";
           }}/>
       </label>
+      {scopeError && <p className="du-error" role="alert">{scopeError}</p>}
       {generalError && <p className="du-error" role="alert">{generalError}</p>}
       <section className="du-results">
         <div className="du-results-head">
