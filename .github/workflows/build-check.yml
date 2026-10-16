@@ -38,6 +38,8 @@ jobs:
           rm -f audit-report.json
       - name: Financial-control unit tests
         run: npm run test:finance
+      - name: ZIP invoice import regression tests
+        run: npm run test:invoice-zip
       - name: Archive and fast-upload regression tests
         run: npm run test:archive
       - name: Responsive UI regression tests
