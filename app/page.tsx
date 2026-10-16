@@ -904,6 +904,9 @@ export default function Home() {
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
   const [practices, setPractices] = useState<Practice[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>("documents");
+  const [companies,setCompanies] = useState<Array<{id:string;legal_name:string}>>([]);
+  const [companyId,setCompanyId] = useState<string|null>(null);
+  const [companyReady,setCompanyReady] = useState(false);
 
   // Il menu comune apre Archivio/Pratiche senza ricaricare l'applicazione.
   useEffect(() => {
@@ -1163,6 +1166,38 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(()=>{
+    if(!userId){setCompanies([]);setCompanyId(null);setCompanyReady(false);return;}
+    let active=true;
+    void (async()=>{
+      const supabase=getSupabaseClient();
+      const {data,error}=await supabase!.from("financial_companies")
+        .select("id,legal_name").eq("user_id",userId)
+        .order("legal_name",{ascending:true});
+      if(!active)return;
+      const list=(data??[]) as Array<{id:string;legal_name:string}>;
+      setCompanies(list);
+      const requested=new URLSearchParams(window.location.search).get("company");
+      if(requested && requested!=="personal" && !list.some((item)=>item.id===requested)){
+        window.alert("L'azienda richiesta non è disponibile in questo account.");
+        setCompanyId(null);
+      } else setCompanyId(requested&&requested!=="personal"?requested:null);
+      setCompanyReady(!error);
+    })();
+    return ()=>{active=false;};
+  },[userId]);
+
+  function changeCompany(nextId:string|null) {
+    if(nextId && !companies.some((item)=>item.id===nextId))return;
+    const next=new URL(window.location.href);
+    if(nextId)next.searchParams.set("company",nextId);
+    else next.searchParams.set("company","personal");
+    window.history.replaceState(null,"",next);
+    setCompanyId(nextId);setQuery("");setAiResultIds(null);
+    setActiveCategory("Tutti");
+    window.dispatchEvent(new Event("documio:workspace"));
+  }
+
   useEffect(() => {
     let active = true;
     async function loadDocuments() {
@@ -1218,6 +1253,7 @@ export default function Home() {
         (practiceRows ?? []).map((item) => ({
           id: item.id,
           userId: item.user_id,
+          companyId: item.company_id ?? null,
           title: item.title,
           practiceType: item.practice_type,
           description: item.description ?? null,
@@ -1237,6 +1273,9 @@ export default function Home() {
 
       const loadedDocuments: StoredDocument[] = (data ?? []).map((item) => ({
         id: item.id,
+        companyId: item.company_id ?? null,
+        financialDocumentType: item.financial_document_type ?? null,
+        accountingReviewStatus: item.accounting_review_status ?? "not_applicable",
         title: item.title,
         category: item.category as DocumentCategory,
         fileName: item.file_name,
@@ -1451,8 +1490,16 @@ export default function Home() {
     }
   }
 
+  const workspaceDocuments = useMemo(() =>
+    documents.filter((item)=>(item.companyId??null)===companyId),
+    [documents,companyId]);
+  const workspacePractices = useMemo(() =>
+    practices.filter((item)=>(item.companyId??null)===companyId),
+    [practices,companyId]);
+  const activeCompanyName = companies.find((item)=>item.id===companyId)?.legal_name;
+
   const dashboard = useMemo(() => {
-    const toPay = documents.filter((document) => {
+    const toPay = workspaceDocuments.filter((document) => {
       const documentAttachments = attachments[document.id] ?? [];
       return (
         hasPaymentTracking(document, documentAttachments) &&
@@ -1461,7 +1508,7 @@ export default function Home() {
         )
       );
     });
-    const partial = documents.filter((document) => {
+    const partial = workspaceDocuments.filter((document) => {
       const documentAttachments = attachments[document.id] ?? [];
       return (
         hasPaymentTracking(document, documentAttachments) &&
@@ -1469,10 +1516,10 @@ export default function Home() {
           "Parzialmente pagato"
       );
     });
-    const expiring = documents.filter((document) =>
+    const expiring = workspaceDocuments.filter((document) =>
       isExpiringWithin30Days(document, attachments[document.id] ?? []),
     );
-    const paid = documents.filter((document) => {
+    const paid = workspaceDocuments.filter((document) => {
       const documentAttachments = attachments[document.id] ?? [];
       return (
         hasPaymentTracking(document, documentAttachments) &&
@@ -1480,7 +1527,7 @@ export default function Home() {
       );
     });
 
-    const outstandingTotal = documents.reduce((total, document) => {
+    const outstandingTotal = workspaceDocuments.reduce((total, document) => {
       const documentAttachments = attachments[document.id] ?? [];
       if (!hasPaymentTracking(document, documentAttachments)) return total;
 
@@ -1503,7 +1550,7 @@ export default function Home() {
       paidCount: paid.length,
       outstandingTotal,
     };
-  }, [documents, attachments]);
+  }, [workspaceDocuments, attachments]);
 
   const notificationItems = useMemo<NotificationItem[]>(() => {
     const now = new Date();
@@ -1514,7 +1561,7 @@ export default function Home() {
     ).getTime();
     const dayMs = 24 * 60 * 60 * 1000;
 
-    return documents
+    return workspaceDocuments
       .flatMap((document) => {
         const items: NotificationItem[] = [];
         const documentAttachments = attachments[document.id] ?? [];
@@ -1679,7 +1726,7 @@ export default function Home() {
         return items;
       })
       .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""));
-  }, [documents, attachments, language]);
+  }, [workspaceDocuments, attachments, language]);
 
   const unreadNotificationCount = notificationItems.filter(
     (item) => !readNotificationIds.includes(item.id),
@@ -1850,7 +1897,7 @@ export default function Home() {
     try {
       const relevantDocuments = rankDocumentsForQuestion(
         cleanQuestion,
-        documents,
+        workspaceDocuments,
         attachments,
       );
       const response = await fetch("/api/assistant", {
@@ -1943,7 +1990,7 @@ export default function Home() {
   const filtered = useMemo(() => {
     const hasQuery = query.trim().length > 0;
 
-    const rankedDocuments = documents
+    const rankedDocuments = workspaceDocuments
       .map((document) => {
         const translatedCategory =
           t.categories[document.category] ?? document.category;
@@ -2008,7 +2055,7 @@ export default function Home() {
     }
 
     return rankedDocuments.map(({ document }) => document);
-  }, [documents, query, activeCategory, t, attachments, aiResultIds]);
+  }, [workspaceDocuments, query, activeCategory, t, attachments, aiResultIds]);
 
   async function updateAppointment(
     document: StoredDocument,
@@ -2691,6 +2738,7 @@ export default function Home() {
       .from("documents")
       .insert({
         user_id: user.id,
+        company_id: doc.companyId ?? companyId,
         practice_id: doc.practiceId ?? null,
         title: doc.title,
         category: doc.category,
@@ -2735,6 +2783,9 @@ export default function Home() {
 
     const savedDocument: StoredDocument = {
       id: data.id,
+      companyId: data.company_id ?? null,
+      financialDocumentType: data.financial_document_type ?? null,
+      accountingReviewStatus: data.accounting_review_status ?? "not_applicable",
       title: data.title,
       category: data.category as DocumentCategory,
       fileName: data.file_name,
@@ -2788,6 +2839,7 @@ export default function Home() {
       .from("practices")
       .insert({
         user_id: userId,
+        company_id: companyId,
         title: values.title.trim(),
         practice_type: values.practiceType.trim() || "Altro",
         description: values.description.trim() || null,
@@ -2803,6 +2855,7 @@ export default function Home() {
       {
         id: data.id,
         userId: data.user_id,
+        companyId: data.company_id ?? null,
         title: data.title,
         practiceType: data.practice_type,
         description: data.description ?? null,
@@ -3888,7 +3941,7 @@ export default function Home() {
                       <option value="">
                         {language === "it" ? "Nessuna pratica" : "No case"}
                       </option>
-                      {practices.map((practice) => (
+                      {workspacePractices.map((practice) => (
                         <option key={practice.id} value={practice.id}>
                           {practice.title}
                         </option>
@@ -4081,7 +4134,7 @@ export default function Home() {
             <div>
               <h2>{language === "it" ? "Le tue pratiche" : "Your cases"}</h2>
               <p>
-                {practices.length} {language === "it" ? "pratiche" : "cases"}
+                {workspacePractices.length} {language === "it" ? "pratiche" : "cases"}
               </p>
             </div>
             <button
@@ -4094,7 +4147,7 @@ export default function Home() {
             </button>
           </div>
           <div className="grid">
-            {practices.map((practice) => {
+            {workspacePractices.map((practice) => {
               const linkedDocuments = documents.filter(
                 (document) => document.practiceId === practice.id,
               );
@@ -4173,7 +4226,7 @@ export default function Home() {
                 </article>
               );
             })}
-            {isLoaded && practices.length === 0 && (
+            {isLoaded && workspacePractices.length === 0 && (
               <div className="empty">
                 <FolderKanban size={42} />
                 <h3>{language === "it" ? "Nessuna pratica" : "No cases"}</h3>
@@ -4954,7 +5007,7 @@ export default function Home() {
         <UploadModal
           language={language}
           fastUploadAvailable={fastUploadAvailable}
-          documents={documents}
+          documents={workspaceDocuments}
           attachments={attachments}
           onClose={() => setShowUpload(false)}
           onSaved={saveDocument}
