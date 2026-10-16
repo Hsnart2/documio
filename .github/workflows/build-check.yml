@@ -40,6 +40,8 @@ jobs:
         run: npm run test:finance
       - name: Archive and fast-upload regression tests
         run: npm run test:archive
+      - name: Responsive UI regression tests
+        run: npm run test:ui
       - name: Build
         shell: bash
         run: |
