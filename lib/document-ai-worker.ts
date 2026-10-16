@@ -1,6 +1,7 @@
 // Elaborazione differita di documenti gia' SALVATI: il file non viene
 // eliminato se l'AI fallisce. Le decisioni su pagamenti non sono automatiche.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { recordOpenAIUsage } from "@/lib/owner-metering";
 
 export type ClaimedDocumentAIJob = {
   id: string;
@@ -13,6 +14,7 @@ type DocumentForAI = {
   user_id: string;
   file_name: string;
   storage_path: string | null;
+  company_id: string | null;
   ai_status: string;
   ai_user_note: string | null;
   expiry_date: string | null;
@@ -66,6 +68,11 @@ type Extraction = {
 type AIResponse = {
   output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
   error?: { message?: string };
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number } | null;
+  };
 };
 
 export function getDocumentAIAdmin() {
@@ -110,7 +117,10 @@ export function recognizeFile(buffer: Buffer, filename: string) {
   return null;
 }
 
-async function extract(buffer: Buffer, filename: string, mimeType: string, note: string) {
+async function extract(
+  buffer: Buffer, filename: string, mimeType: string, note: string,
+  admin: SupabaseClient, userId: string, companyId: string | null,
+) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("AI non configurata");
   const isImage = mimeType.startsWith("image/");
@@ -163,6 +173,10 @@ ${note.slice(0,1000) || "nessuna"}`,
     }),
   });
   const body = await response.json().catch(() => null) as AIResponse | null;
+  await recordOpenAIUsage(admin, {
+    userId, companyId, feature: "Analisi automatica",
+    model: "gpt-5-mini", ok: response.ok, usage: body?.usage,
+  });
   if (!response.ok) throw new Error(`Servizio AI non disponibile (${response.status})`);
   const text = body?.output?.flatMap((item)=>item.content ?? [])
     .find((item)=>item.type==="output_text")?.text;
@@ -192,7 +206,7 @@ export async function processClaimedDocumentAI(
 ) {
   if (!admin) return { status: "failed", reason: "Archivio non disponibile" };
   const { data: document, error } = await admin.from("documents")
-    .select("id,user_id,file_name,storage_path,ai_status,ai_user_note,expiry_date")
+    .select("id,user_id,file_name,storage_path,company_id,ai_status,ai_user_note,expiry_date")
     .eq("id",job.document_id).eq("user_id",job.user_id).maybeSingle();
   const doc = document as DocumentForAI | null;
   if (error || !doc?.storage_path || !doc.storage_path.startsWith(job.user_id + "/")) {
@@ -218,7 +232,8 @@ export async function processClaimedDocumentAI(
     const buffer = Buffer.from(await blob.arrayBuffer());
     const mimeType = recognizeFile(buffer, doc.file_name);
     if (!mimeType) throw new Error("Formato file non supportato dall'analisi AI");
-    const result = await extract(buffer, doc.file_name, mimeType, doc.ai_user_note ?? "");
+    const result = await extract(buffer, doc.file_name, mimeType, doc.ai_user_note ?? "",
+      admin,job.user_id,doc.company_id);
     const category = CATEGORIES.includes(result.category) ? result.category : "Altro";
     const date = validDate(result.expiryDate);
     const appointment = typeof result.appointmentTime === "string" &&
