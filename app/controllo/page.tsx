@@ -110,6 +110,12 @@ export default function FinancialControlCenter() {
   const [companyReady,setCompanyReady] = useState(false);
   const loadVersion = useRef(0);
   const [accountingRecords,setAccountingRecords] = useState<AccountingRecord[]>([]);
+  const [reviewingContract,setReviewingContract] = useState<string|null>(null);
+  const [contractReview,setContractReview] = useState<null|{
+    documentTitle:string;summary:string;
+    issues:Array<{topic:string;severity:string;passage:string;explanation:string;action:string}>;
+    checklist:string[];limitations:string;
+  }>(null);
   const [accountForm,setAccountForm] = useState({
     record_type:"f24",title:"",amount:"",tax_amount:"",
     reference_period:"",due_date:"",description:"",category:"da_verificare",
@@ -220,7 +226,7 @@ export default function FinancialControlCenter() {
     loadVersion.current++;
     setSelectedTx({});
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
-    setAccountingRecords([]);setArchivedDocuments([]);
+    setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);
     void loadData(userId,companyId);
     if (companyId) {
       // Le API PSD2 correnti sono personali: non mostrare i relativi
@@ -418,6 +424,40 @@ export default function FinancialControlCenter() {
     if(issue)setError(issue.message);
     else {setMessage("Registrazione marcata come verificata manualmente.");
       await loadData(userId,companyId);}
+  }
+
+  async function reviewContractFile(record:AccountingRecord) {
+    if(!record.document_id || reviewingContract)return;
+    if(!window.confirm(
+      "DocuMio invierà questo contratto al servizio AI per individuarne clausole e possibili criticità. Il risultato non è un parere legale. Procedere?"
+    ))return;
+    const auth=await headers();
+    if(!auth){setError("Sessione non valida.");return;}
+    setReviewingContract(record.document_id);setError("");setContractReview(null);
+    try{
+      const response=await fetch("/api/contracts/review",{
+        method:"POST",
+        headers:{...auth,"Content-Type":"application/json"},
+        body:JSON.stringify({documentId:record.document_id,consentToAi:true}),
+      });
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error??"Analisi non disponibile.");
+      setContractReview(result.review);
+      if(result.persisted===false)setMessage("Analisi visibile, ma il salvataggio è da ripetere.");
+      else setMessage("Analisi contrattuale recuperata. Verifica ogni passaggio nell'originale.");
+    }catch(problem){setError(problem instanceof Error?problem.message:"Contratto non analizzato.");}
+    finally{setReviewingContract(null);}
+  }
+  async function openAccountingOriginal(record:AccountingRecord) {
+    if(!record.document_id || !userId)return;
+    const supabase=getSupabaseClient()!;
+    const {data,error}=await supabase.from("documents").select("storage_path")
+      .eq("id",record.document_id).eq("user_id",userId).maybeSingle();
+    if(error||!data?.storage_path){setError("Documento originale non trovato.");return;}
+    const {data:signed,error:signedError}=await supabase.storage.from("documents")
+      .createSignedUrl(data.storage_path,120);
+    if(signedError||!signed?.signedUrl){setError("Impossibile aprire l'originale.");return;}
+    window.open(signed.signedUrl,"_blank","noopener,noreferrer");
   }
 
   async function submitInvoice(event: React.FormEvent) {
@@ -1157,6 +1197,14 @@ export default function FinancialControlCenter() {
                 </div>
                 <div className="fc-item-right">
                   {record.amount!=null && <strong>{eur(Number(record.amount))}</strong>}
+                  {record.document_id && <button type="button" disabled={working}
+                    onClick={()=>void openAccountingOriginal(record)}><FileText size={15}/> Originale</button>}
+                  {record.record_type==="contract" && record.document_id && (
+                    <button type="button" disabled={Boolean(reviewingContract)}
+                      onClick={()=>void reviewContractFile(record)}>
+                      {reviewingContract===record.document_id?<LoaderCircle size={15}/>:<Sparkles size={15}/>}
+                      {reviewingContract===record.document_id?"Analizzo…":"Esamina clausole"}
+                    </button>)}
                   {record.review_status!=="confirmed" && <button type="button"
                     disabled={working} onClick={()=>void confirmAccountingRecord(record)}>
                     <Check size={16}/> Conferma
@@ -1165,6 +1213,28 @@ export default function FinancialControlCenter() {
               </div>)}</div>}
         </section>
       </div>
+      {contractReview && <section className="fc-panel fc-contract-review" role="region"
+        aria-label="Analisi AI del contratto">
+        <h2><Sparkles size={21}/> Contratto · {contractReview.documentTitle}</h2>
+        <p className="fc-muted">{contractReview.summary}</p>
+        <h3>Clausole e punti da verificare</h3>
+        {contractReview.issues.length
+          ? <div className="fc-contract-issues">{contractReview.issues.map((item,index)=>
+            <article key={index}>
+              <span className={item.severity==="important"?"warn":"neutral"}>
+                {item.severity==="important"?"Priorità di controllo":"Da verificare"}</span>
+              <strong>{item.topic}</strong>
+              <blockquote>{item.passage||"Passaggio non individuato"}</blockquote>
+              <p>{item.explanation}</p>
+              <small>Controllo suggerito: {item.action}</small>
+            </article>)}</div>
+          : <div className="fc-empty">Nessuna clausola segnalata dall'AI: non significa che il contratto sia privo di rischi.</div>}
+        <h3>Verifiche da fare</h3>
+        <ul className="fc-contract-checklist">
+          {contractReview.checklist.map((item,index)=><li key={index}>{item}</li>)}
+        </ul>
+        <div className="fc-disclaimer">{contractReview.limitations}</div>
+      </section>}
       <div className="fc-disclaimer">Non vengono elaborate o trasmesse dichiarazioni fiscali,
         modelli F24, cedolini o bilanci ufficiali. DocuMio segnala ciò che manca,
         organizza la documentazione e prepara dati controllabili dal professionista.</div>
