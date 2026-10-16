@@ -21,7 +21,8 @@ export async function POST(request: Request) {
   if (!token || !key || !url) {
     return NextResponse.json({ error:"Sessione mancante." }, { status:401 });
   }
-  const body = await request.json().catch(()=>null) as {query?:unknown} | null;
+  const body = await request.json().catch(()=>null) as
+    {query?:unknown;companyId?:unknown} | null;
   const query = typeof body?.query === "string" ? body.query.trim() : "";
   if (query.length < 2 || query.length > 250)
     return NextResponse.json({ error:"Inserisci da 2 a 250 caratteri." }, { status:400 });
@@ -33,13 +34,27 @@ export async function POST(request: Request) {
   if (authError || !user)
     return NextResponse.json({ error:"Accesso non autorizzato." }, { status:401 });
 
+  const companyId = body?.companyId ?? null;
+  if (companyId !== null && (typeof companyId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(companyId))) {
+    return NextResponse.json({error:"Archivio non valido."},{status:400});
+  }
+  if (companyId) {
+    const {data:company,error:companyError} = await client.from("financial_companies")
+      .select("id").eq("id",companyId).eq("user_id",user.id).maybeSingle();
+    if (companyError || !company)
+      return NextResponse.json({error:"Azienda non accessibile."},{status:403});
+  }
+  const inScope = (builder:any) => companyId
+    ? builder.eq("company_id",companyId) : builder.is("company_id",null);
+  
   const [documentsA, documentsB, attachmentsA, attachmentsB] = await Promise.all([
-    client.from("documents")
+    inScope(client.from("documents")
       .select("id,title,file_name,summary,category,keywords,expiry_date")
-      .eq("user_id",user.id).order("uploaded_at",{ascending:false}).range(0,999),
-    client.from("documents")
+      .eq("user_id",user.id)).order("uploaded_at",{ascending:false}).range(0,999),
+    inScope(client.from("documents")
       .select("id,title,file_name,summary,category,keywords,expiry_date")
-      .eq("user_id",user.id).order("uploaded_at",{ascending:false}).range(1000,1999),
+      .eq("user_id",user.id)).order("uploaded_at",{ascending:false}).range(1000,1999),
     client.from("document_attachments")
       .select("document_id,title,file_name,notes,attachment_type")
       .eq("user_id",user.id).order("uploaded_at",{ascending:false}).range(0,999),
