@@ -200,6 +200,7 @@ body.dm-app-nav-visible textarea:focus-visible {
   box-shadow: 0 4px 15px rgba(19,41,76,.025);
   transition: border-color .16s, transform .16s, box-shadow .16s;
 }
+.dm-quick-item { font: inherit; cursor: pointer; }
 .dm-quick-item:hover {
   border-color: #bbbff3;
   transform: translateY(-2px);
@@ -385,6 +386,58 @@ body.dm-app-nav-visible .doc-card-actions .delete-button { color: #b42336; backg
 body.dm-app-nav-visible .doc-card-actions .edit-button:hover { background: #e6e6ff; }
 body.dm-app-nav-visible .doc-card-actions .delete-button:hover { background: #ffe1e6; }
 body.dm-app-nav-visible .empty { background: #fff; border-color: #d9e1ef; }
+
+/* Il riepilogo è una sezione, non un insieme di pulsanti senza titolo. */
+.dm-app-nav-visible .smart-home-priority-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 14px;
+  margin-top: 3px;
+}
+.dm-app-nav-visible .smart-home-priority-heading span {
+  display: block;
+  color: #7c8a9f;
+  letter-spacing: .14em;
+  font-size: 10px;
+  font-weight: 850;
+}
+.dm-app-nav-visible .smart-home-priority-heading h2 {
+  margin: 5px 0 0;
+  color: #243651;
+  font-size: clamp(19px,2vw,24px);
+  font-weight: 800;
+  letter-spacing: -.035em;
+}
+.dm-app-nav-visible .smart-home-priority-heading p {
+  margin: 0;
+  color: #7e8999;
+  font-size: 12px;
+}
+@media (min-width: 1280px) {
+  body.dm-app-nav-visible .smart-home {
+    grid-template-columns: minmax(0,1fr) minmax(0,1.08fr);
+    align-items: stretch;
+    column-gap: 15px;
+  }
+  body.dm-app-nav-visible .smart-home-welcome,
+  body.dm-app-nav-visible .smart-home-priority-heading,
+  body.dm-app-nav-visible .smart-home-cards { grid-column: 1 / -1; }
+  body.dm-app-nav-visible .smart-home-insights { grid-column: 1; min-width: 0; }
+  body.dm-app-nav-visible .smart-home-chat { grid-column: 2; min-width: 0; }
+  body.dm-app-nav-visible .smart-home-insights-list {
+    grid-template-columns: minmax(0,1fr);
+  }
+  body.dm-app-nav-visible .smart-home-chat-heading { padding: 18px 18px 12px; }
+  body.dm-app-nav-visible .smart-home-suggestions { padding: 4px 18px 12px; }
+  body.dm-app-nav-visible .smart-home-conversation { min-height: 132px; max-height: 375px; }
+  body.dm-app-nav-visible .smart-home-chat-heading p { font-size: 12px; }
+}
+@media (max-width: 720px) {
+  .dm-app-nav-visible .smart-home-priority-heading { align-items: flex-start; }
+  .dm-app-nav-visible .smart-home-priority-heading h2 { font-size: 19px; }
+  .dm-app-nav-visible .smart-home-priority-heading p { display: none; }
+}
 
 /* Smart Home: leggibile ma non opprimente. */
 body.dm-app-nav-visible .smart-home-welcome {
