@@ -421,7 +421,7 @@ export default function SmartEmailPage() {
   const pendingAiCount = data?.messages.filter((message) => !message.analyzedByAi).length ?? 0;
 
   return (
-    <main className="smart-mail-page">
+    <main id="dm-main-content" className="smart-mail-page">
       <div className="smart-mail-shell">
         <div className="smart-mail-top">
           <Link href="/" className="smart-mail-back"><ArrowLeft size={17} /> Torna a DocuMio</Link>
