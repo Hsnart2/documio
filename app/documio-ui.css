@@ -626,6 +626,11 @@ body.dm-app-nav-visible .smart-mail-filter.active { background: #4f46e5; }
     width: 100%;
   }
   body.dm-app-nav-visible:has(.modal-backdrop) .dm-mobile-nav { display: none; }
+  /* Il banner delle automazioni non deve coprire il menu inferiore. */
+  body.dm-app-nav-visible .advanced-email-automation {
+    bottom: calc(88px + env(safe-area-inset-bottom)) !important;
+  }
+  body.dm-app-nav-visible:has(.practice-prompt-backdrop) .dm-mobile-nav { display: none; }
   body.dm-app-nav-visible .dm-summary-grid { grid-template-columns: repeat(3,minmax(0,1fr)) !important; }
   body.dm-app-nav-visible .dm-quick-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   body.dm-app-nav-visible .fc-page,
@@ -742,6 +747,22 @@ body.dm-app-nav-visible .smart-mail-filter.active { background: #4f46e5; }
   .dm-quick-item > span:first-child { width: 32px; height: 34px; flex-basis: 32px; }
   .dm-quick-copy strong { font-size: 11px; }
   body.dm-app-nav-visible .dm-summary-grid > button > span { font-size: 22px !important; }
+}
+/* Le sezioni di azione dinamiche conservano identità ma usano i nuovi pannelli. */
+body.dm-app-nav-visible .today-action-center,
+body.dm-app-nav-visible .automation-center,
+body.dm-app-nav-visible .smart-practice-center {
+  border-color: #dfe5f2;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #f7f8ff, #fff 72%);
+  box-shadow: 0 4px 16px rgba(24,37,80,.04);
+}
+body.dm-app-nav-visible .today-action-item {
+  border-radius: 13px;
+}
+body.dm-app-nav-visible .today-action-center h2,
+body.dm-app-nav-visible .smart-practice-heading strong {
+  color: #243550;
 }
 @media (prefers-reduced-motion: reduce) {
   .dm-side-link, .dm-quick-item { transition: none; }
