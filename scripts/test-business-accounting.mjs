@@ -128,6 +128,18 @@ test("Le API con service role non mischiano archivi aziendali",()=>{
   assert.match(main,/companyId,\s*documents: relevantDocuments/);
 });
 
+test("Document Brain con service role controlla davvero l'azienda proprietaria",()=>{
+  const brain=source("../app/api/document-brain/route.ts");
+  assert.match(brain,/const requestedCompany = body\?\.companyId \?\? null/);
+  assert.match(brain,/\.from\("financial_companies"\)/);
+  assert.match(brain,/\.eq\("user_id",user\.id\)/);
+  assert.match(brain,/inWorkspace\(admin/);
+  assert.match(brain,/return NextResponse\.json\(\{ error: "Azienda non accessibile\." \}, \{ status: 403 \}\)/);
+  const finance=source("../app/controllo/page.tsx");
+  assert.match(finance,/const personalConnections = companyId \? \[\] : connections/);
+  assert.match(finance,/const bankLoadVersion = useRef\(0\)/);
+});
+
 test("La navigazione e i selettori conservano l'azienda selezionata",()=>{
   const nav=source("../app/AppShellNavigation.tsx");
   const upload=source("../app/carica/page.tsx");
