@@ -1194,6 +1194,8 @@ export default function Home() {
     else next.searchParams.set("company","personal");
     window.history.replaceState(null,"",next);
     setCompanyId(nextId);setQuery("");setAiResultIds(null);
+    // Un dialogo della societa' A non deve restare visibile nella B.
+    setAssistantMessages([]);setAssistantInput("");
     setActiveCategory("Tutti");
     window.dispatchEvent(new Event("documio:workspace"));
   }
