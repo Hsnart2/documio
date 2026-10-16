@@ -243,6 +243,7 @@ export async function POST(request: Request) {
       question?: unknown;
       language?: unknown;
       conversation?: unknown;
+      companyId?: unknown;
     } | null;
     const question = String(body?.question ?? "").trim();
     const language = body?.language === "en" ? "en" : "it";
@@ -264,17 +265,36 @@ export async function POST(request: Request) {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
+    // Il service role ignora le policy RLS: qui l'ambito aziendale
+    // dev'essere controllato in modo esplicito PRIMA di leggere i file.
+    const requestedCompany = body?.companyId ?? null;
+    if (requestedCompany !== null &&
+      (typeof requestedCompany !== "string" ||
+       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedCompany))) {
+      return NextResponse.json({ error: "Archivio aziendale non valido." }, { status: 400 });
+    }
+    if (requestedCompany) {
+      const { data: company, error: companyError } = await admin
+        .from("financial_companies").select("id").eq("id",requestedCompany)
+        .eq("user_id",user.id).maybeSingle();
+      if (companyError || !company)
+        return NextResponse.json({ error: "Azienda non accessibile." }, { status: 403 });
+    }
+    const inWorkspace = (query: any) => requestedCompany
+      ? query.eq("company_id", requestedCompany)
+      : query.is("company_id", null);
+
     const [practiceResult, documentResult, attachmentResult] = await Promise.all([
-      admin
+      inWorkspace(admin
         .from("practices")
         .select("id,title,practice_type,description,status,opened_at")
-        .eq("user_id", user.id)
+        .eq("user_id", user.id))
         .order("opened_at", { ascending: false, nullsFirst: false })
         .limit(200),
-      admin
+      inWorkspace(admin
         .from("documents")
         .select("id,practice_id,title,file_name,storage_path,category,summary,keywords,uploaded_at,expiry_date,payment_status,total_amount,paid_amount,remaining_amount,payment_method")
-        .eq("user_id", user.id)
+        .eq("user_id", user.id))
         .order("uploaded_at", { ascending: false, nullsFirst: false })
         .limit(MAX_DOCUMENTS),
       admin
