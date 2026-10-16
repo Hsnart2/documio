@@ -277,6 +277,7 @@ export default function FinancialControlCenter() {
     if(selected)url.searchParams.set("company",selected);
     else url.searchParams.delete("company");
     window.history.replaceState(null,"",url);
+    window.dispatchEvent(new Event("documio:workspace"));
     setError("");setMessage("");setLinkedDocumentId(null);
     setCompanyId(selected);setTab("overview");
   }
