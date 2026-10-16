@@ -318,6 +318,10 @@ body.dm-app-nav-visible .dm-document-menu > summary:focus-visible {
   outline: 3px solid rgba(79,70,229,.45);
   outline-offset: 2px;
 }
+/* The closed native details menu must not leak its hidden actions. */
+body.dm-app-nav-visible .dm-document-menu:not([open]) .dm-document-menu-panel {
+  display: none !important;
+}
 body.dm-app-nav-visible .dm-document-menu-panel {
   position: absolute;
   right: 0;
