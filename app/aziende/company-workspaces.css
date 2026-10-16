@@ -67,3 +67,8 @@
  .cw-guidance{padding:16px}.cw-modal{padding:23px 16px}
  .cw-form-grid{grid-template-columns:1fr}.cw-modal h2{padding-right:37px;font-size:21px}
 }
+
+.cw-company-edit{display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid #dce4f2;border-radius:9px;background:#fff;color:#4a5971;
+  padding:9px 11px;font-size:12px;font-weight:760;cursor:pointer}
+.cw-company-edit:hover{background:#eff3fb;border-color:#b6c4db}
