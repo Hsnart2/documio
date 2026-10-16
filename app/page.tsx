@@ -1861,7 +1861,7 @@ export default function Home() {
       const response = await fetch("/api/search", {
         method: "POST",
         headers: await getApiAuthHeaders("application/json"),
-        body: JSON.stringify({ query: cleanQuery, language }),
+        body: JSON.stringify({ query: cleanQuery, language, companyId }),
       });
 
       const data = await response.json();
@@ -1906,6 +1906,7 @@ export default function Home() {
         body: JSON.stringify({
           question: cleanQuestion,
           language,
+          companyId,
           documents: relevantDocuments.map((document) => ({
             id: document.id,
             title: document.title,
