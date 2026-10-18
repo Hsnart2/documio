@@ -111,3 +111,33 @@
 .prf-permission-list{display:grid;gap:7px;margin-top:10px}
 .prf-permission-list>div{display:flex;gap:10px;justify-content:space-between;align-items:center;background:#f8f9fc;border:1px solid #e3e8f3;border-radius:10px;padding:9px 12px;font-size:12px;overflow-wrap:anywhere}
 @media(max-width:700px){.prf-document-list>article{flex-wrap:wrap}.prf-document-desc{flex-basis:calc(100% - 43px)}.prf-document-actions{width:100%;justify-content:flex-end}}
+
+.prf-accounting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;padding:14px 0}
+.prf-accounting-grid>.prf-stack{min-width:0;background:#f8faff;border:1px solid #e2e6f4;border-radius:13px;padding:15px}
+.prf-accounting-grid h3{font-size:14px;color:#23324f;margin:4px 0 12px}
+.prf-accounting-list{display:grid;gap:7px;margin:12px 0}
+.prf-accounting-list>div{display:flex;gap:12px;justify-content:space-between;align-items:center;
+ background:#f8faff;padding:11px;border:1px solid #e5eafa;border-radius:10px}
+.prf-accounting-list>div>span{display:grid;gap:4px;min-width:0}
+.prf-accounting-list strong{font-size:12px;overflow-wrap:anywhere}
+.prf-accounting-list small{font-size:11px;color:#73809d}
+.prf-table-scroll{overflow-x:auto;width:100%;margin:14px 0}
+.prf-table{width:100%;border-collapse:collapse;min-width:550px;font-size:12px}
+.prf-table th,.prf-table td{padding:11px 10px;border-bottom:1px solid #e5e9f1;text-align:left;white-space:nowrap}
+.prf-table thead{background:#f4f6fc}
+.prf-table tfoot{font-weight:800;background:#f1f1fc}
+.prf-vat-section{margin-top:14px;border-top:1px solid #e6e9f6}
+.prf-vat-section>div{min-width:0;overflow-wrap:anywhere}
+.prf-requirements{display:grid;gap:9px;padding:14px 0}
+.prf-requirements>article{padding:14px;border-radius:11px;background:#fafbff;border:1px solid #e4e9f4;
+ display:grid;gap:10px;min-width:0}
+.prf-requirement-title{display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:#32425a}
+.prf-requirement-title strong{font-size:12px;flex:1 1 230px}
+.prf-requirement-title small{font-size:11px;color:#718098}
+.prf-requirements article>.prf-field{max-width:100%}
+.prf-requirements button{justify-self:start}
+.prf-legal{border-top:1px solid #dee4ef;padding-top:17px;margin-top:15px}
+.prf-legal h3{display:flex;align-items:center;gap:8px;font-size:16px;margin-bottom:9px}
+@media(max-width:800px){.prf-accounting-grid{grid-template-columns:1fr;gap:8px}
+ .prf-accounting-list>div{flex-wrap:wrap}.prf-accounting-list button{margin-left:auto}
+ .prf-requirement-title strong{flex:1 1 175px}}

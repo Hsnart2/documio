@@ -13,6 +13,9 @@ import {
 } from "@/lib/professional-workflows";
 import "./professionisti.css";
 import ProfessionalDocumentsPanel from "./ProfessionalDocumentsPanel";
+import ProfessionalAccountingPanel from "./ProfessionalAccountingPanel";
+import ProfessionalPracticePanel from "./ProfessionalPracticePanel";
+import { requirementsFor } from "@/lib/professional-requirements";
 
 type Studio = {
   id:string;owner_user_id:string;name:string;studio_type:StudioType;created_at:string;
@@ -80,6 +83,7 @@ export default function ProfessionalStudiosPage() {
 
   const selectedStudio=studios.find((s)=>s.id===studioId)??null;
   const selectedCase=cases.find((c)=>c.id===caseId)??null;
+  const selectedClient=clients.find((c)=>c.id===selectedCase?.client_id)??null;
   const role:Role=selectedStudio?.owner_user_id===userId?"owner"
     : members.find((m)=>m.user_id===userId)?.role??"viewer";
   const canEdit=role!=="viewer";
@@ -250,10 +254,17 @@ export default function ProfessionalStudiosPage() {
         studio_id:studioId,case_id:data.id,title:label,sort_order:index,created_by:userId,
       })),
     );
+    const requirements=requirementsFor(caseType);
+    const {error:requirementsError}=await supabase.from("professional_case_requirements").insert(
+      requirements.map(req=>({
+        studio_id:studioId,client_id:caseForm.client_id,case_id:data.id,
+        requirement_code:req.code,label:req.label,mandatory:req.mandatory,
+      })),
+    );
     setLoading(false);
-    setNotice(taskError
-      ? "Fascicolo creato, ma la checklist non è stata salvata. Puoi aggiungere le verifiche manualmente."
-      : "Fascicolo creato con checklist organizzativa da verificare.");
+    setNotice(taskError||requirementsError
+      ? "Fascicolo creato, ma alcune checklist non sono state salvate: verificane la presenza."
+      : "Fascicolo creato con checklist operative e documenti da verificare.");
     setCaseForm({...caseForm,title:"",description:"",due_date:""});
     await refreshArea(studioId);setCaseId(data.id);
   }
@@ -534,6 +545,15 @@ export default function ProfessionalStudiosPage() {
                   key={selectedCase.id} studioId={studioId}
                   clientId={selectedCase.client_id} caseId={selectedCase.id}
                   canEdit={canEditCase} onSelected={setSelectedDocumentIds}/>
+                <ProfessionalPracticePanel key={"practice:"+selectedCase.id}
+                  studioId={studioId} clientId={selectedCase.client_id}
+                  caseId={selectedCase.id} kind={selectedCase.case_type}
+                  canEdit={canEditCase} canConfirm={canReview}/>
+                {selectedClient?.client_type==="azienda"&&
+                 ["contabilita","iva","redditi","f24"].includes(selectedCase.case_type)&&
+                 <ProfessionalAccountingPanel key={"accounting:"+selectedCase.client_id}
+                   studioId={studioId} clientId={selectedCase.client_id}
+                   canEdit={canEditCase} canPost={canReview}/>}
                 <div className="prf-assistant">
                   <h3><Sparkles size={19}/> Assistente per il professionista</h3>
                   <p>DocuMio valuta la checklist e fino a due originali scelti.

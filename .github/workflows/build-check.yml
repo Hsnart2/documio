@@ -87,6 +87,22 @@ jobs:
             cat supabase/migrations/20261018_professional_client_documents.sql
             cat scripts/professional-client-acl-rls.sql
           } | docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d documio_acl_ci
+      - name: Accounting CAF and legal unit regression tests
+        run: npm run test:professional-important
+      - name: Professional accounting CAF legal RLS regression on PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_id="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2=="postgres:17"{print $1;exit}')"
+          test -n "$pg_id"
+          docker exec "$pg_id" createdb -U postgres documio_important_ci
+          { sed '/^create role /d' scripts/professional-db-setup.sql
+            cat supabase/migrations/20261018_professional_studios.sql
+            cat scripts/professional-storage-test-schema.sql
+            cat supabase/migrations/20261018_professional_client_documents.sql
+            cat supabase/migrations/20261018_professional_accounting_caf_legal.sql
+            cat scripts/professional-important-db-rls.sql
+          } | docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d documio_important_ci
       - name: Build
         shell: bash
         run: |
