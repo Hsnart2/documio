@@ -266,8 +266,10 @@ begin
         new.reviewed_at:=now();
         new.reviewed_by:=auth.uid();
       else
+        -- reviewed_by può diventare NULL se l'account è eliminato
+        -- (FK ON DELETE SET NULL); nessun utente ordinario può aggiornare
+        -- direttamente questa colonna, grazie ai GRANT per campo.
         new.reviewed_at:=old.reviewed_at;
-        new.reviewed_by:=old.reviewed_by;
       end if;
     else
       new.reviewed_at:=null;
