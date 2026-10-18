@@ -48,6 +48,8 @@ jobs:
         run: npm run test:business
       - name: Supplier classification and SHA deduplication tests
         run: npm run test:suppliers
+      - name: Professional studio permissions and workflow tests
+        run: npm run test:professionals
       - name: Build
         shell: bash
         run: |
