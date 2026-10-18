@@ -17,6 +17,9 @@ export const CASE_TYPES = [
   {value:"730",label:"Modello 730",areas:["caf","multiservizi"]},
   {value:"isee",label:"DSU / ISEE",areas:["caf","multiservizi"]},
   {value:"successione",label:"Successioni",areas:["caf","legale","multiservizi"]},
+  {value:"bonus",label:"Bonus e agevolazioni",areas:["caf","multiservizi"]},
+  {value:"red",label:"Dichiarazione RED",areas:["caf","multiservizi"]},
+  {value:"pensioni",label:"Pratiche pensionistiche",areas:["caf","multiservizi"]},
   {value:"contratto",label:"Revisione contratto",areas:["legale","multiservizi"]},
   {value:"contenzioso",label:"Contenzioso / causa",areas:["legale","multiservizi"]},
   {value:"consulenza",label:"Consulenza",areas:["commercialista","caf","legale","multiservizi"]},
@@ -61,6 +64,21 @@ const SPECIFIC: Record<CaseType,readonly string[]> = {
     "Raccogliere informazioni sul nucleo e dichiarazioni richieste",
     "Verificare redditi e patrimoni per il periodo di riferimento corretto",
     "Controllare coerenza dei dati DSU e documentazione prima dell'invio autorizzato",
+  ],
+  bonus:[
+    "Individuare la prestazione richiesta e i requisiti dichiarati",
+    "Consultare le condizioni e i termini sul sito ufficiale dell'ente",
+    "Verificare documenti del nucleo, redditi ed eventuali incompatibilità",
+  ],
+  red:[
+    "Verificare la richiesta RED e il periodo di riferimento",
+    "Raccogliere le dichiarazioni reddituali e le certificazioni pertinenti",
+    "Verificare le istruzioni INPS attuali e il soggetto abilitato all'invio",
+  ],
+  pensioni:[
+    "Identificare la tipologia della domanda pensionistica",
+    "Raccogliere estratto contributivo e documentazione professionale",
+    "Verificare requisiti e finestre vigenti con INPS o patronato abilitato",
   ],
   successione:[
     "Identificare soggetti, beni, passività e documenti rilevanti",
