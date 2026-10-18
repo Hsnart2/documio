@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient, type User } from "@supabase/supabase
 export const PROFESSIONAL_BUCKET="professional-documents";
 export const MAX_PROFESSIONAL_FILE=20*1024*1024;
 export const uuidValid=(v:unknown):v is string =>
- typeof v==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{12}$/i.test(v);
+ typeof v==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 export const mimeAllowed=(v:unknown):v is string =>
  typeof v==="string"&&["application/pdf","image/jpeg","image/png","application/xml"].includes(v);
 
