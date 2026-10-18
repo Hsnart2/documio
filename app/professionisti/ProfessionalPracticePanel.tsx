@@ -43,6 +43,12 @@ export default function ProfessionalPracticePanel({
    date_status:"da_verificare",document_id:"",
  });
  const [busy,setBusy]=useState(false);
+ const [draftInstruction,setDraftInstruction]=useState("");
+ const [draftType,setDraftType]=useState("lettera");
+ const [draftText,setDraftText]=useState("");
+ const [draftWarning,setDraftWarning]=useState("");
+ const [draftSources,setDraftSources]=useState<Array<{id:string;title:string;url:string;verified:boolean;checkedAt:string|null}>>([]);
+ const [draftSourceIds,setDraftSourceIds]=useState<string[]>([]);
  const [error,setError]=useState("");
  const [notice,setNotice]=useState("");
  const generation=useRef(0);
@@ -82,6 +88,7 @@ export default function ProfessionalPracticePanel({
    setDocs(documents);setEvents((ev.data??[]) as Event[]);
  },[studioId,clientId,caseId,isLegal]);
  useEffect(()=>{setReqs([]);setDocs([]);setEvents([]);setError("");setNotice("");
+   setDraftText("");setDraftWarning("");setDraftSources([]);setDraftSourceIds([]);
    void reload();return ()=>{generation.current+=1;};
  },[reload]);
 
@@ -125,6 +132,38 @@ export default function ProfessionalPracticePanel({
    if(issue){setError("Conferma non riuscita: "+issue.message);return;}
    setNotice("Verifica attribuita al professionista.");
    await reload();
+ }
+ async function createDraft(){
+   if(!canEdit||!isLegal||busy||draftInstruction.trim().length<12)return;
+   if(!window.confirm(
+     "Inviare all'AI il titolo e le note della pratica e le istruzioni per la bozza? " +
+     "Non saranno allegati automaticamente i documenti originali. " +
+     "Verifica di avere un titolo per trattare eventuali dati personali e sensibili."
+   ))return;
+   const sb=getSupabaseClient();if(!sb)return;
+   const {data}=await sb.auth.getSession();
+   if(!data.session?.access_token){setError("Sessione non valida.");return;}
+   setBusy(true);setError("");setDraftText("");setDraftWarning("");
+   try{
+     const response=await fetch("/api/professionisti/bozze",{
+       method:"POST",cache:"no-store",
+       headers:{Authorization:"Bearer "+data.session.access_token,
+         "Content-Type":"application/json"},
+       body:JSON.stringify({
+         caseId,kind:draftType,instruction:draftInstruction.trim(),consentToAi:true,
+       }),
+     });
+     const result=await response.json();
+     if(!response.ok)throw Error(result.error||"Bozza non disponibile.");
+     setDraftText(String(result.draft??""));setDraftWarning(String(result.warning??""));
+     setDraftSources(result.sources??[]);setDraftSourceIds(result.sourceIds??[]);
+   }catch(problem){setError(problem instanceof Error?problem.message:"Bozza non generata.");}
+   finally{setBusy(false);}
+ }
+ async function copyDraft(){
+   try{await navigator.clipboard.writeText(draftText);
+     setNotice("Bozza copiata: verificarla prima di utilizzarla.");}
+   catch{setError("Copia automatica non disponibile. Seleziona il testo e copialo manualmente.");}
  }
  async function addEvent(e:FormEvent){
    e.preventDefault();if(!canEdit||busy||!isLegal)return;
@@ -223,6 +262,36 @@ export default function ProfessionalPracticePanel({
        </div>)}
        {!events.length&&<p className="prf-muted">Nessun evento registrato.</p>}
      </div>
+     {canEdit&&<section className="prf-legal-draft">
+       <h3><Scale size={19}/> Bozze assistite, da approvare</h3>
+       <p className="prf-muted">Lettere, note e riepiloghi: nessun atto verrà firmato,
+         depositato, notificato o inviato. Verifica fatti, fonti e scadenze prima dell'uso.</p>
+       <label className="prf-field">Tipo di bozza
+         <select value={draftType} onChange={e=>setDraftType(e.target.value)}>
+           <option value="lettera">Lettera</option>
+           <option value="nota">Nota di lavoro</option>
+           <option value="riepilogo">Riepilogo del fascicolo</option>
+         </select></label>
+       <label className="prf-field">Obiettivo e istruzioni della bozza
+         <textarea rows={3} value={draftInstruction} maxLength={1800}
+           onChange={e=>setDraftInstruction(e.target.value)}
+           placeholder="Descrivi destinatario, obiettivo e fatti confermati…"/></label>
+       <button type="button" className="prf-primary" disabled={busy||draftInstruction.trim().length<12}
+         onClick={()=>void createDraft()}>Prepara bozza AI</button>
+       {draftText&&<div className="prf-draft-result">
+         <strong>BOZZA NON DEFINITIVA — revisione legale necessaria</strong>
+         <textarea readOnly rows={12} value={draftText} aria-label="Bozza legale generata"/>
+         <button type="button" className="prf-outline" onClick={()=>void copyDraft()}>
+           Copia bozza</button>
+         <p className="prf-muted">{draftWarning}</p>
+         <p className="prf-muted">Fonti consultabili:
+           {draftSources.map(source=><span key={source.id}>
+             {" "}<a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
+             {" ("}{source.verified?(draftSourceIds.includes(source.id)?"citata":"consultata"):"da consultare"}{")"}
+           </span>)}
+         </p>
+       </div>}
+     </section>}
    </div>}
  </section>;
 }
