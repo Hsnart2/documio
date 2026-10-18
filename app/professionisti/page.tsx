@@ -309,10 +309,17 @@ export default function ProfessionalStudiosPage() {
     if(role!=="owner"||!studioId||!newAssignment.client_id||!newAssignment.user_id)return;
     const sb=getSupabaseClient();if(!sb)return;
     setLoading(true);setError("");
-    const {error:issue}=await sb.from("professional_client_permissions").upsert({
-      studio_id:studioId,client_id:newAssignment.client_id,
-      user_id:newAssignment.user_id,can_edit:newAssignment.can_edit,assigned_by:userId,
-    },{onConflict:"client_id,user_id"});
+    const exists=permissions.some(a=>a.client_id===newAssignment.client_id
+      &&a.user_id===newAssignment.user_id);
+    const query=exists
+      ?sb.from("professional_client_permissions")
+        .update({can_edit:newAssignment.can_edit})
+        .eq("client_id",newAssignment.client_id).eq("user_id",newAssignment.user_id)
+      :sb.from("professional_client_permissions").insert({
+        studio_id:studioId,client_id:newAssignment.client_id,
+        user_id:newAssignment.user_id,can_edit:newAssignment.can_edit,assigned_by:userId,
+      });
+    const {error:issue}=await query;
     setLoading(false);
     if(issue){setError("Permesso non assegnato: "+issue.message);return;}
     setNotice("Permesso aggiornato per il cliente selezionato.");
