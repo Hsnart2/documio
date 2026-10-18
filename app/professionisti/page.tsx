@@ -254,10 +254,17 @@ export default function ProfessionalStudiosPage() {
         studio_id:studioId,case_id:data.id,title:label,sort_order:index,created_by:userId,
       })),
     );
+    const requirements=requirementsFor(caseType);
+    const {error:requirementsError}=await supabase.from("professional_case_requirements").insert(
+      requirements.map(req=>({
+        studio_id:studioId,client_id:caseForm.client_id,case_id:data.id,
+        requirement_code:req.code,label:req.label,mandatory:req.mandatory,
+      })),
+    );
     setLoading(false);
-    setNotice(taskError
-      ? "Fascicolo creato, ma la checklist non è stata salvata. Puoi aggiungere le verifiche manualmente."
-      : "Fascicolo creato con checklist organizzativa da verificare.");
+    setNotice(taskError||requirementsError
+      ? "Fascicolo creato, ma alcune checklist non sono state salvate: verificane la presenza."
+      : "Fascicolo creato con checklist operative e documenti da verificare.");
     setCaseForm({...caseForm,title:"",description:"",due_date:""});
     await refreshArea(studioId);setCaseId(data.id);
   }
