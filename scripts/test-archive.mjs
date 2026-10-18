@@ -25,6 +25,7 @@ function loadTS(path, mocks={}) {
 const search = loadTS("../lib/document-search.ts");
 const ai = loadTS("../lib/document-ai-worker.ts", {
   "@supabase/supabase-js": { createClient: ()=>({}) },
+  "@/lib/owner-metering": { recordOpenAIUsage: async () => {} },
 });
 const docs = [
   {id:"bollo",title:"Bollo auto Lombardia 2026",file_name:"Bollo.pdf",category:"Veicoli",

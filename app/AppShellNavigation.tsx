@@ -15,10 +15,11 @@ import {
   Plus,
   ShieldCheck,
   Sparkles,
+  Scale,
 } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 
-type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email" | "companies" | "owner";
+type Destination = "home" | "documents" | "practices" | "upload" | "finance" | "email" | "companies" | "professionals" | "owner";
 
 type MenuItem = {
   id: Destination;
@@ -36,10 +37,11 @@ const links: MenuItem[] = [
   { id: "finance", href: "/controllo", label: "Controllo", shortLabel: "Finanze", icon: Landmark },
   { id: "companies", href: "/aziende", label: "Le mie aziende", shortLabel: "Aziende", icon: Building2 },
   { id: "email", href: "/email", label: "Posta", shortLabel: "Posta", icon: Mail },
+  { id: "professionals", href: "/professionisti", label: "Studi professionali", shortLabel: "Studi", icon: Scale },
 ];
 
 const ownerMenuItem: MenuItem = {id:"owner",href:"/owner",label:"Pannello Owner",shortLabel:"Owner",icon:ShieldCheck};
-const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email", "/aziende", "/owner"]);
+const supportedRoutes = new Set(["/", "/controllo", "/carica", "/email", "/aziende", "/professionisti", "/owner"]);
 
 function currentHomeTab(): Destination {
   if (typeof window === "undefined") return "home";
@@ -100,7 +102,7 @@ export default function AppShellNavigation() {
   }, [pathname]);
 
   function workspaceHref(href: string) {
-    if (!workspaceId || href === "/aziende" || href === "/email" || href === "/owner") return href;
+    if (!workspaceId || href === "/aziende" || href === "/email" || href === "/owner" || href === "/professionisti") return href;
     const separator = href.includes("?") ? "&" : "?";
     const hashAt = href.indexOf("#");
     const firstPart = hashAt>=0 ? href.slice(0,hashAt) : href;
@@ -172,6 +174,7 @@ export default function AppShellNavigation() {
       pathname === "/carica" ? "upload" :
       pathname === "/controllo" ? "finance" :
       pathname === "/aziende" ? "companies" :
+      pathname === "/professionisti" ? "professionals" :
       pathname === "/owner" ? "owner" : "email";
 
   function follow(event: MouseEvent<HTMLAnchorElement>, item: MenuItem) {
@@ -251,7 +254,7 @@ export default function AppShellNavigation() {
         {[links[0], links[1], links[3], links[4]].map((link) => renderLink(link, true))}
         <button
           type="button"
-          className={`dm-mobile-link dm-mobile-more-trigger ${moreOpen || selected === "practices" || selected === "email" || selected === "owner" ? "is-active" : ""}`}
+          className={`dm-mobile-link dm-mobile-more-trigger ${moreOpen || selected === "practices" || selected === "email" || selected === "professionals" || selected === "owner" ? "is-active" : ""}`}
           ref={moreTriggerRef}
           aria-label="Altre sezioni"
           aria-expanded={moreOpen}
@@ -289,6 +292,11 @@ export default function AppShellNavigation() {
               <a href="/aziende" onClick={() => setMoreOpen(false)}>
                 <span className="dm-more-sheet-icon"><Building2 size={21} /></span>
                 <span><strong>Le mie aziende</strong><small>Gestisci una o più attività</small></span>
+                <ArrowUpRight size={17} />
+              </a>
+              <a href="/professionisti" onClick={() => setMoreOpen(false)}>
+                <span className="dm-more-sheet-icon"><Scale size={21} /></span>
+                <span><strong>Studi professionali</strong><small>Clienti, fascicoli e assistenza</small></span>
                 <ArrowUpRight size={17} />
               </a>
               <a href={links[6].href} onClick={() => setMoreOpen(false)}>

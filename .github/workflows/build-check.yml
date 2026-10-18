@@ -10,6 +10,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,6 +60,18 @@ jobs:
         run: npm run test:business
       - name: Supplier classification and SHA deduplication tests
         run: npm run test:suppliers
+      - name: Professional studio permissions and workflow tests
+        run: npm run test:professionals
+      - name: PostgreSQL RLS e migrazione studi professionali
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_id="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2=="postgres:17"{print $1;exit}')"
+          test -n "$pg_id"
+          cat scripts/professional-db-setup.sql \
+              supabase/migrations/20261018_professional_studios.sql \
+              scripts/professional-db-rls.sql | \
+              docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres
       - name: Build
         shell: bash
         run: |
