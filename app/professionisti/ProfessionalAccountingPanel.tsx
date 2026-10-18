@@ -16,7 +16,11 @@ function amount(text:string):number|null{
    Math.round(value*100)/100:null;
 }
 const euro=(v:number)=>new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(v);
-const today=()=>new Date().toLocaleDateString("en-CA");
+const today=()=>{
+ const now=new Date();
+ const local=new Date(now.getTime()-now.getTimezoneOffset()*60000);
+ return local.toISOString().slice(0,10);
+};
 export default function ProfessionalAccountingPanel({clientId,studioId,canEdit,canPost}:Props){
  const [accounts,setAccounts]=useState<Account[]>([]);
  const [entries,setEntries]=useState<Entry[]>([]);
