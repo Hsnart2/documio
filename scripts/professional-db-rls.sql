@@ -117,7 +117,9 @@ set request.jwt.claim.sub = '66666666-6666-4666-8666-666666666666';
 select public.documio_accept_professional_invite(repeat('c',64));
 update public.professional_cases set status='completata'
  where id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-do $$
+update public.professional_case_tasks set is_done=true
+ where case_id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+do $
 begin
  if not exists(select 1 from public.professional_cases
   where id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
@@ -144,10 +146,29 @@ select public.documio_revoke_professional_invite(id)
 from public.professional_studio_invites where token_hash=repeat('d',64);
 
 set request.jwt.claim.sub = '33333333-3333-4333-8333-333333333333';
-do $$
+do $
 begin
  if (select count(*) from public.professional_studios)<>0 then
    raise exception 'Accesso persistente dopo revoca';
  end if;
-end $$;
+end $;
+
+-- La cancellazione del professionista non deve bloccare i fascicoli
+-- dello studio né cancellare date di revisione/checklist già completate.
+reset role;
+reset request.jwt.claim.sub;
+delete from auth.users where id='66666666-6666-4666-8666-666666666666';
+set role authenticated;
+set request.jwt.claim.sub = '11111111-1111-4111-8111-111111111111';
+do $
+begin
+ if not exists(select 1 from public.professional_cases
+   where id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+     and status='completata' and reviewed_by is null and reviewed_at is not null)
+ then raise exception 'Eliminazione account corrompe le revisioni storiche'; end if;
+ if not exists(select 1 from public.professional_case_tasks
+   where case_id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+     and is_done and done_by is null and done_at is not null)
+ then raise exception 'Eliminazione account corrompe le checklist'; end if;
+end $;
 reset role;
