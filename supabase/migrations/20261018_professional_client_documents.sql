@@ -267,16 +267,7 @@ create table public.professional_upload_intents (
  original_name text not null,
  content_type text not null,
  expected_size bigint not null check(expected_size between 1 and 20971520),
- expected_hash text not null check(expected_hash ~ '^[a-f0-9]{64}
--- policies for this bucket. Only the server service-role uploads/downloads
--- AFTER authenticating and authorizing requests against metadata RLS.
-insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
- values('professional-documents','professional-documents',false,20971520,
-  array['application/pdf','image/jpeg','image/png','application/xml']::text[])
- on conflict(id) do nothing;
-
-commit;
-),
+ expected_hash text not null check(expected_hash ~ '^[a-f0-9]{64}$'),
  created_at timestamptz not null default now(),
  expires_at timestamptz not null default(now()+interval '2 hours'),
  consumed_at timestamptz,
@@ -291,9 +282,8 @@ alter table public.professional_upload_intents enable row level security;
 revoke all on public.professional_upload_intents from anon,authenticated;
 grant all on public.professional_upload_intents to service_role;
 
--- Separate PRIVATE bucket: authenticated users have no storage.objects
--- policies for this bucket. Only the server service-role uploads/downloads
--- AFTER authenticating and authorizing requests against metadata RLS.
+-- Private bucket. Authenticated clients have NO direct storage.objects
+-- policy in this bucket; service-role access is guarded by server APIs.
 insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
  values('professional-documents','professional-documents',false,20971520,
   array['application/pdf','image/jpeg','image/png','application/xml']::text[])
