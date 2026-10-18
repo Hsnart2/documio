@@ -117,8 +117,11 @@ begin
     or new.entry_id is distinct from old.entry_id) then
    raise exception 'Impossibile spostare una riga contabile tra scritture';
  end if;
+ -- Serialize line editing with journal posting: FOR UPDATE prevents a late
+ -- insert from creating an unbalanced posted entry.
  select status into current_status from public.professional_journal_entries
-  where id=(case when tg_op='DELETE' then old.entry_id else new.entry_id end);
+  where id=(case when tg_op='DELETE' then old.entry_id else new.entry_id end)
+  for update;
  if current_status is distinct from 'draft' then
    raise exception 'Righe contabili non modificabili dopo la contabilizzazione';
  end if;
