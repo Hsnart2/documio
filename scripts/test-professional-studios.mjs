@@ -89,8 +89,8 @@ test("Assistente richiede login, RLS, consenso e niente decisioni automatiche",(
   assert.match(route,/\.from\("professional_cases"\)/);
   assert.match(route,/\.from\("professional_case_tasks"\)/);
   assert.match(route,/consentToAi!==true/);
-  assert.match(route,/Non inviamo nominativo, codice fiscale/);
-  assert.match(route,/Non inventare articoli, leggi, aliquote/);
+  assert.match(route,/Testi liberi e originali vengono inviati SOLO dopo consenso esplicito/);
+  assert.match(route,/Non inventare articoli, aliquote/);
   assert.doesNotMatch(route,/\.from\("professional_cases"\)\s*\.update/);
 });
 

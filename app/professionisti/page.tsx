@@ -12,6 +12,7 @@ import {
   type CaseType, type StudioType,
 } from "@/lib/professional-workflows";
 import "./professionisti.css";
+import ProfessionalDocumentsPanel from "./ProfessionalDocumentsPanel";
 
 type Studio = {
   id:string;owner_user_id:string;name:string;studio_type:StudioType;created_at:string;
@@ -30,6 +31,8 @@ type Invite = {id:string;email:string;role:string;expires_at:string;accepted_at:
 type Guidance = {
   summary:string;actions?:Array<{step:string;why:string;verify:string}>;
   limitations:string;aiUsed:boolean;notice?:string;
+  sourceIds?:string[];documentsUsed?:string[];
+  sources?:Array<{id:string;title:string;url:string;verified:boolean;checkedAt:string|null}>;
 };
 type Role = "owner"|"professional"|"collaborator"|"viewer";
 const roleLabel:Record<Role,string> = {
@@ -63,6 +66,9 @@ export default function ProfessionalStudiosPage() {
   const [inviteLink,setInviteLink]=useState("");
   const [newTask,setNewTask]=useState("");
   const [question,setQuestion]=useState("");
+  const [selectedDocumentIds,setSelectedDocumentIds]=useState<string[]>([]);
+  const [permissions,setPermissions]=useState<Array<{client_id:string;user_id:string;can_edit:boolean}>>([]);
+  const [newAssignment,setNewAssignment]=useState({client_id:"",user_id:"",can_edit:true});
   const [guidance,setGuidance]=useState<Guidance|null>(null);
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
@@ -77,7 +83,11 @@ export default function ProfessionalStudiosPage() {
   const role:Role=selectedStudio?.owner_user_id===userId?"owner"
     : members.find((m)=>m.user_id===userId)?.role??"viewer";
   const canEdit=role!=="viewer";
-  const canReview=role==="owner"||role==="professional";
+  const canEditClient=(clientId:string)=>
+    role==="owner"||(role!=="viewer"&&permissions.some(
+      p=>p.client_id===clientId&&p.user_id===userId&&p.can_edit));
+  const canEditCase=!!selectedCase&&canEditClient(selectedCase.client_id);
+  const canReview=canEditCase&&(role==="owner"||role==="professional");
   const possibleTypes=caseTypesFor(selectedStudio?.studio_type??"multiservizi");
   const casesByClient=useMemo(()=>cases.filter((c)=>c.client_id===caseForm.client_id),[cases,caseForm.client_id]);
   const openTasks=tasks.filter((t)=>!t.is_done).length;
@@ -130,7 +140,7 @@ export default function ProfessionalStudiosPage() {
     const client=getSupabaseClient();
     if(!client)return;
     const run=++scopeRun.current;
-    const [clientResult,caseResult,memberResult,inviteResult]=await Promise.all([
+    const [clientResult,caseResult,memberResult,inviteResult,permissionResult]=await Promise.all([
       client.from("professional_clients")
         .select("id,studio_id,client_type,display_name,email,vat_number,status")
         .eq("studio_id",sid).order("display_name").limit(500),
@@ -142,6 +152,8 @@ export default function ProfessionalStudiosPage() {
       client.from("professional_studio_invites")
         .select("id,email,role,expires_at,accepted_at,revoked_at").eq("studio_id",sid)
         .order("created_at",{ascending:false}).limit(40),
+      client.from("professional_client_permissions")
+        .select("client_id,user_id,can_edit").eq("studio_id",sid).limit(1000),
     ]);
     if(run!==scopeRun.current)return;
     if(clientResult.error||caseResult.error||memberResult.error){
@@ -153,6 +165,7 @@ export default function ProfessionalStudiosPage() {
     setClients(myClients);setCases(myCases);
     setMembers((memberResult.data??[]) as Member[]);
     setInvites((inviteResult.data??[]) as Invite[]);
+    setPermissions((permissionResult.data??[]) as Array<{client_id:string;user_id:string;can_edit:boolean}>);
     setCaseId((prev)=>myCases.some((c)=>c.id===prev)?prev:myCases[0]?.id??"");
     setCaseForm((prev)=>({
       ...prev,
@@ -162,7 +175,7 @@ export default function ProfessionalStudiosPage() {
 
   useEffect(()=>{
     scopeRun.current+=1;
-    setClients([]);setCases([]);setMembers([]);setInvites([]);
+    setClients([]);setCases([]);setMembers([]);setInvites([]);setPermissions([]);
     setCaseId("");setGuidance(null);setInviteLink("");
     if(studioId)void refreshArea(studioId);
   },[studioId,refreshArea]);
@@ -178,7 +191,7 @@ export default function ProfessionalStudiosPage() {
     setTasks((data??[]) as Task[]);
   },[]);
   useEffect(()=>{
-    caseRun.current+=1;setTasks([]);setGuidance(null);
+    caseRun.current+=1;setTasks([]);setGuidance(null);setSelectedDocumentIds([]);
     if(studioId&&caseId)void refreshTasks(studioId,caseId);
   },[studioId,caseId,refreshTasks]);
 
@@ -217,7 +230,7 @@ export default function ProfessionalStudiosPage() {
   }
   async function createCase(e:FormEvent) {
     e.preventDefault();
-    if(!userId||!studioId||!canEdit||!caseForm.client_id)return;
+    if(!userId||!studioId||!canEditClient(caseForm.client_id)||!caseForm.client_id)return;
     const title=caseForm.title.trim();
     if(title.length<3)return;
     const caseType=possibleTypes.some((type)=>type.value===caseForm.case_type)
@@ -245,7 +258,7 @@ export default function ProfessionalStudiosPage() {
     await refreshArea(studioId);setCaseId(data.id);
   }
   async function updateStatus(status:string) {
-    if(!selectedCase||!canEdit)return;
+    if(!selectedCase||!canEditCase)return;
     if(status==="completata"&&!canReview){setError("Serve l'approvazione di un professionista o del titolare.");return;}
     if(status==="completata"&&!window.confirm("Confermi la revisione umana degli originali? La checklist non certifica l'adempimento."))return;
     const supabase=getSupabaseClient();if(!supabase)return;
@@ -255,7 +268,7 @@ export default function ProfessionalStudiosPage() {
     setCases((prev)=>prev.map((c)=>c.id===selectedCase.id?{...c,status}:c));
   }
   async function toggleTask(task:Task) {
-    if(!selectedCase||!canEdit)return;
+    if(!selectedCase||!canEditCase)return;
     const supabase=getSupabaseClient();if(!supabase)return;
     const {error:issue}=await supabase.from("professional_case_tasks")
       .update({is_done:!task.is_done})
@@ -265,7 +278,7 @@ export default function ProfessionalStudiosPage() {
     setGuidance(null);
   }
   async function addTask(e:FormEvent) {
-    e.preventDefault();if(!selectedCase||!userId||!canEdit)return;
+    e.preventDefault();if(!selectedCase||!userId||!canEditCase)return;
     const name=newTask.trim();if(name.length<3)return;
     const supabase=getSupabaseClient();if(!supabase)return;
     const {error:issue}=await supabase.from("professional_case_tasks").insert({
@@ -296,6 +309,34 @@ export default function ProfessionalStudiosPage() {
     setNotice("Invito valido per 7 giorni: può accettarlo solo un account con quell'email verificata.");
     await refreshArea(studioId);
   }
+  async function assignClient(){
+    if(role!=="owner"||!studioId||!newAssignment.client_id||!newAssignment.user_id)return;
+    const sb=getSupabaseClient();if(!sb)return;
+    setLoading(true);setError("");
+    const exists=permissions.some(a=>a.client_id===newAssignment.client_id
+      &&a.user_id===newAssignment.user_id);
+    const query=exists
+      ?sb.from("professional_client_permissions")
+        .update({can_edit:newAssignment.can_edit})
+        .eq("client_id",newAssignment.client_id).eq("user_id",newAssignment.user_id)
+      :sb.from("professional_client_permissions").insert({
+        studio_id:studioId,client_id:newAssignment.client_id,
+        user_id:newAssignment.user_id,can_edit:newAssignment.can_edit,assigned_by:userId,
+      });
+    const {error:issue}=await query;
+    setLoading(false);
+    if(issue){setError("Permesso non assegnato: "+issue.message);return;}
+    setNotice("Permesso aggiornato per il cliente selezionato.");
+    await refreshArea(studioId);
+  }
+  async function revokeClientAccess(clientId:string,memberId:string){
+    if(role!=="owner"||!window.confirm("Revocare l'accesso a questo cliente?"))return;
+    const sb=getSupabaseClient();if(!sb)return;
+    const {error:issue}=await sb.from("professional_client_permissions").delete()
+      .eq("client_id",clientId).eq("user_id",memberId);
+    if(issue){setError("Revoca non riuscita: "+issue.message);return;}
+    setNotice("Accesso al cliente revocato.");await refreshArea(studioId);
+  }
   async function removeMember(member:Member) {
     if(role!=="owner"||!studioId||
       !window.confirm("Revocare subito l'accesso di "+member.member_email+" a questo studio?"))return;
@@ -323,7 +364,7 @@ export default function ProfessionalStudiosPage() {
     if(!selectedCase||!question.trim()||!userId)return;
     const currentCaseRun=caseRun.current;
     if(!window.confirm(
-      "Inviare all'AI titolo, descrizione e checklist di questa pratica? Non saranno inviati nominativo, codice fiscale o email della scheda cliente. Controlla prima che i testi liberi non contengano dati non necessari."
+      "Inviare all'AI la domanda, le note della pratica e "+selectedDocumentIds.length+" originali selezionati? Gli originali possono contenere dati personali o sensibili. Verranno consultate soltanto pagine ufficiali predefinite, se raggiungibili. Confermi di essere autorizzato a trattare questi dati?"
     ))return;
     const supabase=getSupabaseClient();if(!supabase)return;
     const {data}=await supabase.auth.getSession();
@@ -333,7 +374,8 @@ export default function ProfessionalStudiosPage() {
       const res=await fetch("/api/professionisti/assistente",{
         method:"POST",cache:"no-store",
         headers:{"Content-Type":"application/json",Authorization:"Bearer "+data.session.access_token},
-        body:JSON.stringify({caseId:selectedCase.id,question:question.trim(),consentToAi:true}),
+        body:JSON.stringify({caseId:selectedCase.id,question:question.trim(),
+          documentIds:selectedDocumentIds,consentToAi:true}),
       });
       const payload=await res.json();
       if(!res.ok)throw new Error(payload.error||"Analisi non disponibile.");
@@ -446,7 +488,7 @@ export default function ProfessionalStudiosPage() {
                     <input type="date" value={caseForm.due_date}
                       onChange={(e)=>setCaseForm({...caseForm,due_date:e.target.value})}/>
                   </label>
-                  <button className="prf-primary" disabled={loading}><Plus size={17}/> Apri fascicolo</button>
+                  <button className="prf-primary" disabled={loading||!canEditClient(caseForm.client_id)}><Plus size={17}/> Apri fascicolo</button>
                 </form>:
                   <p className="prf-muted">{!clients.length?"Aggiungi prima un cliente.":"Il ruolo di sola lettura non può modificare i fascicoli."}</p>}
                 {casesByClient.length>0&&<p className="prf-muted">Fascicoli per il cliente selezionato: {casesByClient.length}</p>}
@@ -465,7 +507,7 @@ export default function ProfessionalStudiosPage() {
                 <div className="prf-case-bar">
                   <span><FileCheck2 size={18}/>{CASE_TYPES.find((t)=>t.value===selectedCase.case_type)?.label}</span>
                   <span>Data indicata: {safeDate(selectedCase.due_date)}</span>
-                  {canEdit&&<select aria-label="Stato della pratica" value={selectedCase.status}
+                  {canEditCase&&<select aria-label="Stato della pratica" value={selectedCase.status}
                     onChange={(e)=>void updateStatus(e.target.value)}>
                     {statuses.map((s)=><option key={s.value} value={s.value}
                       disabled={s.value==="completata"&&!canReview}>{s.label}</option>)}
@@ -475,23 +517,28 @@ export default function ProfessionalStudiosPage() {
                 <div className="prf-progress"><span style={{width:`${tasks.length?Math.round(100*(tasks.length-openTasks)/tasks.length):0}%`}}/></div>
                 <div className="prf-tasks">
                   {tasks.map((task)=><label key={task.id} className={task.is_done?"is-done":""}>
-                    <input type="checkbox" checked={task.is_done} disabled={!canEdit}
+                    <input type="checkbox" checked={task.is_done} disabled={!canEditCase}
                       onChange={()=>void toggleTask(task)}/>
                     <span>{task.title}</span>
                   </label>)}
                   {!tasks.length&&<p className="prf-muted">Aggiungi le verifiche necessarie per questa pratica.</p>}
                 </div>
-                {canEdit&&<form className="prf-row-form" onSubmit={(e)=>void addTask(e)}>
+                {canEditCase&&<form className="prf-row-form" onSubmit={(e)=>void addTask(e)}>
                   <label className="prf-field">Aggiungi una verifica
                     <input minLength={3} maxLength={220} value={newTask} required
                       onChange={(e)=>setNewTask(e.target.value)} placeholder="Verifica personalizzata"/>
                   </label>
                   <button className="prf-outline" type="submit"><Plus size={16}/> Aggiungi</button>
                 </form>}
+                <ProfessionalDocumentsPanel
+                  key={selectedCase.id} studioId={studioId}
+                  clientId={selectedCase.client_id} caseId={selectedCase.id}
+                  canEdit={canEditCase} onSelected={setSelectedDocumentIds}/>
                 <div className="prf-assistant">
                   <h3><Sparkles size={19}/> Assistente per il professionista</h3>
-                  <p>Indica il problema: DocuMio propone controlli e passi successivi.
-                    Non accede automaticamente a norme aggiornate, casellari, piattaforme CAF o fascicoli PCT.</p>
+                  <p>DocuMio valuta la checklist e fino a due originali scelti.
+                    Consulta alcune pagine ufficiali predefinite in tempo reale quando disponibili,
+                    ma non garantisce il controllo completo delle norme vigenti o della giurisprudenza.</p>
                   <label className="prf-field">Cosa vuoi verificare?
                     <textarea rows={2} maxLength={900} value={question}
                       onChange={(e)=>setQuestion(e.target.value)}
@@ -506,6 +553,20 @@ export default function ProfessionalStudiosPage() {
                       <b>{a.step}</b><p>{a.why}</p><small>Da controllare: {a.verify}</small>
                     </article>)}
                     <p className="prf-muted">{guidance.limitations}</p>
+                    {!!guidance.documentsUsed?.length&&<p className="prf-muted">
+                      Originali analizzati: {guidance.documentsUsed.length} (solo questa pratica).
+                    </p>}
+                    {!!guidance.sources?.length&&<div className="prf-evidence">
+                      <h4>Fonti istituzionali da consultare</h4>
+                      {guidance.sources.map(source=><p key={source.id}>
+                        <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a>
+                        {" — "}{source.verified
+                          ?(guidance.sourceIds?.includes(source.id)
+                            ?"Passaggio utilizzato nell'analisi":"Pagina consultata")
+                          :"Link ufficiale, contenuto non verificato"}
+                        {source.checkedAt&&" · Consultata "+new Date(source.checkedAt).toLocaleString("it-IT")}
+                      </p>)}
+                    </div>}
                     {guidance.notice&&<p className="prf-muted">{guidance.notice}</p>}
                   </div>}
                 </div>
@@ -543,6 +604,37 @@ export default function ProfessionalStudiosPage() {
                   <input readOnly value={inviteLink} onFocus={(e)=>e.currentTarget.select()}/>
                   <button type="button" className="prf-outline" onClick={()=>void copyInvitation()}><Copy size={16}/> Copia link</button>
                 </div>}
+                {clients.length>0&&members.length>0&&<>
+                  <h3 className="prf-subtitle">Permessi per singolo cliente</h3>
+                  <p className="prf-muted">Un collaboratore invitato non vede nessun cliente finché
+                    non riceve un permesso specifico. Il titolare mantiene accesso a tutti.</p>
+                  <div className="prf-row-form">
+                    <label className="prf-field">Cliente
+                      <select value={newAssignment.client_id} onChange={e=>setNewAssignment({...newAssignment,client_id:e.target.value})}>
+                        <option value="">Seleziona cliente</option>
+                        {clients.map(c=><option key={c.id} value={c.id}>{c.display_name}</option>)}
+                      </select>
+                    </label>
+                    <label className="prf-field">Collaboratore
+                      <select value={newAssignment.user_id} onChange={e=>setNewAssignment({...newAssignment,user_id:e.target.value})}>
+                        <option value="">Seleziona collaboratore</option>
+                        {members.map(m=><option key={m.user_id} value={m.user_id}>{m.member_email} · {roleLabel[m.role]}</option>)}
+                      </select>
+                    </label>
+                    <label className="prf-permission-checkbox"><input type="checkbox"
+                      checked={newAssignment.can_edit} onChange={e=>setNewAssignment({...newAssignment,can_edit:e.target.checked})}/>
+                      Consenti modifiche (solo se ruolo abilitato)</label>
+                    <button className="prf-primary" type="button" disabled={loading||!newAssignment.client_id||!newAssignment.user_id}
+                      onClick={()=>void assignClient()}><ShieldCheck size={16}/> Assegna</button>
+                  </div>
+                  <div className="prf-permission-list">{permissions.map(a=><div key={a.client_id+":"+a.user_id}>
+                    <span>{clients.find(c=>c.id===a.client_id)?.display_name??"Cliente"}
+                      {" · "}{members.find(m=>m.user_id===a.user_id)?.member_email??"Collaboratore"}
+                      {" · "}{a.can_edit?"Modifica":"Lettura"}</span>
+                    <button type="button" className="prf-mini-danger"
+                      onClick={()=>void revokeClientAccess(a.client_id,a.user_id)}>Revoca</button>
+                  </div>)}</div>
+                </>}
                 {invites.some((i)=>!i.accepted_at&&!i.revoked_at)&&<div className="prf-invites">
                   {invites.filter((i)=>!i.accepted_at&&!i.revoked_at).map((i)=><div key={i.id}
                     className="prf-pending-invite">
