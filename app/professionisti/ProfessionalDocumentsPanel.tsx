@@ -87,6 +87,14 @@ export default function ProfessionalDocumentsPanel({
      }
      const signed=await call({action:"start",clientId:customer,caseId:practice,
        name:file.name,mime,size:file.size,sha256:digest});
+     if(signed.duplicate){
+       if(studio===studioId&&customer===clientId&&practice===caseId){
+         setFile(null);
+         setNotice(signed.notice??"Documento già archiviato e collegato alla pratica.");
+         await reload();
+       }
+       return;
+     }
      const {error:uploadError}=await sb.storage.from(signed.bucket)
        .uploadToSignedUrl(signed.path,signed.token,file,{contentType:mime,upsert:false});
      if(uploadError)throw Error("Invio dell'originale non riuscito: "+uploadError.message);
