@@ -16,7 +16,8 @@
     "vapid:generate": "node scripts/generate-vapid-keys.mjs",
     "test:invoice-zip": "node scripts/test-financial-zip.mjs",
     "test:suppliers": "node scripts/test-suppliers-duplicates.mjs",
-    "test:professionals": "node scripts/test-professional-studios.mjs"
+    "test:professionals": "node scripts/test-professional-studios.mjs",
+    "test:professional-documents": "node scripts/test-professional-client-documents.mjs"
   },
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
