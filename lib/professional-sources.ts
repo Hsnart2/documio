@@ -25,6 +25,16 @@ const catalog:readonly OfficialSource[]=[
   kind:"guida",caseTypes:["isee","consulenza"],
  },
  {
+  id:"inps-red",title:"INPS — servizi ai pensionati e dichiarazione RED",
+  url:"https://www.inps.it/it/it/previdenza/per-pensionati.html",
+  kind:"guida",caseTypes:["red","consulenza"],
+ },
+ {
+  id:"inps-pensione",title:"INPS — domande e servizi pensionistici",
+  url:"https://www.inps.it/it/it/previdenza/domanda-di-pensione.html",
+  kind:"guida",caseTypes:["pensioni","consulenza"],
+ },
+ {
   id:"pst-giustizia",title:"Ministero Giustizia — documentazione servizi telematici",
   url:"https://pst.giustizia.it/PST/it/documentation.page",
   kind:"guida",caseTypes:["contenzioso","contratto","successione"],
@@ -33,7 +43,7 @@ const catalog:readonly OfficialSource[]=[
   id:"normattiva",title:"Normattiva — ricerca testi normativi vigenti",
   url:"https://www.normattiva.it/",
   kind:"portale",caseTypes:["contabilita","iva","redditi","f24","730","isee",
-    "successione","contratto","contenzioso","consulenza","altro"],
+    "successione","contratto","contenzioso","consulenza","altro","bonus","red","pensioni"],
  },
 ] as const;
 
