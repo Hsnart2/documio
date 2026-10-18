@@ -168,6 +168,54 @@ as $$ select documio_internal.accept_professional_invite(p_token_hash); $$;
 revoke all on function public.documio_accept_professional_invite(text) from public,anon;
 grant execute on function public.documio_accept_professional_invite(text) to authenticated;
 
+
+-- Rimozione collaboratore e revoca invito: solo titolare, senza apertura
+-- delle tabelle di membership in scrittura agli account ordinari.
+create function documio_internal.remove_professional_member(p_studio_id uuid,p_user_id uuid)
+returns boolean language plpgsql security definer set search_path=''
+as $
+declare removed integer;
+begin
+  if auth.uid() is null or not exists(
+    select 1 from public.professional_studios
+    where id=p_studio_id and owner_user_id=auth.uid()
+  ) then raise exception 'Operazione riservata al titolare' using errcode='42501'; end if;
+  delete from public.professional_studio_members
+    where studio_id=p_studio_id and user_id=p_user_id;
+  get diagnostics removed=row_count;
+  return removed>0;
+end;
+$;
+revoke all on function documio_internal.remove_professional_member(uuid,uuid) from public,anon;
+grant execute on function documio_internal.remove_professional_member(uuid,uuid) to authenticated;
+create function public.documio_remove_professional_member(p_studio_id uuid,p_user_id uuid)
+returns boolean language sql security invoker set search_path=''
+as $ select documio_internal.remove_professional_member(p_studio_id,p_user_id); $;
+revoke all on function public.documio_remove_professional_member(uuid,uuid) from public,anon;
+grant execute on function public.documio_remove_professional_member(uuid,uuid) to authenticated;
+
+create function documio_internal.revoke_professional_invite(p_invite_id uuid)
+returns boolean language plpgsql security definer set search_path=''
+as $
+declare changed integer;
+begin
+  if auth.uid() is null then raise exception 'Accesso negato' using errcode='42501'; end if;
+  update public.professional_studio_invites i set revoked_at=now()
+    where i.id=p_invite_id and i.accepted_at is null and i.revoked_at is null
+      and exists(select 1 from public.professional_studios s
+        where s.id=i.studio_id and s.owner_user_id=auth.uid());
+  get diagnostics changed=row_count;
+  return changed>0;
+end;
+$;
+revoke all on function documio_internal.revoke_professional_invite(uuid) from public,anon;
+grant execute on function documio_internal.revoke_professional_invite(uuid) to authenticated;
+create function public.documio_revoke_professional_invite(p_invite_id uuid)
+returns boolean language sql security invoker set search_path=''
+as $ select documio_internal.revoke_professional_invite(p_invite_id); $;
+revoke all on function public.documio_revoke_professional_invite(uuid) from public,anon;
+grant execute on function public.documio_revoke_professional_invite(uuid) to authenticated;
+
 create function documio_internal.professional_guard()
 returns trigger language plpgsql security invoker set search_path=''
 as $$
@@ -175,20 +223,30 @@ begin
   if tg_op='UPDATE' then
     if new.studio_id is distinct from old.studio_id
        or new.created_by is distinct from old.created_by
-       or (tg_table_name='professional_case_tasks'
-           and new.case_id is distinct from old.case_id) then
-      raise exception 'Spostamento tra fascicoli o modifica autore non consentiti';
+then
+      raise exception 'Spostamento tra studi o modifica autore non consentiti';
+    end if;
+    if tg_table_name='professional_case_tasks' then
+      if new.case_id is distinct from old.case_id then
+        raise exception 'Spostamento della verifica tra fascicoli non consentito';
+      end if;
     end if;
   end if;
   if tg_table_name='professional_case_tasks' then
-    if new.is_done then
-      if tg_op='INSERT' or old.is_done is distinct from true then
+    if tg_op='INSERT' then
+      if new.is_done then
         new.done_at:=now();
         new.done_by:=auth.uid();
       else
-        new.done_at:=old.done_at;
-        new.done_by:=old.done_by;
+        new.done_at:=null;
+        new.done_by:=null;
       end if;
+    elsif new.is_done and old.is_done is distinct from true then
+      new.done_at:=now();
+      new.done_by:=auth.uid();
+    elsif new.is_done then
+      new.done_at:=old.done_at;
+      new.done_by:=old.done_by;
     else
       new.done_at:=null;
       new.done_by:=null;
@@ -227,6 +285,23 @@ create trigger professional_cases_audit after insert or update on public.profess
   for each row execute function documio_internal.professional_audit();
 create trigger professional_tasks_audit after insert or update on public.professional_case_tasks
   for each row execute function documio_internal.professional_audit();
+create trigger professional_invites_audit after insert or update on public.professional_studio_invites
+  for each row execute function documio_internal.professional_audit();
+create function documio_internal.professional_member_audit()
+returns trigger language plpgsql security definer set search_path=''
+as $
+begin
+  insert into public.professional_activity(studio_id,actor_id,entity_type,entity_id,action)
+  values(case when tg_op='DELETE' then old.studio_id else new.studio_id end,
+    auth.uid(),'professional_studio_members',
+    case when tg_op='DELETE' then old.user_id else new.user_id end,tg_op);
+  return coalesce(new,old);
+end;
+$;
+revoke all on function documio_internal.professional_member_audit() from public,anon;
+create trigger professional_members_audit after insert or delete on public.professional_studio_members
+  for each row execute function documio_internal.professional_member_audit();
+
 
 alter table public.professional_studios enable row level security;
 alter table public.professional_studio_members enable row level security;
