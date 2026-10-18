@@ -26,7 +26,7 @@ type CaseRow = {
   description:string;status:string;due_date:string|null;created_at:string;
 };
 type Task = {id:string;title:string;is_done:boolean;sort_order:number};
-type Invite = {id:string;email:string;role:string;expires_at:string;accepted_at:string|null};
+type Invite = {id:string;email:string;role:string;expires_at:string;accepted_at:string|null;revoked_at:string|null};
 type Guidance = {
   summary:string;actions?:Array<{step:string;why:string;verify:string}>;
   limitations:string;aiUsed:boolean;notice?:string;
@@ -134,7 +134,7 @@ export default function ProfessionalStudiosPage() {
       client.from("professional_studio_members")
         .select("user_id,member_email,role").eq("studio_id",sid).limit(100),
       client.from("professional_studio_invites")
-        .select("id,email,role,expires_at,accepted_at").eq("studio_id",sid)
+        .select("id,email,role,expires_at,accepted_at,revoked_at").eq("studio_id",sid)
         .order("created_at",{ascending:false}).limit(40),
     ]);
     if(run!==scopeRun.current)return;
@@ -214,18 +214,18 @@ export default function ProfessionalStudiosPage() {
     if(!userId||!studioId||!canEdit||!caseForm.client_id)return;
     const title=caseForm.title.trim();
     if(title.length<3)return;
-    if(!possibleTypes.some((type)=>type.value===caseForm.case_type)){
-      setError("Seleziona una pratica compatibile con lo studio.");return;
-    }
+    const caseType=possibleTypes.some((type)=>type.value===caseForm.case_type)
+      ? caseForm.case_type : possibleTypes[0]?.value;
+    if(!caseType){setError("Tipo pratica non disponibile.");return;}
     const supabase=getSupabaseClient();if(!supabase)return;
     setLoading(true);setError("");
     const {data,error:issue}=await supabase.from("professional_cases").insert({
-      studio_id:studioId,client_id:caseForm.client_id,case_type:caseForm.case_type,
+      studio_id:studioId,client_id:caseForm.client_id,case_type:caseType,
       title,description:caseForm.description.trim().slice(0,5000),
       due_date:caseForm.due_date||null,created_by:userId,
     }).select("id").single();
     if(issue||!data){setLoading(false);setError("Pratica non creata: "+(issue?.message??"riprova"));return;}
-    const checklist=checklistFor(caseForm.case_type);
+    const checklist=checklistFor(caseType);
     const {error:taskError}=await supabase.from("professional_case_tasks").insert(
       checklist.map((label,index)=>({
         studio_id:studioId,case_id:data.id,title:label,sort_order:index,created_by:userId,
@@ -288,6 +288,25 @@ export default function ProfessionalStudiosPage() {
     setInviteForm({...inviteForm,email:""});
     setNotice("Invito valido per 7 giorni: può accettarlo solo un account con quell'email verificata.");
     await refreshArea(studioId);
+  }
+  async function removeMember(member:Member) {
+    if(role!=="owner"||!studioId||
+      !window.confirm("Revocare subito l'accesso di "+member.member_email+" a questo studio?"))return;
+    const supabase=getSupabaseClient();if(!supabase)return;
+    const {data,error:issue}=await supabase.rpc("documio_remove_professional_member",{
+      p_studio_id:studioId,p_user_id:member.user_id,
+    });
+    if(issue||!data){setError("Collaboratore non rimosso. Riprova.");return;}
+    setNotice("Accesso allo studio revocato.");await refreshArea(studioId);
+  }
+  async function revokeInvite(invite:Invite) {
+    if(role!=="owner"||!window.confirm("Revocare l'invito per "+invite.email+"?"))return;
+    const supabase=getSupabaseClient();if(!supabase)return;
+    const {data,error:issue}=await supabase.rpc("documio_revoke_professional_invite",{
+      p_invite_id:invite.id,
+    });
+    if(issue||!data){setError("Invito non revocato.");return;}
+    setNotice("Invito revocato.");await refreshArea(studioId);
   }
   async function copyInvitation() {
     try{await navigator.clipboard.writeText(inviteLink);setNotice("Link d'invito copiato.");}
@@ -490,7 +509,11 @@ export default function ProfessionalStudiosPage() {
                 non sono condivisi automaticamente con il team.</p>
               <ul className="prf-people">
                 <li><ShieldCheck size={17}/> Titolare dello studio <span>Owner</span></li>
-                {members.map((m)=><li key={m.user_id}><UserRound size={17}/>{m.member_email}<span>{roleLabel[m.role]}</span></li>)}
+                {members.map((m)=><li key={m.user_id}><UserRound size={17}/>{m.member_email}
+                  <span>{roleLabel[m.role]}</span>
+                  {role==="owner"&&<button className="prf-mini-danger" type="button"
+                    onClick={()=>void removeMember(m)}>Rimuovi</button>}
+                </li>)}
               </ul>
               {role==="owner"&&<>
                 <form className="prf-row-form" onSubmit={(e)=>void inviteMember(e)}>
@@ -511,8 +534,12 @@ export default function ProfessionalStudiosPage() {
                   <input readOnly value={inviteLink} onFocus={(e)=>e.currentTarget.select()}/>
                   <button type="button" className="prf-outline" onClick={()=>void copyInvitation()}><Copy size={16}/> Copia link</button>
                 </div>}
-                {invites.some((i)=>!i.accepted_at)&&<div className="prf-invites">
-                  {invites.filter((i)=>!i.accepted_at).map((i)=><p key={i.id}>{i.email} · {roleLabel[i.role as Role]??i.role} · scade {safeDate(i.expires_at.slice(0,10))}</p>)}
+                {invites.some((i)=>!i.accepted_at&&!i.revoked_at)&&<div className="prf-invites">
+                  {invites.filter((i)=>!i.accepted_at&&!i.revoked_at).map((i)=><div key={i.id}
+                    className="prf-pending-invite">
+                    <span>{i.email} · {roleLabel[i.role as Role]??i.role} · scade {safeDate(i.expires_at.slice(0,10))}</span>
+                    <button type="button" className="prf-mini-danger" onClick={()=>void revokeInvite(i)}>Revoca</button>
+                  </div>)}
                 </div>}
               </>}
             </section>
