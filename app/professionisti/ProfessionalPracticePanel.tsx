@@ -10,6 +10,10 @@ type Requirement={
  id:string;requirement_code:string;label:string;mandatory:boolean;
  status:"missing"|"provided"|"verified"|"not_applicable";document_id:string|null;
 };
+const statusLabels:Record<Requirement["status"],string>={
+ missing:"Mancante",provided:"Da verificare",verified:"Verificato",
+ not_applicable:"Non applicabile",
+};
 type Doc={id:string;original_name:string};
 type Event={
  id:string;title:string;event_date:string;event_type:string;date_status:string;
@@ -157,10 +161,7 @@ export default function ProfessionalPracticePanel({
    <div className="prf-requirements">
      {reqs.map(req=><article key={req.id}>
        <div className="prf-requirement-title"><FileText size={17}/><strong>{req.label}</strong>
-         <small>{req.mandatory?"Richiesto da verificare":"Eventuale"} · {{
-           missing:"Mancante",provided:"Da verificare",verified:"Verificato",
-           not_applicable:"Non applicabile",
-         }[req.status]}</small></div>
+         <small>{req.mandatory?"Richiesto da verificare":"Eventuale"} · {statusLabels[req.status]}</small></div>
        {(canEdit||req.document_id)&&<label className="prf-field">Originale collegato
          <select disabled={!canEdit||busy} value={req.document_id??""}
            onChange={e=>void updateRequirement(req,e.target.value)}>
