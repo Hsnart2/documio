@@ -193,7 +193,7 @@ create table public.professional_documents (
 );
 create index professional_documents_client_idx
  on public.professional_documents(studio_id,client_id,uploaded_at desc);
-create index professional_documents_sha_idx
+create unique index professional_documents_sha_unique_idx
  on public.professional_documents(studio_id,client_id,sha256);
 
 create table public.professional_document_case_links (
