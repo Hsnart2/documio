@@ -175,7 +175,7 @@ grant execute on function public.documio_accept_professional_invite(text) to aut
 -- delle tabelle di membership in scrittura agli account ordinari.
 create function documio_internal.remove_professional_member(p_studio_id uuid,p_user_id uuid)
 returns boolean language plpgsql security definer set search_path=''
-as $
+as $$
 declare removed integer;
 begin
   if auth.uid() is null or not exists(
@@ -187,18 +187,18 @@ begin
   get diagnostics removed=row_count;
   return removed>0;
 end;
-$;
+$$;
 revoke all on function documio_internal.remove_professional_member(uuid,uuid) from public,anon;
 grant execute on function documio_internal.remove_professional_member(uuid,uuid) to authenticated;
 create function public.documio_remove_professional_member(p_studio_id uuid,p_user_id uuid)
 returns boolean language sql security invoker set search_path=''
-as $ select documio_internal.remove_professional_member(p_studio_id,p_user_id); $;
+as $$ select documio_internal.remove_professional_member(p_studio_id,p_user_id); $$;
 revoke all on function public.documio_remove_professional_member(uuid,uuid) from public,anon;
 grant execute on function public.documio_remove_professional_member(uuid,uuid) to authenticated;
 
 create function documio_internal.revoke_professional_invite(p_invite_id uuid)
 returns boolean language plpgsql security definer set search_path=''
-as $
+as $$
 declare changed integer;
 begin
   if auth.uid() is null then raise exception 'Accesso negato' using errcode='42501'; end if;
@@ -209,12 +209,12 @@ begin
   get diagnostics changed=row_count;
   return changed>0;
 end;
-$;
+$$;
 revoke all on function documio_internal.revoke_professional_invite(uuid) from public,anon;
 grant execute on function documio_internal.revoke_professional_invite(uuid) to authenticated;
 create function public.documio_revoke_professional_invite(p_invite_id uuid)
 returns boolean language sql security invoker set search_path=''
-as $ select documio_internal.revoke_professional_invite(p_invite_id); $;
+as $$ select documio_internal.revoke_professional_invite(p_invite_id); $$;
 revoke all on function public.documio_revoke_professional_invite(uuid) from public,anon;
 grant execute on function public.documio_revoke_professional_invite(uuid) to authenticated;
 
@@ -311,7 +311,7 @@ create trigger professional_invites_audit after insert or update on public.profe
   for each row execute function documio_internal.professional_audit();
 create function documio_internal.professional_member_audit()
 returns trigger language plpgsql security definer set search_path=''
-as $
+as $$
 begin
   insert into public.professional_activity(studio_id,actor_id,entity_type,entity_id,action)
   values(case when tg_op='DELETE' then old.studio_id else new.studio_id end,
@@ -319,7 +319,7 @@ begin
     case when tg_op='DELETE' then old.user_id else new.user_id end,tg_op);
   return coalesce(new,old);
 end;
-$;
+$$;
 revoke all on function documio_internal.professional_member_audit() from public,anon;
 create trigger professional_members_audit after insert or delete on public.professional_studio_members
   for each row execute function documio_internal.professional_member_audit();
