@@ -35,7 +35,7 @@ create table public.professional_clients (
   email text,
   notes text,
   status text not null default 'active' check (status in ('active','archived')),
-  created_by uuid not null references auth.users(id),
+  created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   unique(id,studio_id)
 );
@@ -53,8 +53,8 @@ create table public.professional_cases (
   status text not null default 'aperta'
     check (status in ('aperta','in_lavorazione','da_verificare','completata','archiviata')),
   due_date date,
-  created_by uuid not null references auth.users(id),
-  reviewed_by uuid references auth.users(id),
+  created_by uuid references auth.users(id) on delete set null,
+  reviewed_by uuid references auth.users(id) on delete set null,
   reviewed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -72,13 +72,13 @@ create table public.professional_case_tasks (
   title text not null check (length(trim(title)) between 3 and 220),
   is_done boolean not null default false,
   done_at timestamptz,
-  done_by uuid references auth.users(id),
-  created_by uuid not null references auth.users(id),
+  done_by uuid references auth.users(id) on delete set null,
+  created_by uuid references auth.users(id) on delete set null,
   sort_order integer not null default 0,
   created_at timestamptz not null default now(),
   foreign key(case_id,studio_id) references public.professional_cases(id,studio_id)
     on delete cascade,
-  check ((is_done and done_at is not null and done_by is not null)
+  check ((is_done and done_at is not null)
       or (not is_done and done_at is null and done_by is null))
 );
 create index professional_case_tasks_case_idx on public.professional_case_tasks(studio_id,case_id,sort_order);
@@ -89,7 +89,7 @@ create table public.professional_studio_invites (
   email text not null check(length(trim(email)) between 5 and 254),
   role text not null check(role in ('professional','collaborator','viewer')),
   token_hash text not null unique check(token_hash ~ '^[a-f0-9]{64}$'),
-  created_by uuid not null references auth.users(id),
+  created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
   accepted_at timestamptz,
@@ -223,9 +223,7 @@ returns trigger language plpgsql security invoker set search_path=''
 as $$
 begin
   if tg_op='UPDATE' then
-    if new.studio_id is distinct from old.studio_id
-       or new.created_by is distinct from old.created_by
-then
+    if new.studio_id is distinct from old.studio_id then
       raise exception 'Spostamento tra studi o modifica autore non consentiti';
     end if;
     if tg_table_name='professional_case_tasks' then
@@ -248,7 +246,6 @@ then
       new.done_by:=auth.uid();
     elsif new.is_done then
       new.done_at:=old.done_at;
-      new.done_by:=old.done_by;
     else
       new.done_at:=null;
       new.done_by:=null;
@@ -404,9 +401,14 @@ revoke all on public.professional_studios,public.professional_studio_members,
  public.professional_activity from anon,authenticated;
 grant select,insert,update on public.professional_studios to authenticated;
 grant select on public.professional_studio_members to authenticated;
-grant select,insert,update on public.professional_clients to authenticated;
-grant select,insert,update on public.professional_cases to authenticated;
-grant select,insert,update on public.professional_case_tasks to authenticated;
+grant select,insert on public.professional_clients to authenticated;
+grant update(display_name,client_type,tax_code,vat_number,email,notes,status)
+  on public.professional_clients to authenticated;
+grant select,insert on public.professional_cases to authenticated;
+grant update(client_id,case_type,title,description,status,due_date)
+  on public.professional_cases to authenticated;
+grant select,insert on public.professional_case_tasks to authenticated;
+grant update(title,is_done,sort_order) on public.professional_case_tasks to authenticated;
 grant select,insert on public.professional_studio_invites to authenticated;
 grant select on public.professional_activity to authenticated;
 grant all on public.professional_studios,public.professional_studio_members,
