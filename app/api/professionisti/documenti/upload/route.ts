@@ -35,6 +35,23 @@ export async function POST(request:Request){
    const {data:caseRow,error:caseError}=await client.from("professional_cases")
      .select("id,studio_id,client_id").eq("id",caseId).eq("client_id",clientId).maybeSingle();
    if(caseError||!caseRow)return professionalReply({error:"Pratica non disponibile per questo cliente."},404);
+   const {data:duplicate,error:duplicateError}=await client.from("professional_documents")
+     .select("id").eq("studio_id",caseRow.studio_id).eq("client_id",clientId)
+     .eq("sha256",hash).maybeSingle();
+   if(duplicateError)return professionalReply({error:"Verifica duplicati non disponibile."},503);
+   if(duplicate){
+     const {data:existing}=await client.from("professional_document_case_links")
+       .select("document_id").eq("document_id",duplicate.id).eq("case_id",caseId).maybeSingle();
+     if(!existing){
+       const {error:linkError}=await client.from("professional_document_case_links").insert({
+         studio_id:caseRow.studio_id,client_id:clientId,case_id:caseId,
+         document_id:duplicate.id,linked_by:user.id,
+       });
+       if(linkError)return professionalReply({error:"Documento presente ma non collegabile alla pratica."},409);
+     }
+     return professionalReply({duplicate:true,linked:true,documentId:duplicate.id,
+       notice:"Documento già presente: riutilizzato e collegato a questa pratica."});
+   }
    const since=new Date(Date.now()-3600000).toISOString();
    const {count,error:countError}=await admin.from("professional_upload_intents")
      .select("id",{count:"exact",head:true}).eq("created_by",user.id).gte("created_at",since);
@@ -88,9 +105,32 @@ export async function POST(request:Request){
        file_size:bytes.length,sha256:calculated,bucket_id:PROFESSIONAL_BUCKET,
        storage_path:intent.storage_path,uploaded_by:user.id})
      .select("id").single();
-   if(saveError||!row)return professionalReply({
-      error:"File caricato ma registrazione non completata. Contatta l'assistenza senza ripetere il file."
-   },409);
+   if(saveError||!row){
+     // A second simultaneous upload may have saved the same SHA first.
+     const {data:existing}=await client.from("professional_documents")
+       .select("id").eq("studio_id",intent.studio_id).eq("client_id",intent.client_id)
+       .eq("sha256",calculated).maybeSingle();
+     if(existing){
+       const {data:linked}=await client.from("professional_document_case_links")
+         .select("document_id").eq("document_id",existing.id)
+         .eq("case_id",intent.case_id).maybeSingle();
+       if(!linked){
+         const {error:linkIssue}=await client.from("professional_document_case_links").insert({
+           studio_id:intent.studio_id,client_id:intent.client_id,case_id:intent.case_id,
+           document_id:existing.id,linked_by:user.id,
+         });
+         if(linkIssue)return professionalReply({error:"Duplicato presente ma collegamento non riuscito."},409);
+       }
+       await admin.storage.from(PROFESSIONAL_BUCKET).remove([intent.storage_path]);
+       await admin.from("professional_upload_intents").update({consumed_at:new Date().toISOString()})
+         .eq("id",intent.id).is("consumed_at",null);
+       return professionalReply({documentId:existing.id,linked:true,duplicate:true,
+         notice:"Originale duplicato riconosciuto e collegato senza salvare una nuova copia."});
+     }
+     return professionalReply({
+       error:"File caricato ma registrazione non completata. Contatta l'assistenza senza ripetere il file."
+     },409);
+   }
    const {error:linkError}=await client.from("professional_document_case_links")
      .insert({studio_id:intent.studio_id,client_id:intent.client_id,
        case_id:intent.case_id,document_id:row.id,linked_by:user.id});
