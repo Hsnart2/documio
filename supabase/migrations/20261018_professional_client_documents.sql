@@ -254,6 +254,43 @@ grant select on public.professional_document_reads to authenticated;
 grant all on public.professional_documents,public.professional_document_case_links,
   public.professional_document_reads to service_role;
 
+
+-- Short-lived signing intents are server-only. Token is held by Supabase Storage;
+-- the intent prevents clients forging another person's path at finalization.
+create table public.professional_upload_intents (
+ id uuid primary key default gen_random_uuid(),
+ studio_id uuid not null,
+ client_id uuid not null,
+ case_id uuid,
+ created_by uuid not null references auth.users(id) on delete cascade,
+ storage_path text not null unique,
+ original_name text not null,
+ content_type text not null,
+ expected_size bigint not null check(expected_size between 1 and 20971520),
+ expected_hash text not null check(expected_hash ~ '^[a-f0-9]{64}
+-- policies for this bucket. Only the server service-role uploads/downloads
+-- AFTER authenticating and authorizing requests against metadata RLS.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+ values('professional-documents','professional-documents',false,20971520,
+  array['application/pdf','image/jpeg','image/png','application/xml']::text[])
+ on conflict(id) do nothing;
+
+commit;
+),
+ created_at timestamptz not null default now(),
+ expires_at timestamptz not null default(now()+interval '2 hours'),
+ consumed_at timestamptz,
+ foreign key(client_id,studio_id) references public.professional_clients(id,studio_id),
+ foreign key(case_id,studio_id,client_id)
+  references public.professional_cases(id,studio_id,client_id),
+ check(storage_path like studio_id::text || '/' || client_id::text || '/%')
+);
+create index professional_upload_intents_user_idx on
+ public.professional_upload_intents(created_by,created_at desc);
+alter table public.professional_upload_intents enable row level security;
+revoke all on public.professional_upload_intents from anon,authenticated;
+grant all on public.professional_upload_intents to service_role;
+
 -- Separate PRIVATE bucket: authenticated users have no storage.objects
 -- policies for this bucket. Only the server service-role uploads/downloads
 -- AFTER authenticating and authorizing requests against metadata RLS.
