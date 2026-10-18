@@ -54,6 +54,8 @@ create table public.professional_cases (
     check (status in ('aperta','in_lavorazione','da_verificare','completata','archiviata')),
   due_date date,
   created_by uuid not null references auth.users(id),
+  reviewed_by uuid references auth.users(id),
+  reviewed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique(id,studio_id),
@@ -252,14 +254,37 @@ then
       new.done_by:=null;
     end if;
   end if;
-  if tg_table_name='professional_cases' then new.updated_at:=now(); end if;
+  if tg_table_name='professional_cases' then
+    if new.status='completata' then
+      if tg_op='INSERT' then
+        if documio_internal.professional_role(new.studio_id) not in ('owner','professional') then
+          raise exception 'Solo un professionista può validare una pratica';
+        end if;
+        new.reviewed_at:=now();
+        new.reviewed_by:=auth.uid();
+      elsif old.status is distinct from 'completata' then
+        if documio_internal.professional_role(new.studio_id) not in ('owner','professional') then
+          raise exception 'Solo un professionista può validare una pratica';
+        end if;
+        new.reviewed_at:=now();
+        new.reviewed_by:=auth.uid();
+      else
+        new.reviewed_at:=old.reviewed_at;
+        new.reviewed_by:=old.reviewed_by;
+      end if;
+    else
+      new.reviewed_at:=null;
+      new.reviewed_by:=null;
+    end if;
+    new.updated_at:=now();
+  end if;
   return new;
 end;
 $$;
 revoke all on function documio_internal.professional_guard() from public,anon;
 create trigger professional_client_guard before update on public.professional_clients
  for each row execute function documio_internal.professional_guard();
-create trigger professional_case_guard before update on public.professional_cases
+create trigger professional_case_guard before insert or update on public.professional_cases
  for each row execute function documio_internal.professional_guard();
 create trigger professional_task_guard before insert or update on public.professional_case_tasks
  for each row execute function documio_internal.professional_guard();
