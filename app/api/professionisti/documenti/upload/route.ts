@@ -22,7 +22,7 @@ export async function POST(request:Request){
    const mime=body.mime,hash=body.sha256;
    const size=body.size;
    if(!uuidValid(clientId)||!uuidValid(caseId)||!mimeAllowed(mime)||
-      !hashValid(hash)||name.length<1||!Number.isInteger(size)||
+      !hashValid(hash)||name.length<1||typeof size!=="number"||!Number.isInteger(size)||
       Number(size)<1||Number(size)>MAX_PROFESSIONAL_FILE)
      return professionalReply({error:"File, pratica o dimensione non validi (massimo 20 MB)."},400);
    const suffix:Record<string,RegExp>={
