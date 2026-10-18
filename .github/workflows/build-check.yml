@@ -72,6 +72,21 @@ jobs:
               supabase/migrations/20261018_professional_studios.sql \
               scripts/professional-db-rls.sql | \
               docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres
+      - name: Studio client documents and verified-sources unit tests
+        run: npm run test:professional-documents
+      - name: Per-client RLS PostgreSQL, isolated from production
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_id="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2=="postgres:17"{print $1;exit}')"
+          test -n "$pg_id"
+          docker exec "$pg_id" createdb -U postgres documio_acl_ci
+          { sed '/^create role /d' scripts/professional-db-setup.sql
+            cat supabase/migrations/20261018_professional_studios.sql
+            cat scripts/professional-storage-test-schema.sql
+            cat supabase/migrations/20261018_professional_client_documents.sql
+            cat scripts/professional-client-acl-rls.sql
+          } | docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d documio_acl_ci
       - name: Build
         shell: bash
         run: |
