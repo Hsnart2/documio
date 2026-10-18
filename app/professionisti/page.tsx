@@ -83,7 +83,11 @@ export default function ProfessionalStudiosPage() {
   const role:Role=selectedStudio?.owner_user_id===userId?"owner"
     : members.find((m)=>m.user_id===userId)?.role??"viewer";
   const canEdit=role!=="viewer";
-  const canReview=role==="owner"||role==="professional";
+  const canEditClient=(clientId:string)=>
+    role==="owner"||(role!=="viewer"&&permissions.some(
+      p=>p.client_id===clientId&&p.user_id===userId&&p.can_edit));
+  const canEditCase=!!selectedCase&&canEditClient(selectedCase.client_id);
+  const canReview=canEditCase&&(role==="owner"||role==="professional");
   const possibleTypes=caseTypesFor(selectedStudio?.studio_type??"multiservizi");
   const casesByClient=useMemo(()=>cases.filter((c)=>c.client_id===caseForm.client_id),[cases,caseForm.client_id]);
   const openTasks=tasks.filter((t)=>!t.is_done).length;
@@ -226,7 +230,7 @@ export default function ProfessionalStudiosPage() {
   }
   async function createCase(e:FormEvent) {
     e.preventDefault();
-    if(!userId||!studioId||!canEdit||!caseForm.client_id)return;
+    if(!userId||!studioId||!canEditClient(caseForm.client_id)||!caseForm.client_id)return;
     const title=caseForm.title.trim();
     if(title.length<3)return;
     const caseType=possibleTypes.some((type)=>type.value===caseForm.case_type)
@@ -254,7 +258,7 @@ export default function ProfessionalStudiosPage() {
     await refreshArea(studioId);setCaseId(data.id);
   }
   async function updateStatus(status:string) {
-    if(!selectedCase||!canEdit)return;
+    if(!selectedCase||!canEditCase)return;
     if(status==="completata"&&!canReview){setError("Serve l'approvazione di un professionista o del titolare.");return;}
     if(status==="completata"&&!window.confirm("Confermi la revisione umana degli originali? La checklist non certifica l'adempimento."))return;
     const supabase=getSupabaseClient();if(!supabase)return;
@@ -264,7 +268,7 @@ export default function ProfessionalStudiosPage() {
     setCases((prev)=>prev.map((c)=>c.id===selectedCase.id?{...c,status}:c));
   }
   async function toggleTask(task:Task) {
-    if(!selectedCase||!canEdit)return;
+    if(!selectedCase||!canEditCase)return;
     const supabase=getSupabaseClient();if(!supabase)return;
     const {error:issue}=await supabase.from("professional_case_tasks")
       .update({is_done:!task.is_done})
@@ -274,7 +278,7 @@ export default function ProfessionalStudiosPage() {
     setGuidance(null);
   }
   async function addTask(e:FormEvent) {
-    e.preventDefault();if(!selectedCase||!userId||!canEdit)return;
+    e.preventDefault();if(!selectedCase||!userId||!canEditCase)return;
     const name=newTask.trim();if(name.length<3)return;
     const supabase=getSupabaseClient();if(!supabase)return;
     const {error:issue}=await supabase.from("professional_case_tasks").insert({
@@ -484,7 +488,7 @@ export default function ProfessionalStudiosPage() {
                     <input type="date" value={caseForm.due_date}
                       onChange={(e)=>setCaseForm({...caseForm,due_date:e.target.value})}/>
                   </label>
-                  <button className="prf-primary" disabled={loading}><Plus size={17}/> Apri fascicolo</button>
+                  <button className="prf-primary" disabled={loading||!canEditClient(caseForm.client_id)}><Plus size={17}/> Apri fascicolo</button>
                 </form>:
                   <p className="prf-muted">{!clients.length?"Aggiungi prima un cliente.":"Il ruolo di sola lettura non può modificare i fascicoli."}</p>}
                 {casesByClient.length>0&&<p className="prf-muted">Fascicoli per il cliente selezionato: {casesByClient.length}</p>}
@@ -503,7 +507,7 @@ export default function ProfessionalStudiosPage() {
                 <div className="prf-case-bar">
                   <span><FileCheck2 size={18}/>{CASE_TYPES.find((t)=>t.value===selectedCase.case_type)?.label}</span>
                   <span>Data indicata: {safeDate(selectedCase.due_date)}</span>
-                  {canEdit&&<select aria-label="Stato della pratica" value={selectedCase.status}
+                  {canEditCase&&<select aria-label="Stato della pratica" value={selectedCase.status}
                     onChange={(e)=>void updateStatus(e.target.value)}>
                     {statuses.map((s)=><option key={s.value} value={s.value}
                       disabled={s.value==="completata"&&!canReview}>{s.label}</option>)}
@@ -513,13 +517,13 @@ export default function ProfessionalStudiosPage() {
                 <div className="prf-progress"><span style={{width:`${tasks.length?Math.round(100*(tasks.length-openTasks)/tasks.length):0}%`}}/></div>
                 <div className="prf-tasks">
                   {tasks.map((task)=><label key={task.id} className={task.is_done?"is-done":""}>
-                    <input type="checkbox" checked={task.is_done} disabled={!canEdit}
+                    <input type="checkbox" checked={task.is_done} disabled={!canEditCase}
                       onChange={()=>void toggleTask(task)}/>
                     <span>{task.title}</span>
                   </label>)}
                   {!tasks.length&&<p className="prf-muted">Aggiungi le verifiche necessarie per questa pratica.</p>}
                 </div>
-                {canEdit&&<form className="prf-row-form" onSubmit={(e)=>void addTask(e)}>
+                {canEditCase&&<form className="prf-row-form" onSubmit={(e)=>void addTask(e)}>
                   <label className="prf-field">Aggiungi una verifica
                     <input minLength={3} maxLength={220} value={newTask} required
                       onChange={(e)=>setNewTask(e.target.value)} placeholder="Verifica personalizzata"/>
@@ -529,7 +533,7 @@ export default function ProfessionalStudiosPage() {
                 <ProfessionalDocumentsPanel
                   key={selectedCase.id} studioId={studioId}
                   clientId={selectedCase.client_id} caseId={selectedCase.id}
-                  canEdit={canEdit} onSelected={setSelectedDocumentIds}/>
+                  canEdit={canEditCase} onSelected={setSelectedDocumentIds}/>
                 <div className="prf-assistant">
                   <h3><Sparkles size={19}/> Assistente per il professionista</h3>
                   <p>DocuMio valuta la checklist e fino a due originali scelti.
