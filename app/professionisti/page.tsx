@@ -70,12 +70,14 @@ export default function ProfessionalStudiosPage() {
   const [moduleUnavailable,setModuleUnavailable]=useState(false);
   const scopeRun=useRef(0);
   const caseRun=useRef(0);
+  const sessionUser=useRef<string|null>(null);
 
   const selectedStudio=studios.find((s)=>s.id===studioId)??null;
   const selectedCase=cases.find((c)=>c.id===caseId)??null;
   const role:Role=selectedStudio?.owner_user_id===userId?"owner"
     : members.find((m)=>m.user_id===userId)?.role??"viewer";
   const canEdit=role!=="viewer";
+  const canReview=role==="owner"||role==="professional";
   const possibleTypes=caseTypesFor(selectedStudio?.studio_type??"multiservizi");
   const casesByClient=useMemo(()=>cases.filter((c)=>c.client_id===caseForm.client_id),[cases,caseForm.client_id]);
   const openTasks=tasks.filter((t)=>!t.is_done).length;
@@ -87,10 +89,12 @@ export default function ProfessionalStudiosPage() {
       .select("id,owner_user_id,name,studio_type,created_at")
       .order("created_at",{ascending:true}).limit(50);
     if(issue){
+      if(sessionUser.current!==id)return;
       setModuleUnavailable(true);
       setError("La sezione Studi professionali non è ancora stata attivata sul database.");
       return;
     }
+    if(sessionUser.current!==id)return;
     const list=(data??[]) as Studio[];
     setStudios(list);setModuleUnavailable(false);
     setStudioId((prev)=>preferred&&list.some((s)=>s.id===preferred)?preferred:
@@ -105,11 +109,13 @@ export default function ProfessionalStudiosPage() {
     let alive=true;
     void supabase.auth.getUser().then(({data})=>{
       if(!alive)return;
+      sessionUser.current=data.user?.id??null;
       setUserId(data.user?.id??null);setReady(true);
       if(data.user?.id)void refreshStudios(data.user.id);
     });
     const {data:sub}=supabase.auth.onAuthStateChange((_event,session)=>{
       if(!alive)return;
+      sessionUser.current=session?.user?.id??null;
       setUserId(session?.user?.id??null);
       if(session?.user?.id)void refreshStudios(session.user.id);
       else {
@@ -240,6 +246,7 @@ export default function ProfessionalStudiosPage() {
   }
   async function updateStatus(status:string) {
     if(!selectedCase||!canEdit)return;
+    if(status==="completata"&&!canReview){setError("Serve l'approvazione di un professionista o del titolare.");return;}
     if(status==="completata"&&!window.confirm("Confermi la revisione umana degli originali? La checklist non certifica l'adempimento."))return;
     const supabase=getSupabaseClient();if(!supabase)return;
     const {error:issue}=await supabase.from("professional_cases")
@@ -306,7 +313,7 @@ export default function ProfessionalStudiosPage() {
       p_invite_id:invite.id,
     });
     if(issue||!data){setError("Invito non revocato.");return;}
-    setNotice("Invito revocato.");await refreshArea(studioId);
+    setInviteLink("");setNotice("Invito revocato.");await refreshArea(studioId);
   }
   async function copyInvitation() {
     try{await navigator.clipboard.writeText(inviteLink);setNotice("Link d'invito copiato.");}
@@ -314,6 +321,7 @@ export default function ProfessionalStudiosPage() {
   }
   async function requestGuidance() {
     if(!selectedCase||!question.trim()||!userId)return;
+    const currentCaseRun=caseRun.current;
     if(!window.confirm(
       "Inviare all'AI titolo, descrizione e checklist di questa pratica? Non saranno inviati nominativo, codice fiscale o email della scheda cliente. Controlla prima che i testi liberi non contengano dati non necessari."
     ))return;
@@ -329,7 +337,7 @@ export default function ProfessionalStudiosPage() {
       });
       const payload=await res.json();
       if(!res.ok)throw new Error(payload.error||"Analisi non disponibile.");
-      setGuidance(payload as Guidance);
+      if(currentCaseRun===caseRun.current)setGuidance(payload as Guidance);
     }catch(err){setError(err instanceof Error?err.message:"Analisi non riuscita.");}
     finally{setLoading(false);}
   }
@@ -459,7 +467,8 @@ export default function ProfessionalStudiosPage() {
                   <span>Data indicata: {safeDate(selectedCase.due_date)}</span>
                   {canEdit&&<select aria-label="Stato della pratica" value={selectedCase.status}
                     onChange={(e)=>void updateStatus(e.target.value)}>
-                    {statuses.map((s)=><option key={s.value} value={s.value}>{s.label}</option>)}
+                    {statuses.map((s)=><option key={s.value} value={s.value}
+                      disabled={s.value==="completata"&&!canReview}>{s.label}</option>)}
                   </select>}
                 </div>
                 <div className="prf-task-head"><h3>Checklist operativa</h3><small>{tasks.length-openTasks}/{tasks.length} completate</small></div>
