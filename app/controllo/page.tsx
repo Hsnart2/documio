@@ -803,7 +803,7 @@ export default function FinancialControlCenter() {
     setWorking(true); setError("");
     try {
       const result = await bankApi("sync",id);
-      setMessage(result.message ?? `Sincronizzazione completata: ${result.imported ?? 0} nuovi movimenti. ${result.warnings?.join(" ") ?? ""}`);
+      setMessage(result.message ?? `Sincronizzazione: ${result.imported ?? 0} nuovi movimenti.` + (result.historyFrom && result.historyTo ? ` Storico richiesto: ${result.historyFrom} - ${result.historyTo} (la banca può restituirne una parte).` : "") + ` ${result.warnings?.join(" ") ?? ""}`);
       await Promise.all([loadConnections(companyId),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Sincronizzazione non riuscita."); }
     setWorking(false);
