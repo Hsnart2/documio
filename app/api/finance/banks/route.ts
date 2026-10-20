@@ -16,6 +16,7 @@ type BankConnection = {
   requisition_id: string;
   consent_status: string;
   company_id: string | null;
+  history_days: number | null;
 };
 
 function json(data: unknown, status = 200) {
@@ -128,6 +129,7 @@ function bookingRows(
   accountId: string,
   movements: unknown[],
   companyId: string | null,
+  institutionName: string,
 ) {
   const repetitions = new Map<string, number>();
   const rows: Array<Record<string, unknown>> = [];
@@ -160,7 +162,7 @@ function bookingRows(
       company_id: companyId,
       bank_connection_id: connectionId,
       source: "gocardless",
-      account_label: `Conto ${accountId.slice(0, 8)}`,
+      account_label: `${institutionName.slice(0,40)} · Conto ${accountId.slice(0, 8)}`,
       booking_date: booking,
       amount: Math.round(amount * 100) / 100,
       currency,
@@ -187,14 +189,20 @@ export async function GET(request: Request) {
     if (!configured()) return json({ institutions: [], enabled: false, error: "Provider bancario non configurato." });
     try {
       const jwt = await providerJwt();
-      const banks = await provider<Array<{ id: string; name: string }>>(
-        "/institutions/?country=IT", jwt,
-      );
+      const banks = await provider<Array<{
+        id:string;name:string;transaction_total_days?:string|number;
+        max_access_valid_for_days?:string|number;
+        business_accounts_supported?:boolean;corporate_accounts_supported?:boolean;
+      }>>("/institutions/?country=IT", jwt);
       return json({
         enabled: true,
         institutions: banks
           .filter((bank) => safeInstitution(bank.id) && typeof bank.name === "string")
-          .map((bank) => ({ id: bank.id, name: bank.name })).sort((a,b) => a.name.localeCompare(b.name)),
+          .map((bank) => ({ id: bank.id, name: bank.name,
+            historyDays:Number(bank.transaction_total_days)||0,
+            businessSupported:bank.business_accounts_supported??
+              bank.corporate_accounts_supported??null
+          })).sort((a,b) => a.name.localeCompare(b.name)),
       });
     } catch (error) {
       console.error("Open Banking institutions:", error instanceof Error ? error.message : "Unknown");
@@ -203,7 +211,7 @@ export async function GET(request: Request) {
   }
   const scoped=access.admin
     .from("financial_bank_connections")
-    .select("id,company_id,institution_name,consent_status,last_sync_at,balances,created_at")
+    .select("id,company_id,institution_name,consent_status,last_sync_at,balances,created_at,history_days")
     .eq("user_id", access.userId);
   const {data,error}=await (company.companyId
     ?scoped.eq("company_id",company.companyId)
@@ -227,16 +235,35 @@ export async function POST(request: Request) {
     const jwt = await providerJwt();
     if (body.action === "connect") {
       if (!safeInstitution(body.institutionId)) return json({ error: "Banca non valida." }, 400);
-      const institutions = await provider<Array<{id:string;name:string}>>(
-        "/institutions/?country=IT", jwt,
-      );
+      const institutions = await provider<Array<{
+        id:string;name:string;transaction_total_days?:string|number;
+        max_access_valid_for_days?:string|number;
+        business_accounts_supported?:boolean;corporate_accounts_supported?:boolean;
+      }>>("/institutions/?country=IT", jwt);
       const bank = institutions.find((item) => item.id === body.institutionId);
       if (!bank) return json({ error: "Banca non disponibile in Italia." }, 400);
+      if(company.companyId &&
+        bank.business_accounts_supported===false&&bank.corporate_accounts_supported===false)
+        return json({error:"Il provider non dichiara il supporto ai conti aziendali per questo istituto."},400);
+      const availableDays=Math.floor(Number(bank.transaction_total_days));
+      const historyDays=Number.isFinite(availableDays)&&availableDays>0
+        ?Math.min(730,availableDays):90;
+      const maximumAccess=Math.floor(Number(bank.max_access_valid_for_days));
+      const accessDays=Number.isFinite(maximumAccess)&&maximumAccess>0
+        ?Math.min(90,maximumAccess):90;
+      // End-user agreement AIS: balances + transactions only, NO payment initiation.
+      // Do not use account/IBAN details unless explicitly required.
+      const agreement=await provider<{id:string}>("/agreements/enduser/",jwt,"POST",{
+        institution_id:bank.id,max_historical_days:historyDays,
+        access_valid_for_days:accessDays,access_scope:["balances","transactions"],
+      });
+      if(!agreement.id)return json({error:"Consenso bancario non disponibile."},502);
       const redirect = connectedUrl(company.companyId);
       const reference = hash(`${access.userId}:${crypto.randomUUID()}`).slice(0, 40);
       const consent = await provider<{ id: string; link: string }>(
         "/requisitions/", jwt, "POST", {
           redirect, institution_id: bank.id, reference, user_language: "IT",
+          agreement: agreement.id,
         },
       );
       if (!consent.id || !consent.link.startsWith("https://ob.gocardless.com/"))
@@ -248,6 +275,7 @@ export async function POST(request: Request) {
         institution_id: bank.id,
         requisition_id: consent.id,
         consent_status: "pending",
+        history_days:historyDays,
       });
       if (error) throw new Error("Persistenza consenso fallita");
       return json({ url: consent.link });
@@ -255,7 +283,7 @@ export async function POST(request: Request) {
     const connectionId = textField(body.connectionId, 50);
     if (!/^[a-f0-9-]{36}$/i.test(connectionId)) return json({ error: "Connessione non valida." }, 400);
     const scope=access.admin.from("financial_bank_connections")
-      .select("id,company_id,institution_name,requisition_id,consent_status")
+      .select("id,company_id,institution_name,requisition_id,consent_status,history_days")
       .eq("user_id",access.userId).eq("id",connectionId);
     const {data:connection,error}=await (company.companyId
       ?scope.eq("company_id",company.companyId)
@@ -291,6 +319,9 @@ export async function POST(request: Request) {
         : "Completa l'autorizzazione nella tua banca prima di sincronizzare." });
     }
     const accounts = (requisition.accounts ?? []).filter((id) => /^[a-f0-9-]{36}$/i.test(id)).slice(0, 15);
+    const historyDays=Math.min(730,Math.max(1,Number(record.history_days)||90));
+    const from=new Date(Date.now()-(historyDays-1)*86400000).toISOString().slice(0,10);
+    const until=new Date().toISOString().slice(0,10);
     let imported = 0;
     const warnings: string[] = [];
     // Solo riepilogo, nessun IBAN completo o titolare del conto salvato.
@@ -304,10 +335,10 @@ export async function POST(request: Request) {
     for (const accountId of accounts) {
       try {
         const result = await provider<{ transactions?: { booked?: unknown[] } }>(
-          `/accounts/${encodeURIComponent(accountId)}/transactions/`, jwt,
+          `/accounts/${encodeURIComponent(accountId)}/transactions/?date_from=${from}&date_to=${until}`, jwt,
         );
         const rows = bookingRows(access.userId, connectionId, accountId,
-          result.transactions?.booked ?? [],company.companyId);
+          result.transactions?.booked ?? [],company.companyId,record.institution_name);
         for (let i = 0; i < rows.length; i += 100) {
           const { data, error: insertError } = await access.admin
             .from("financial_transactions")
@@ -332,8 +363,8 @@ export async function POST(request: Request) {
           `/accounts/${encodeURIComponent(accountId)}/balances/`, jwt,
         );
         const priority = [
-          "interimAvailable","closingAvailable","interimBooked",
-          "closingBooked","expected","openingBooked",
+          "closingBooked","interimBooked","closingAvailable",
+          "interimAvailable","expected","openingBooked",
         ];
         const candidates = (result.balances ?? []).filter((item) =>
           item.balanceAmount && Number.isFinite(Number(item.balanceAmount.amount)) &&
@@ -348,7 +379,7 @@ export async function POST(request: Request) {
         const selected = candidates[0];
         if (selected?.balanceAmount) {
           bankBalances.push({
-            accountLabel: `Conto ${accountId.slice(0,8)}`,
+            accountLabel: `${record.institution_name.slice(0,40)} · Conto ${accountId.slice(0,8)}`,
             amount: Math.round(Number(selected.balanceAmount.amount) * 100) / 100,
             currency: selected.balanceAmount.currency!,
             balanceType: selected.balanceType ?? "non specificato",
@@ -372,7 +403,8 @@ export async function POST(request: Request) {
         :updateScope.is("company_id",null));
       if (updateError) warnings.push("Impossibile aggiornare lo stato di sincronizzazione.");
     }
-    return json({ imported, balancesAvailable: bankBalances.length, status: "linked", warnings });
+    return json({ imported, balancesAvailable: bankBalances.length, status: "linked",
+      historyFrom:from,historyTo:until,warnings });
   } catch (error) {
     console.error("Open Banking operation:", error instanceof Error ? error.message : "Unknown");
     return json({ error: "Operazione bancaria non riuscita. Controlla configurazione e autorizzazione." }, 502);
