@@ -23,6 +23,9 @@ import "./business-center.css";
 import SupplierManager,{type RegisteredSupplier} from "./SupplierManager";
 import { fileSha256 } from "@/lib/document-fingerprint";
 import CompanyYearEndPanel from "./CompanyYearEndPanel";
+import BankReconciliationPanel from "./BankReconciliationPanel";
+import "./bank-quick-filter.css";
+import { alreadyAllocated,invoiceRemaining } from "@/lib/bank-allocations";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
@@ -32,7 +35,7 @@ type Connection = {
   id: string; company_id:string|null; institution_name: string; consent_status: string;
   last_sync_at: string | null; created_at: string; balances: BankBalance[];
 };
-type Bank = { id: string; name: string };
+type Bank = { id:string;name:string;historyDays?:number;businessSupported?:boolean|null };
 type ArchiveDocument = {
   id: string;
   title: string;
@@ -104,6 +107,7 @@ export default function FinancialControlCenter() {
   const [bankEnabled, setBankEnabled] = useState(false);
   const [institutions, setInstitutions] = useState<Bank[]>([]);
   const [selectedBank, setSelectedBank] = useState("");
+  const [bankSearch,setBankSearch]=useState("");
   const [accountLabel, setAccountLabel] = useState("Conto principale");
   const [xmlDirection, setXmlDirection] = useState<InvoiceDirection>("expense");
   const [zipProgress,setZipProgress] = useState<null|{
@@ -140,12 +144,28 @@ export default function FinancialControlCenter() {
     // Filtra sempre nel database per azienda/personale, mai soltanto nell'UI.
     const scope = (query: any) => scopeId
       ? query.eq("company_id", scopeId) : query.is("company_id", null);
+    // The account might have thousands of invoices and bank entries.
+    // Load stable 500-row pages instead of silently returning a partial
+    // register from PostgREST's per-request row cap.
+    const allRows=async(table:"financial_invoices"|"financial_transactions"|"financial_matches",
+      dateColumn:string)=>{
+      const collected:Array<Record<string,unknown>>=[];
+      for(let from=0;from<30000;from+=500){
+        if(version!==loadVersion.current)return {data:[],error:null};
+        const {data:rows,error}=await scope(
+          supabase.from(table).select("*").eq("user_id",id))
+          .order(dateColumn,{ascending:false})
+          .order("id",{ascending:false}).range(from,from+499);
+        if(error)return {data:[],error};
+        collected.push(...((rows??[]) as Record<string,unknown>[]));
+        if((rows??[]).length<500)return {data:collected,error:null};
+      }
+      return {data:[],error:{message:"Limite 30000 righe: suddividere il periodo"}};
+    };
     const [a, b, c, d, e, f, g] = await Promise.all([
-      scope(supabase.from("financial_invoices").select("*").eq("user_id", id))
-        .order("issue_date", { ascending: false }).limit(2000),
-      scope(supabase.from("financial_transactions").select("*").eq("user_id", id))
-        .order("booking_date", { ascending: false }).limit(4000),
-      scope(supabase.from("financial_matches").select("*").eq("user_id", id)).limit(4000),
+      allRows("financial_invoices","issue_date"),
+      allRows("financial_transactions","booking_date"),
+      allRows("financial_matches","confirmed_at"),
       scope(supabase.from("financial_deadlines").select("*").eq("user_id", id))
         .order("due_date", { ascending: true }).limit(1000),
       scope(supabase.from("documents")
@@ -246,7 +266,7 @@ export default function FinancialControlCenter() {
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
     setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);setSuppliers([]);
     void loadData(userId,companyId);
-    setConnections([]);setBankEnabled(false);setInstitutions([]);setSelectedBank("");
+    setConnections([]);setBankEnabled(false);setInstitutions([]);setSelectedBank("");setBankSearch("");
     void loadConnections(companyId);
     if (window.location.search.includes("bank_return=1")) {
       setMessage("Autorizzazione bancaria ricevuta per l'archivio selezionato. Premi Sincronizza per verificare il consenso.");
@@ -713,21 +733,24 @@ export default function FinancialControlCenter() {
   }
   async function confirmMatch(invoice: InvoiceRow) {
     if (!userId) return;
-    const used = new Set(matches.map((item) => item.transaction_id));
     const bank = movements.find((m) => m.id === selectedTx[invoice.id]);
-    if (!bank || used.has(bank.id)) { setError("Seleziona un movimento ancora libero."); return; }
-    const remaining = Math.max(0, Number(invoice.amount) - paidFor(invoice.id, matches));
-    const allocation = Math.min(remaining, Math.abs(Number(bank.amount)));
-    if (!allocation) return;
+    if(!bank){setError("Seleziona un bonifico.");return;}
+    const remaining=invoiceRemaining(invoice,matches);
+    const free=Math.max(0,Math.round((Math.abs(Number(bank.amount))-
+      alreadyAllocated(bank.id,matches))*100)/100);
+    const allocation=Math.min(remaining,free);
+    if(allocation<0.01){setError("Bonifico o fattura già completamente attribuiti.");return;}
     const confirmed = window.confirm(
       `Confermi l'abbinamento di ${money(allocation,invoice.currency)} a ${invoice.counterparty}? Non viene disposto alcun pagamento.`,
     );
     if (!confirmed) return;
     setWorking(true); setError("");
-    const { error: issue } = await getSupabaseClient()!.from("financial_matches").insert({
-      user_id: userId, company_id: companyId, invoice_id: invoice.id,
-      transaction_id: bank.id, allocated_amount: allocation,
-    });
+    const {error:issue}=await getSupabaseClient()!.rpc(
+      "documio_confirm_bank_allocations",{
+        p_transaction_id:bank.id,
+        p_allocations:[{invoiceId:invoice.id,amount:allocation.toFixed(2)}],
+        p_matching_method:"manual",
+      });
     setWorking(false);
     if (issue) setError(issue.message);
     else { setMessage("Pagamento collegato alla fattura e confermato da te.");
@@ -780,7 +803,7 @@ export default function FinancialControlCenter() {
     setWorking(true); setError("");
     try {
       const result = await bankApi("sync",id);
-      setMessage(result.message ?? `Sincronizzazione completata: ${result.imported ?? 0} nuovi movimenti. ${result.warnings?.join(" ") ?? ""}`);
+      setMessage(result.message ?? `Sincronizzazione: ${result.imported ?? 0} nuovi movimenti.` + (result.historyFrom && result.historyTo ? ` Storico richiesto: ${result.historyFrom} - ${result.historyTo} (la banca può restituirne una parte).` : "") + ` ${result.warnings?.join(" ") ?? ""}`);
       await Promise.all([loadConnections(companyId),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Sincronizzazione non riuscita."); }
     setWorking(false);
@@ -807,7 +830,8 @@ export default function FinancialControlCenter() {
     </div></main>
   );
 
-  const unmatched = movements.filter((m) => !matches.some((link) => link.transaction_id === m.id));
+  const unmatched=movements.filter(m=>
+    Math.abs(Number(m.amount))-alreadyAllocated(m.id,matches)>.009);
   return <main id="dm-main-content" className="fc-page">
     <header className="fc-header">
       <a href="/" className="fc-back"><ArrowLeft size={18}/> Archivio DocuMio</a>
@@ -1080,7 +1104,8 @@ export default function FinancialControlCenter() {
             const rem = Math.max(0,Number(invoice.amount)-paid);
             const options = unmatched.filter((transaction) =>
               transaction.currency === invoice.currency &&
-              (invoice.direction === "income" ? transaction.amount > 0 : transaction.amount < 0))
+              (invoice.direction === "income" ? transaction.amount > 0 : transaction.amount < 0) &&
+              Math.abs(Number(transaction.amount))-alreadyAllocated(transaction.id,matches)>.009)
               .sort((a,b)=>matchScore(invoice,b)-matchScore(invoice,a)).slice(0,100);
             const suggested = options.length > 0 && matchScore(invoice,options[0]) >= 80;
             return <article key={invoice.id} className="fc-invoice">
@@ -1114,7 +1139,7 @@ export default function FinancialControlCenter() {
                   "Categoria proposta: verifica la descrizione e scegli quella corretta."}</small>
               </div>
               {rem > 0.01 && <div className="fc-match">
-                <label>Abbina un movimento bancario (solo dopo controllo)
+                <label>Attribuisci una quota di bonifico (anche acconti parziali)
                   <select value={selectedTx[invoice.id] ?? ""} onChange={(e)=>
                     setSelectedTx((s)=>({...s,[invoice.id]:e.target.value}))}>
                     <option value="">Seleziona movimento…</option>
@@ -1148,7 +1173,7 @@ export default function FinancialControlCenter() {
     {storageReady === true && tab === "accounts" && <>
       <div className="fc-two-col">
         <section className="fc-panel">
-          <h2><Landmark size={21}/> Collega banca in sola lettura</h2>
+          <h2><Landmark size={21}/> Collega MPS, BPER, BCC o Credem in sola lettura</h2>
           {companyId && <div className="fc-disclaimer">
              Collega solo conti di questa azienda per cui hai titolo e consenso bancario.
              I conti personali rimangono separati. Il saldo al 31 dicembre richiede
@@ -1177,12 +1202,36 @@ export default function FinancialControlCenter() {
             {institutions.length === 0 && <button disabled={working} className="fc-button secondary"
               onClick={()=>void loadBanks()}><Landmark size={16}/> Scegli una banca italiana</button>}
             {!!institutions.length && <div className="fc-form">
-              <label>Seleziona banca
+              <div className="fc-bank-quick-filter">
+                <span>Banche DEBOX — cerca nell'elenco del provider:</span>
+                {["MPS","BPER","BCC","Credem"].map(name=>
+                  <button type="button" key={name} className={bankSearch===name?"is-active":""}
+                    onClick={()=>{setBankSearch(name);setSelectedBank("");}}>{name}</button>)}
+              </div>
+              <label>Cerca banca/istituto (per BCC specificare quale)
+                <input type="search" value={bankSearch}
+                  onChange={e=>{setBankSearch(e.target.value);setSelectedBank("");}}
+                  placeholder="MPS, BPER, Credem o nome della tua BCC"/>
+              </label>
+              <label>Seleziona banca realmente disponibile
                 <select value={selectedBank} onChange={(e)=>setSelectedBank(e.target.value)}>
                   <option value="">Scegli istituto…</option>
-                  {institutions.map((bank)=><option key={bank.id} value={bank.id}>{bank.name}</option>)}
+                  {institutions.filter(bank=>{
+                    if(!bankSearch.trim())return true;
+                    const key=bankSearch.trim().toLowerCase();
+                    const n=bank.name.toLowerCase();
+                    if(key==="mps")return n.includes("monte dei paschi")||n.includes("mps");
+                    if(key==="bcc")return n.includes("bcc")||n.includes("credito cooperativo")||
+                      n.includes("iccrea")||n.includes("cassa rurale");
+                    if(key==="credem")return n.includes("credem")||n.includes("credito emiliano");
+                    return n.includes(key);
+                  }).map(bank=><option key={bank.id} value={bank.id}>
+                    {bank.name}{bank.historyDays? " · storico max dichiarato "+bank.historyDays+" gg":""}
+                    {bank.businessSupported===false?" · conti aziendali non supportati":""}
+                  </option>)}
                 </select>
               </label>
+              <small>Il collegamento non dispone bonifici. Segui l'autorizzazione bancaria con l'utenza aziendale delegata. Lo storico dipende dalla banca e non prova che tutti i movimenti siano disponibili.</small>
               <button type="button" className="fc-button" disabled={!selectedBank || working}
                 onClick={()=>void connect()}><ShieldCheck size={16}/> Autorizza presso la banca</button>
             </div>}
@@ -1213,10 +1262,21 @@ export default function FinancialControlCenter() {
             <div className="fc-list-item" key={movement.id}>
               <div><strong>{movement.counterparty || movement.description || "Movimento bancario"}</strong>
                 <small>{dateIt(movement.booking_date)} · {movement.account_label || movement.source}
-                  {matches.some((match)=>match.transaction_id === movement.id) ? " · Riconciliato" : " · Da verificare"}</small></div>
+                  {(() => {
+                    const balance=Math.max(0,Math.abs(Number(movement.amount))-
+                      alreadyAllocated(movement.id,matches));
+                    return balance<.01?" · Interamente attribuito a fatture":
+                      balance<Math.abs(Number(movement.amount))?" · Acconto residuo "+money(balance):
+                      /acconto|anticipo/i.test(movement.description)?" · Acconto da attribuire":
+                      " · Da verificare";
+                  })()}</small></div>
               <strong className={movement.amount < 0 ? "fc-danger" : "fc-income"}>{money(movement.amount,movement.currency)}</strong>
             </div>)}</div>}
       </section>
+      <BankReconciliationPanel key={companyId??"personal"}
+        userId={userId} companyId={companyId} invoices={invoices} movements={movements}
+        matches={matches} loading={working}
+        onUpdated={async()=>{await loadData(userId,companyId);}}/>
     </>}
 
     {storageReady === true && tab === "deadlines" && <>
