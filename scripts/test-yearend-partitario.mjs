@@ -61,6 +61,8 @@ test("CSV neutralizza formule malevole senza cambiare importi",()=>{
  assert.match(ledger.csv([["=HYPERLINK(\"evil\")","Nome"]]),/'=HYPERLINK/);
  assert.match(ledger.csv([["  +SUM(1)"]]),/'  \+SUM/);
  assert.equal(ledger.euroCents(12345),"123,45");
+ assert.ok(ledger.csv([["-125,50"]]).includes('"-125,50"'));
+ assert.ok(ledger.csv([["-SUM(3)"]]).includes("'"+ "-SUM(3)"));
 });
 test("Dossier commerciale distingue fatture non riconciliate dai saldi bancari",()=>{
  const report=company.companyYearEnd(2026,[
