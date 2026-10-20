@@ -90,7 +90,7 @@ test("Integrazione bancaria è SOLO AIS, storico parametrico, mai credenziali ba
 test("Database blocca overbooking, conserva review acconti e audit",()=>{
  const sql=read("../supabase/migrations/20261020_debox_multi_invoice_bank_allocations.sql");
  assert.match(sql,/drop constraint if exists financial_matches_user_id_transaction_id_key/);
- assert.match(sql,/create unique index if not exists financial_matches_invoice_transaction_unique/);
+ assert.match(sql,/create index if not exists financial_matches_invoice_transaction_idx/);
  assert.match(sql,/total_on_bank\+new\.allocated_amount > abs\(tx\.amount\)/);
  assert.match(sql,/total_on_invoice\+new\.allocated_amount > inv\.amount/);
  assert.match(sql,/for update/);
