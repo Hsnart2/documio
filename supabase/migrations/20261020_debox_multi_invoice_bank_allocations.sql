@@ -3,6 +3,12 @@
 -- sulla sola causale. Migrazione additiva alla contabilità aziendale.
 begin;
 
+-- Requested history is bounded by institution capabilities. The authorization
+-- is completed only by the account holder on the bank/provider website.
+alter table public.financial_bank_connections
+  add column if not exists history_days integer not null default 90
+    check(history_days between 1 and 730);
+
 -- Existing matches all refer to one invoice. Lift the *single movement* limit,
 -- retaining all historical rows; enforce amounts in a concurrency-safe trigger.
 alter table public.financial_matches
