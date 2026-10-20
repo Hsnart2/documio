@@ -24,6 +24,7 @@ import SupplierManager,{type RegisteredSupplier} from "./SupplierManager";
 import { fileSha256 } from "@/lib/document-fingerprint";
 import CompanyYearEndPanel from "./CompanyYearEndPanel";
 import BankReconciliationPanel from "./BankReconciliationPanel";
+import "./bank-quick-filter.css";
 import { alreadyAllocated,invoiceRemaining } from "@/lib/bank-allocations";
 
 type BankBalance = {
@@ -34,7 +35,7 @@ type Connection = {
   id: string; company_id:string|null; institution_name: string; consent_status: string;
   last_sync_at: string | null; created_at: string; balances: BankBalance[];
 };
-type Bank = { id: string; name: string };
+type Bank = { id:string;name:string;historyDays?:number;businessSupported?:boolean|null };
 type ArchiveDocument = {
   id: string;
   title: string;
@@ -106,6 +107,7 @@ export default function FinancialControlCenter() {
   const [bankEnabled, setBankEnabled] = useState(false);
   const [institutions, setInstitutions] = useState<Bank[]>([]);
   const [selectedBank, setSelectedBank] = useState("");
+  const [bankSearch,setBankSearch]=useState("");
   const [accountLabel, setAccountLabel] = useState("Conto principale");
   const [xmlDirection, setXmlDirection] = useState<InvoiceDirection>("expense");
   const [zipProgress,setZipProgress] = useState<null|{
@@ -248,7 +250,7 @@ export default function FinancialControlCenter() {
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
     setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);setSuppliers([]);
     void loadData(userId,companyId);
-    setConnections([]);setBankEnabled(false);setInstitutions([]);setSelectedBank("");
+    setConnections([]);setBankEnabled(false);setInstitutions([]);setSelectedBank("");setBankSearch("");
     void loadConnections(companyId);
     if (window.location.search.includes("bank_return=1")) {
       setMessage("Autorizzazione bancaria ricevuta per l'archivio selezionato. Premi Sincronizza per verificare il consenso.");
@@ -1155,7 +1157,7 @@ export default function FinancialControlCenter() {
     {storageReady === true && tab === "accounts" && <>
       <div className="fc-two-col">
         <section className="fc-panel">
-          <h2><Landmark size={21}/> Collega banca in sola lettura</h2>
+          <h2><Landmark size={21}/> Collega MPS, BPER, BCC o Credem in sola lettura</h2>
           {companyId && <div className="fc-disclaimer">
              Collega solo conti di questa azienda per cui hai titolo e consenso bancario.
              I conti personali rimangono separati. Il saldo al 31 dicembre richiede
@@ -1184,12 +1186,36 @@ export default function FinancialControlCenter() {
             {institutions.length === 0 && <button disabled={working} className="fc-button secondary"
               onClick={()=>void loadBanks()}><Landmark size={16}/> Scegli una banca italiana</button>}
             {!!institutions.length && <div className="fc-form">
-              <label>Seleziona banca
+              <div className="fc-bank-quick-filter">
+                <span>Banche DEBOX — cerca nell'elenco del provider:</span>
+                {["MPS","BPER","BCC","Credem"].map(name=>
+                  <button type="button" key={name} className={bankSearch===name?"is-active":""}
+                    onClick={()=>{setBankSearch(name);setSelectedBank("");}}>{name}</button>)}
+              </div>
+              <label>Cerca banca/istituto (per BCC specificare quale)
+                <input type="search" value={bankSearch}
+                  onChange={e=>{setBankSearch(e.target.value);setSelectedBank("");}}
+                  placeholder="MPS, BPER, Credem o nome della tua BCC"/>
+              </label>
+              <label>Seleziona banca realmente disponibile
                 <select value={selectedBank} onChange={(e)=>setSelectedBank(e.target.value)}>
                   <option value="">Scegli istituto…</option>
-                  {institutions.map((bank)=><option key={bank.id} value={bank.id}>{bank.name}</option>)}
+                  {institutions.filter(bank=>{
+                    if(!bankSearch.trim())return true;
+                    const key=bankSearch.trim().toLowerCase();
+                    const n=bank.name.toLowerCase();
+                    if(key==="mps")return n.includes("monte dei paschi")||n.includes("mps");
+                    if(key==="bcc")return n.includes("bcc")||n.includes("credito cooperativo")||
+                      n.includes("iccrea")||n.includes("cassa rurale");
+                    if(key==="credem")return n.includes("credem")||n.includes("credito emiliano");
+                    return n.includes(key);
+                  }).map(bank=><option key={bank.id} value={bank.id}>
+                    {bank.name}{bank.historyDays? " · storico max dichiarato "+bank.historyDays+" gg":""}
+                    {bank.businessSupported===false?" · conti aziendali non supportati":""}
+                  </option>)}
                 </select>
               </label>
+              <small>Il collegamento non dispone bonifici. Segui l'autorizzazione bancaria con l'utenza aziendale delegata. Lo storico dipende dalla banca e non prova che tutti i movimenti siano disponibili.</small>
               <button type="button" className="fc-button" disabled={!selectedBank || working}
                 onClick={()=>void connect()}><ShieldCheck size={16}/> Autorizza presso la banca</button>
             </div>}
