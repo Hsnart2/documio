@@ -1205,7 +1205,7 @@ export default function FinancialControlCenter() {
       {companyId&&<CompanyYearEndPanel key={companyId} userId={userId}
         companyId={companyId}
         movementLabels={movements.map(m=>m.account_label??"Conto senza nome")}
-        bankLabels={connections.flatMap(c=>(c.balances??[]).map(b=>b.accountLabel))}/>}
+        bankLabels={workspaceConnections.flatMap(c=>(c.balances??[]).map(b=>b.accountLabel))}/>}
       <section className="fc-panel">
         <h2><Wallet size={21}/> Movimenti registrati</h2>
         {!movements.length ? <div className="fc-empty">Non risultano movimenti importati.</div> :
