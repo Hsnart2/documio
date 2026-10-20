@@ -17,7 +17,7 @@ type Statement={
 type Doc={id:string;title:string};
 type Summary={
  year:number;companyName:string;invoiceYearCount:number;openInvoiceCount:number;
- movementYearCount:number;banks:YearEndBank[];
+ movementYearCount:number;unallocatedMovements?:number;advancesToVerify?:number;banks:YearEndBank[];
  totals:{invoicedIncome:number;invoicedCosts:number;pendingReceivables:number;
    pendingPayables:number;bankClosingCents:number|null;bankStatements:number};
  warnings:string[];
@@ -148,6 +148,8 @@ export default function CompanyYearEndPanel({userId,companyId,movementLabels,ban
      <div><strong>{report.invoiceYearCount}</strong><small>Fatture anno</small></div>
      <div><strong>{report.openInvoiceCount}</strong><small>Fatture da riconciliare (fino al 31/12)</small></div>
      <div><strong>{report.movementYearCount}</strong><small>Movimenti importati</small></div>
+     <div><strong>{report.unallocatedMovements??0}</strong><small>Bonifici con importi non attribuiti</small></div>
+     <div><strong>{report.advancesToVerify??0}</strong><small>Acconti da verificare</small></div>
      <div><strong>{report.totals.bankClosingCents===null?"Non verificabile":euro(report.totals.bankClosingCents)}</strong>
        <small>Somma dei soli saldi bancari dichiarati (non certificati)</small></div>
    </div>}
