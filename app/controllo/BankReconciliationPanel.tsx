@@ -123,13 +123,19 @@ export default function BankReconciliationPanel({
  async function confirm(){
    if(!selected||!draft.length||saving||loading)return;
    let total=0;
-   const parsed=draft.map(row=>{
-     const amount=numeric(row.amount);
-     const inv=eligible.find(i=>i.id===row.invoiceId);
-     if(amount===null||!inv||amount>invoiceRemaining(inv as InvoiceForAllocation,matches)+.001)
-       throw new Error("Importi o fatture non validi: verifica i residui.");
-     total+=amount;return {invoiceId:row.invoiceId,amount:amount.toFixed(2)};
-   });
+   let parsed:Array<{invoiceId:string;amount:string}>=[];
+   try{
+     parsed=draft.map(row=>{
+       const amount=numeric(row.amount);
+       const inv=eligible.find(i=>i.id===row.invoiceId);
+       if(amount===null||!inv||amount>invoiceRemaining(inv as InvoiceForAllocation,matches)+.001)
+         throw new Error("Importi o fatture non validi: verifica i residui.");
+       total+=amount;return {invoiceId:row.invoiceId,amount:amount.toFixed(2)};
+     });
+   }catch(problem){
+     setError(problem instanceof Error?problem.message:"Importi da verificare.");
+     return;
+   }
    if(new Set(parsed.map(r=>r.invoiceId)).size!==parsed.length){
      setError("Non ripetere la stessa fattura.");return;
    }
