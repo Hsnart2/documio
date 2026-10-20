@@ -13,7 +13,9 @@ alter table public.financial_bank_connections
 -- retaining all historical rows; enforce amounts in a concurrency-safe trigger.
 alter table public.financial_matches
   drop constraint if exists financial_matches_user_id_transaction_id_key;
-create unique index if not exists financial_matches_invoice_transaction_unique
+-- A pair may legitimately be funded by multiple manual confirmations.
+-- Uniqueness is enforced by payment/invoice caps, never by a restrictive key.
+create index if not exists financial_matches_invoice_transaction_idx
   on public.financial_matches(user_id,invoice_id,transaction_id);
 alter table public.financial_matches
   add column if not exists matching_method text not null default 'manual'
@@ -206,6 +208,11 @@ begin
     where t.id=p_transaction_id and t.user_id=auth.uid() for update;
   if not found then
     raise exception 'Movimento bancario non accessibile' using errcode='42501';
+  end if;
+  if (select count(distinct value->>'invoiceId')
+        from jsonb_array_elements(p_allocations) as batch(value))
+      <>jsonb_array_length(p_allocations) then
+    raise exception 'Non ripetere una fattura nella stessa conferma';
   end if;
   -- Sorting makes concurrent requests for the same invoices deterministic.
   for item in select value from jsonb_array_elements(p_allocations) as t(value)
