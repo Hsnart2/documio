@@ -1,0 +1,50 @@
+.fc-recon{margin:16px 0}
+.fc-recon h2{display:flex;align-items:center;gap:9px}
+.fc-recon-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.28fr);gap:17px;margin-top:15px}
+.fc-recon-left,.fc-recon-right{min-width:0}
+.fc-recon-filter{display:flex;align-items:center;gap:8px;border:1px solid #dfe4f0;border-radius:11px;background:#fff;padding:6px 10px}
+.fc-recon-filter input{width:100%;min-width:0;font-size:13px;padding:7px 4px;border:0;outline:0}
+.fc-recon-pending{display:flex;align-items:center;gap:8px;padding:11px 2px;font-size:12px;color:#455876}
+.fc-recon-pending input{accent-color:#5047c5}
+.fc-recon-tx{border:1px solid #e1e7f2;border-radius:13px;overflow:auto;max-height:510px}
+.fc-recon-tx>button{display:flex;gap:10px;justify-content:space-between;text-align:left;width:100%;background:#fff;border:0;border-bottom:1px solid #e7ecf5;padding:12px;cursor:pointer;font:inherit;color:#27394d}
+.fc-recon-tx>button.selected{background:#eeeffe;box-shadow:inset 3px 0 #5551b3}
+.fc-recon-tx>button>span:first-child{min-width:0;flex:1}
+.fc-recon-tx strong{display:block;font-size:12px;overflow-wrap:anywhere}
+.fc-recon-tx small{display:block;font-size:11px;line-height:1.5;color:#738097;overflow-wrap:anywhere;margin-top:4px}
+.fc-recon-tx>button>span:last-child{text-align:right;white-space:nowrap;font-size:12px;font-weight:750}
+.fc-recon-tx .out{color:#af4a4a}
+.fc-recon-tx .in{color:#17744e}
+.fc-recon-advance{color:#a26818!important;font-weight:800}
+.fc-recon-selection{border:1px solid #dadff1;background:#f7f9ff;padding:14px;border-radius:13px}
+.fc-recon-selection>strong{font-size:16px}
+.fc-recon-selection>small{display:block;margin-top:7px;font-size:11px;color:#718099}
+.fc-recon-selection p{font-size:12px;overflow-wrap:anywhere;line-height:1.6}
+.fc-recon-balances{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.fc-recon-balances span{font-size:11px;padding:10px;border:1px solid #e2e7f3;background:#fff;border-radius:9px;color:#56657c}
+.fc-recon-balances b{display:block;margin-top:6px;font-size:14px;color:#26364f}
+.fc-recon-review,.fc-recon-proposals,.fc-recon-draft,.fc-recon-existing{display:grid;gap:10px;border:1px solid #e0e6f2;border-radius:13px;padding:14px;margin-top:14px;background:#fff}
+.fc-recon-review>strong,.fc-recon-proposals>strong,.fc-recon-draft>strong,.fc-recon-existing>strong{font-size:13px;color:#2c3e60}
+.fc-recon-review select,.fc-recon-review input,.fc-recon-draft input,.fc-recon-draft select{border:1px solid #d4deed;border-radius:9px;padding:10px;font:inherit;font-size:12px;background:#fff;color:#27374d;min-width:0;max-width:100%;width:100%}
+.fc-recon-review button,.fc-recon-proposals button,.fc-recon-add button,.fc-recon-existing button{border:1px solid #cbd4e8;background:#f9faff;color:#353d91;padding:8px 11px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:750}
+.fc-recon-review>button{justify-self:start}
+.fc-recon-proposals{background:#f8f7ff;border-color:#e5e0fc}
+.fc-recon-proposals>strong{display:flex;align-items:center;gap:8px}
+.fc-recon-proposals>p{margin:0;font-size:12px;line-height:1.65}
+.fc-recon-proposals>p small{display:block;color:#64758f;padding-left:18px}
+.fc-recon-proposals>button{justify-self:start}
+.fc-recon-existing>div{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid #e8edf6;padding:9px 0;font-size:12px;overflow-wrap:anywhere}
+.fc-recon-existing>div button{white-space:nowrap;display:flex;gap:6px;align-items:center}
+.fc-recon-draft>label{display:grid;grid-template-columns:minmax(0,1fr) 105px 34px;gap:8px;align-items:center;font-size:12px}
+.fc-recon-draft>label span{overflow-wrap:anywhere}
+.fc-recon-draft>label>button{border:0;border-radius:8px;background:#fff1f1;color:#9d3d3d;font-size:18px;cursor:pointer;height:33px}
+.fc-recon-add{display:flex;gap:8px;flex-wrap:wrap}
+.fc-recon-add select{flex:1 1 190px}
+.fc-recon-add input{flex:0 1 115px}
+.fc-recon-draft>p{font-size:12px;margin:8px 0}
+.fc-recon-draft>.fc-button{justify-self:start}
+.fc-recon-error,.fc-recon-message{padding:12px;border-radius:11px;display:flex;gap:9px;align-items:center;font-size:12px;margin-top:10px}
+.fc-recon-error{background:#fff3f0;color:#a3463e;border:1px solid #e6c7c0}
+.fc-recon-message{background:#f2fcf4;color:#24653b;border:1px solid #c8e9d1}
+@media(max-width:900px){.fc-recon-columns{grid-template-columns:1fr}.fc-recon-tx{max-height:330px}}
+@media(max-width:540px){.fc-recon-balances{grid-template-columns:1fr 1fr}.fc-recon-draft>label{grid-template-columns:1fr 90px 34px}}
