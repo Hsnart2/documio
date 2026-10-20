@@ -23,6 +23,8 @@ import "./business-center.css";
 import SupplierManager,{type RegisteredSupplier} from "./SupplierManager";
 import { fileSha256 } from "@/lib/document-fingerprint";
 import CompanyYearEndPanel from "./CompanyYearEndPanel";
+import BankReconciliationPanel from "./BankReconciliationPanel";
+import { alreadyAllocated,invoiceRemaining } from "@/lib/bank-allocations";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
@@ -713,21 +715,24 @@ export default function FinancialControlCenter() {
   }
   async function confirmMatch(invoice: InvoiceRow) {
     if (!userId) return;
-    const used = new Set(matches.map((item) => item.transaction_id));
     const bank = movements.find((m) => m.id === selectedTx[invoice.id]);
-    if (!bank || used.has(bank.id)) { setError("Seleziona un movimento ancora libero."); return; }
-    const remaining = Math.max(0, Number(invoice.amount) - paidFor(invoice.id, matches));
-    const allocation = Math.min(remaining, Math.abs(Number(bank.amount)));
-    if (!allocation) return;
+    if(!bank){setError("Seleziona un bonifico.");return;}
+    const remaining=invoiceRemaining(invoice,matches);
+    const free=Math.max(0,Math.round((Math.abs(Number(bank.amount))-
+      alreadyAllocated(bank.id,matches))*100)/100);
+    const allocation=Math.min(remaining,free);
+    if(allocation<0.01){setError("Bonifico o fattura già completamente attribuiti.");return;}
     const confirmed = window.confirm(
       `Confermi l'abbinamento di ${money(allocation,invoice.currency)} a ${invoice.counterparty}? Non viene disposto alcun pagamento.`,
     );
     if (!confirmed) return;
     setWorking(true); setError("");
-    const { error: issue } = await getSupabaseClient()!.from("financial_matches").insert({
-      user_id: userId, company_id: companyId, invoice_id: invoice.id,
-      transaction_id: bank.id, allocated_amount: allocation,
-    });
+    const {error:issue}=await getSupabaseClient()!.rpc(
+      "documio_confirm_bank_allocations",{
+        p_transaction_id:bank.id,
+        p_allocations:[{invoiceId:invoice.id,amount:allocation.toFixed(2)}],
+        p_matching_method:"manual",
+      });
     setWorking(false);
     if (issue) setError(issue.message);
     else { setMessage("Pagamento collegato alla fattura e confermato da te.");
@@ -807,7 +812,8 @@ export default function FinancialControlCenter() {
     </div></main>
   );
 
-  const unmatched = movements.filter((m) => !matches.some((link) => link.transaction_id === m.id));
+  const unmatched=movements.filter(m=>
+    Math.abs(Number(m.amount))-alreadyAllocated(m.id,matches)>.009);
   return <main id="dm-main-content" className="fc-page">
     <header className="fc-header">
       <a href="/" className="fc-back"><ArrowLeft size={18}/> Archivio DocuMio</a>
@@ -1080,7 +1086,8 @@ export default function FinancialControlCenter() {
             const rem = Math.max(0,Number(invoice.amount)-paid);
             const options = unmatched.filter((transaction) =>
               transaction.currency === invoice.currency &&
-              (invoice.direction === "income" ? transaction.amount > 0 : transaction.amount < 0))
+              (invoice.direction === "income" ? transaction.amount > 0 : transaction.amount < 0) &&
+              Math.abs(Number(transaction.amount))-alreadyAllocated(transaction.id,matches)>.009)
               .sort((a,b)=>matchScore(invoice,b)-matchScore(invoice,a)).slice(0,100);
             const suggested = options.length > 0 && matchScore(invoice,options[0]) >= 80;
             return <article key={invoice.id} className="fc-invoice">
@@ -1114,7 +1121,7 @@ export default function FinancialControlCenter() {
                   "Categoria proposta: verifica la descrizione e scegli quella corretta."}</small>
               </div>
               {rem > 0.01 && <div className="fc-match">
-                <label>Abbina un movimento bancario (solo dopo controllo)
+                <label>Attribuisci una quota di bonifico (anche acconti parziali)
                   <select value={selectedTx[invoice.id] ?? ""} onChange={(e)=>
                     setSelectedTx((s)=>({...s,[invoice.id]:e.target.value}))}>
                     <option value="">Seleziona movimento…</option>
@@ -1213,10 +1220,21 @@ export default function FinancialControlCenter() {
             <div className="fc-list-item" key={movement.id}>
               <div><strong>{movement.counterparty || movement.description || "Movimento bancario"}</strong>
                 <small>{dateIt(movement.booking_date)} · {movement.account_label || movement.source}
-                  {matches.some((match)=>match.transaction_id === movement.id) ? " · Riconciliato" : " · Da verificare"}</small></div>
+                  {(() => {
+                    const balance=Math.max(0,Math.abs(Number(movement.amount))-
+                      alreadyAllocated(movement.id,matches));
+                    return balance<.01?" · Interamente attribuito a fatture":
+                      balance<Math.abs(Number(movement.amount))?" · Acconto residuo "+money(balance):
+                      /acconto|anticipo/i.test(movement.description)?" · Acconto da attribuire":
+                      " · Da verificare";
+                  })()}</small></div>
               <strong className={movement.amount < 0 ? "fc-danger" : "fc-income"}>{money(movement.amount,movement.currency)}</strong>
             </div>)}</div>}
       </section>
+      <BankReconciliationPanel key={companyId??"personal"}
+        userId={userId} companyId={companyId} invoices={invoices} movements={movements}
+        matches={matches} loading={working}
+        onUpdated={async()=>{await loadData(userId,companyId);}}/>
     </>}
 
     {storageReady === true && tab === "deadlines" && <>
