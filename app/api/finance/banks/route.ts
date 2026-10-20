@@ -15,6 +15,7 @@ type BankConnection = {
   institution_name: string;
   requisition_id: string;
   consent_status: string;
+  company_id: string | null;
 };
 
 function json(data: unknown, status = 200) {
@@ -26,6 +27,8 @@ function json(data: unknown, status = 200) {
 function configured() {
   return Boolean(process.env.GOCARDLESS_BAS_SECRET_ID && process.env.GOCARDLESS_BAS_SECRET_KEY);
 }
+const uuidValid=(v:unknown):v is string=>typeof v==="string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 function safeInstitution(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_.-]{2,100}$/.test(value);
 }
@@ -47,6 +50,14 @@ async function auth(request: Request) {
   if (error || !user) return null;
   const admin = createClient(url, role, { auth: { persistSession: false, autoRefreshToken: false } });
   return { userId: user.id, admin };
+}
+type BankAccess = Awaited<ReturnType<typeof auth>>;
+async function validatedCompany(access:NonNullable<BankAccess>, value:unknown){
+  if(value===null||value===undefined||value==="") return {ok:true,companyId:null as string|null};
+  if(!uuidValid(value))return {ok:false,companyId:null as string|null};
+  const {data,error}=await access.admin.from("financial_companies").select("id")
+    .eq("id",value).eq("user_id",access.userId).maybeSingle();
+  return {ok:!error&&Boolean(data),companyId:!error&&data?value:null};
 }
 async function provider<T>(path: string, jwt: string, method = "GET", payload?: unknown): Promise<T> {
   const response = await fetch(API + path, {
@@ -93,13 +104,14 @@ async function providerJwt() {
   if (!refreshedBody.access) throw new Error("Access token provider mancante");
   return refreshedBody.access;
 }
-function connectedUrl() {
+function connectedUrl(companyId:string|null) {
   const value = process.env.DOCUMIO_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
   if (!value) throw new Error("DOCUMIO_APP_URL non configurato");
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
     throw new Error("URL applicazione non valido");
-  return url.origin + "/controllo?bank_return=1";
+  return url.origin + "/controllo?" +
+    (companyId?"company="+encodeURIComponent(companyId)+"&":"")+"bank_return=1";
 }
 function textField(value: unknown, limit = 300) {
   return typeof value === "string" ? value.trim().slice(0, limit) : "";
@@ -115,6 +127,7 @@ function bookingRows(
   connectionId: string,
   accountId: string,
   movements: unknown[],
+  companyId: string | null,
 ) {
   const repetitions = new Map<string, number>();
   const rows: Array<Record<string, unknown>> = [];
@@ -144,6 +157,7 @@ function bookingRows(
     repetitions.set(stable, occurrence);
     rows.push({
       user_id: userId,
+      company_id: companyId,
       bank_connection_id: connectionId,
       source: "gocardless",
       account_label: `Conto ${accountId.slice(0, 8)}`,
@@ -162,6 +176,8 @@ export async function GET(request: Request) {
   const access = await auth(request);
   if (!access) return json({ error: "Accedi a DocuMio per vedere i tuoi conti." }, 401);
   const url = new URL(request.url);
+  const company=await validatedCompany(access,url.searchParams.get("companyId"));
+  if(!company.ok)return json({error:"Azienda non autorizzata."},403);
   if (url.searchParams.get("view") === "institutions") {
     if (!configured()) return json({ institutions: [], enabled: false, error: "Provider bancario non configurato." });
     try {
@@ -180,11 +196,14 @@ export async function GET(request: Request) {
       return json({ institutions: [], enabled: false, error: "Elenco banche temporaneamente non disponibile." }, 503);
     }
   }
-  const { data, error } = await access.admin
+  const scoped=access.admin
     .from("financial_bank_connections")
-    .select("id,institution_name,consent_status,last_sync_at,balances,created_at")
-    .eq("user_id", access.userId)
-    .order("created_at", { ascending: false });
+    .select("id,company_id,institution_name,consent_status,last_sync_at,balances,created_at")
+    .eq("user_id", access.userId);
+  const {data,error}=await (company.companyId
+    ?scoped.eq("company_id",company.companyId)
+    :scoped.is("company_id",null))
+      .order("created_at",{ascending:false});
   if (error) return json({ error: "Applica la migrazione SQL del Centro di controllo." }, 503);
   return json({ enabled: configured(), connections: data ?? [] });
 }
@@ -193,9 +212,11 @@ export async function POST(request: Request) {
   const access = await auth(request);
   if (!access) return json({ error: "Sessione scaduta: accedi di nuovo." }, 401);
   const body = await request.json().catch(() => null) as
-    { action?: string; institutionId?: string; connectionId?: string } | null;
+    { action?: string; institutionId?: string; connectionId?: string; companyId?:unknown } | null;
   if (!body || !["connect","sync","disconnect"].includes(body.action ?? ""))
     return json({ error: "Operazione non valida." }, 400);
+  const company=await validatedCompany(access,body.companyId);
+  if(!company.ok)return json({error:"Azienda non autorizzata."},403);
   if (!configured()) return json({ error: "Open Banking non ancora configurato dal gestore." }, 503);
   try {
     const jwt = await providerJwt();
@@ -206,7 +227,7 @@ export async function POST(request: Request) {
       );
       const bank = institutions.find((item) => item.id === body.institutionId);
       if (!bank) return json({ error: "Banca non disponibile in Italia." }, 400);
-      const redirect = connectedUrl();
+      const redirect = connectedUrl(company.companyId);
       const reference = hash(`${access.userId}:${crypto.randomUUID()}`).slice(0, 40);
       const consent = await provider<{ id: string; link: string }>(
         "/requisitions/", jwt, "POST", {
@@ -217,6 +238,7 @@ export async function POST(request: Request) {
         return json({ error: "Link di consenso bancario non valido." }, 502);
       const { error } = await access.admin.from("financial_bank_connections").insert({
         user_id: access.userId,
+        company_id:company.companyId,
         institution_name: bank.name,
         institution_id: bank.id,
         requisition_id: consent.id,
@@ -227,9 +249,12 @@ export async function POST(request: Request) {
     }
     const connectionId = textField(body.connectionId, 50);
     if (!/^[a-f0-9-]{36}$/i.test(connectionId)) return json({ error: "Connessione non valida." }, 400);
-    const { data: connection, error } = await access.admin.from("financial_bank_connections")
-      .select("id,institution_name,requisition_id,consent_status")
-      .eq("user_id", access.userId).eq("id", connectionId).maybeSingle();
+    const scope=access.admin.from("financial_bank_connections")
+      .select("id,company_id,institution_name,requisition_id,consent_status")
+      .eq("user_id",access.userId).eq("id",connectionId);
+    const {data:connection,error}=await (company.companyId
+      ?scope.eq("company_id",company.companyId)
+      :scope.is("company_id",null)).maybeSingle();
     if (error || !connection) return json({ error: "Connessione non trovata." }, 404);
     const record = connection as BankConnection;
     if (body.action === "disconnect") {
@@ -238,8 +263,11 @@ export async function POST(request: Request) {
       await provider<Record<string, never>>(
         `/requisitions/${encodeURIComponent(record.requisition_id)}/`, jwt, "DELETE",
       );
-      const { error: deletionError } = await access.admin.from("financial_bank_connections")
-        .delete().eq("user_id", access.userId).eq("id", connectionId);
+      const deleteScope=access.admin.from("financial_bank_connections").delete()
+        .eq("user_id",access.userId).eq("id",connectionId);
+      const {error:deletionError}=await (company.companyId
+        ?deleteScope.eq("company_id",company.companyId)
+        :deleteScope.is("company_id",null));
       if (deletionError) throw new Error("Eliminazione dati bancari fallita");
       return json({ removed: true });
     }
@@ -247,8 +275,11 @@ export async function POST(request: Request) {
       `/requisitions/${encodeURIComponent(record.requisition_id)}/`, jwt,
     );
     const status = providerStatus(requisition.status);
-    await access.admin.from("financial_bank_connections").update({ consent_status: status })
-      .eq("user_id", access.userId).eq("id", connectionId);
+    const statusScope=access.admin.from("financial_bank_connections")
+      .update({consent_status:status})
+      .eq("user_id",access.userId).eq("id",connectionId);
+    await (company.companyId?statusScope.eq("company_id",company.companyId)
+      :statusScope.is("company_id",null));
     if (status !== "linked") {
       return json({ imported: 0, status, message: status === "expired"
         ? "Consenso scaduto: occorre ricollegare la banca."
@@ -271,7 +302,7 @@ export async function POST(request: Request) {
           `/accounts/${encodeURIComponent(accountId)}/transactions/`, jwt,
         );
         const rows = bookingRows(access.userId, connectionId, accountId,
-          result.transactions?.booked ?? []);
+          result.transactions?.booked ?? [],company.companyId);
         for (let i = 0; i < rows.length; i += 100) {
           const { data, error: insertError } = await access.admin
             .from("financial_transactions")
@@ -325,13 +356,15 @@ export async function POST(request: Request) {
       }
     }
     if (warnings.length === 0) {
-      const { error: updateError } = await access.admin.from("financial_bank_connections")
+      const updateScope=access.admin.from("financial_bank_connections")
         .update({
           consent_status: "linked",
           last_sync_at: new Date().toISOString(),
           ...(bankBalances.length ? { balances: bankBalances } : {}),
-        })
-        .eq("user_id", access.userId).eq("id", connectionId);
+        }).eq("user_id",access.userId).eq("id",connectionId);
+      const {error:updateError}=await (company.companyId
+        ?updateScope.eq("company_id",company.companyId)
+        :updateScope.is("company_id",null));
       if (updateError) warnings.push("Impossibile aggiornare lo stato di sincronizzazione.");
     }
     return json({ imported, balancesAvailable: bankBalances.length, status: "linked", warnings });
