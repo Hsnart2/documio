@@ -201,9 +201,9 @@ begin
      or jsonb_array_length(p_allocations)>20 then
     raise exception 'Assegna da 1 a 20 fatture per bonifico';
   end if;
-  select id,user_id,company_id,amount,currency into tx
-    from public.financial_transactions
-    where id=p_transaction_id and user_id=auth.uid() for update;
+  select t.id,t.user_id,t.company_id,t.amount,t.currency into tx
+    from public.financial_transactions as t
+    where t.id=p_transaction_id and t.user_id=auth.uid() for update;
   if not found then
     raise exception 'Movimento bancario non accessibile' using errcode='42501';
   end if;
@@ -220,9 +220,9 @@ begin
     inv_id:=(item->>'invoiceId')::uuid;
     amount:=(item->>'amount')::numeric(14,2);
     if amount<=0 then raise exception 'Importo non valido'; end if;
-    select id,user_id,company_id,amount,currency,direction into inv
-      from public.financial_invoices
-      where id=inv_id and user_id=auth.uid() for update;
+    select i.id,i.user_id,i.company_id,i.amount,i.currency,i.direction into inv
+      from public.financial_invoices as i
+      where i.id=inv_id and i.user_id=auth.uid() for update;
     if not found or inv.company_id is distinct from tx.company_id then
       raise exception 'Fattura inesistente o di altra azienda';
     end if;
