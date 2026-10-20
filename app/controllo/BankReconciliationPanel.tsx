@@ -83,9 +83,10 @@ export default function BankReconciliationPanel({
  },[selected?.id,currentReview?.classification,currentReview?.note,recommendation?.isAdvance]);
  useEffect(()=>{
    const sb=getSupabaseClient();if(!sb)return;
+   const client=sb;
    let active=true;
    async function load(){
-     const scope=sb.from("financial_transaction_reviews")
+     const scope=client.from("financial_transaction_reviews")
       .select("transaction_id,classification,note").eq("user_id",userId);
      const {data,error:issue}=await (companyId
        ?scope.eq("company_id",companyId):scope.is("company_id",null))
