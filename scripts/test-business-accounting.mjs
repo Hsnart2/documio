@@ -136,7 +136,7 @@ test("Document Brain con service role controlla davvero l'azienda proprietaria",
   assert.match(brain,/inWorkspace\(admin/);
   assert.match(brain,/return NextResponse\.json\(\{ error: "Azienda non accessibile\." \}, \{ status: 403 \}\)/);
   const finance=source("../app/controllo/page.tsx");
-  assert.match(finance,/const personalConnections = companyId \? \[\] : connections/);
+  assert.match(finance,/const workspaceConnections=connections/);
   assert.match(finance,/const bankLoadVersion = useRef\(0\)/);
 });
 
