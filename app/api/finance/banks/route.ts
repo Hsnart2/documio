@@ -166,7 +166,12 @@ function bookingRows(
       currency,
       description,
       counterparty,
-      import_key: "gocardless:" + hash(stable + "|" + occurrence),
+      // Mantiene le chiavi legacy dei conti personali; per le aziende
+      // include il workspace così uno stesso conto autorizzato su due
+      // archivi non fa sparire movimenti dall'altro.
+      import_key: "gocardless:" + hash(
+        (companyId?"company:"+companyId+"|":"")+stable+"|"+occurrence
+      ),
     });
   }
   return rows;
