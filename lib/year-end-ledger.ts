@@ -96,24 +96,28 @@ export function annualLedger(year:number,accounts:LedgerAccount[],entries:Journa
  };
 }
 export function ledgerCsv(report:ReturnType<typeof annualLedger>){
- const lines:(string|number)[][]=[
+ const rows:(string|number)[][]=[
   ["PARTITARIO DI LAVORO - da verificare con il commercialista",String(report.year)],
   ["Origine: sole scritture contabilizzate DocuMio. Saldi iniziali incompleti senza storico/assestamenti."],
   ["Conto","Descrizione conto","Data","Causale","Dare EUR","Avere EUR",
    "Saldo progressivo Dare meno Avere EUR","ID registrazione"],
  ];
- let last="";
+ const byAccount=new Map<string,LedgerMovement[]>();
  for(const m of report.movements){
-  if(last!==m.accountId){
-   const acc=report.accounts.find(a=>a.id===m.accountId)!;
-   lines.push([acc.code,acc.name,String(report.year)+"-01-01",
-    "Saldo iniziale da scritture disponibili","", "",euroCents(acc.openingCents),""]);
-   last=m.accountId;
-  }
-  lines.push([m.code,m.accountName,m.date,m.description,euroCents(m.debitCents),
-   euroCents(m.creditCents),euroCents(m.balanceCents),m.entryId]);
+  const existing=byAccount.get(m.accountId)??[];
+  existing.push(m);byAccount.set(m.accountId,existing);
  }
- return csv(lines);
+ for(const a of report.accounts){
+  rows.push([a.code,a.name,report.year+"-01-01",
+   "Saldo iniziale da scritture disponibili","", "",euroCents(a.openingCents),""]);
+  for(const m of byAccount.get(a.id)??[]){
+   rows.push([m.code,m.accountName,m.date,m.description,euroCents(m.debitCents),
+    euroCents(m.creditCents),euroCents(m.balanceCents),m.entryId]);
+  }
+  rows.push([a.code,a.name,report.year+"-12-31",
+   "Saldo finale da scritture disponibili","", "",euroCents(a.endingCents),""]);
+ }
+ return csv(rows);
 }
 export function trialBalanceCsv(report:ReturnType<typeof annualLedger>){
  return csv([
