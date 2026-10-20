@@ -22,13 +22,14 @@ import "./control-center.css";
 import "./business-center.css";
 import SupplierManager,{type RegisteredSupplier} from "./SupplierManager";
 import { fileSha256 } from "@/lib/document-fingerprint";
+import CompanyYearEndPanel from "./CompanyYearEndPanel";
 
 type BankBalance = {
   accountLabel: string; amount: number; currency: string;
   balanceType: string; referenceDate: string;
 };
 type Connection = {
-  id: string; institution_name: string; consent_status: string;
+  id: string; company_id:string|null; institution_name: string; consent_status: string;
   last_sync_at: string | null; created_at: string; balances: BankBalance[];
 };
 type Bank = { id: string; name: string };
@@ -181,12 +182,14 @@ export default function FinancialControlCenter() {
     return data?.session?.access_token
       ? { Authorization: `Bearer ${data.session.access_token}` } : null;
   }, []);
-  const loadConnections = useCallback(async () => {
+  const loadConnections = useCallback(async (bankCompanyId:string|null) => {
     const version = ++bankLoadVersion.current;
     try {
       const auth = await headers();
       if (!auth) return;
-      const response = await fetch("/api/finance/banks", { headers: auth, cache: "no-store" });
+      const response = await fetch("/api/finance/banks" +
+        (bankCompanyId?"?companyId="+encodeURIComponent(bankCompanyId):""),
+        { headers: auth, cache: "no-store" });
       const data = await response.json();
       if (response.ok && version === bankLoadVersion.current) {
         setBankEnabled(Boolean(data.enabled));
@@ -243,22 +246,20 @@ export default function FinancialControlCenter() {
     setInvoices([]);setMovements([]);setMatches([]);setDeadlines([]);
     setAccountingRecords([]);setArchivedDocuments([]);setContractReview(null);setSuppliers([]);
     void loadData(userId,companyId);
-    if (companyId) {
-      // Le API PSD2 correnti sono personali: non mostrare i relativi
-      // conti/saldi in un contesto aziendale fino alla delega per impresa.
-      setConnections([]);setBankEnabled(false);setInstitutions([]);
-    } else void loadConnections();
-    if (!companyId && window.location.search.includes("bank_return=1")) {
-      setMessage("Autorizzazione bancaria ricevuta. Premi Sincronizza per verificare il consenso.");
+    setConnections([]);setBankEnabled(false);setInstitutions([]);setSelectedBank("");
+    void loadConnections(companyId);
+    if (window.location.search.includes("bank_return=1")) {
+      setMessage("Autorizzazione bancaria ricevuta per l'archivio selezionato. Premi Sincronizza per verificare il consenso.");
     }
   }, [userId, companyId, companyReady, loadData, loadConnections]);
 
-  const personalConnections = companyId ? [] : connections;
+  // Guard against stale personal/company bank data during a workspace switch.
+  const workspaceConnections=connections.filter(c=>c.company_id===companyId);
   const availableBalances = useMemo(() =>
-    (companyId ? [] : connections).flatMap((connection) => connection.balances ?? [])
+    workspaceConnections.flatMap((connection) => connection.balances ?? [])
       .filter((balance) => balance.currency === "EUR" &&
         ["interimAvailable", "closingAvailable"].includes(balance.balanceType)),
-    [connections,companyId],
+    [workspaceConnections],
   );
   const availableTotal = availableBalances.reduce((sum,balance) => sum + Number(balance.amount), 0);
 
@@ -740,12 +741,11 @@ export default function FinancialControlCenter() {
     else { setMessage("Scadenza confermata manualmente."); await loadData(userId,companyId); }
   }
   async function bankApi(action: string, connectionId?: string, institutionId?: string) {
-    if (companyId) throw new Error("Connessioni bancarie aziendali non ancora abilitate: utilizza l'importazione CSV.");
-    const auth = await headers();
+     const auth = await headers();
     if (!auth) throw new Error("Devi effettuare nuovamente l'accesso.");
     const response = await fetch("/api/finance/banks", {
       method: "POST", headers: { ...auth, "Content-Type": "application/json" },
-      body: JSON.stringify({ action, connectionId, institutionId }),
+      body: JSON.stringify({ action, connectionId, institutionId, companyId }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Operazione bancaria non riuscita.");
@@ -756,7 +756,9 @@ export default function FinancialControlCenter() {
     try {
       const auth = await headers();
       if (!auth) throw new Error("Accesso richiesto.");
-      const response = await fetch("/api/finance/banks?view=institutions", { headers: auth });
+      const response = await fetch("/api/finance/banks?view=institutions" +
+        (companyId?"&companyId="+encodeURIComponent(companyId):""),
+        {headers:auth});
       const data = await response.json();
       if (!response.ok || !data.enabled) throw new Error(data.error || "Integrazione bancaria non configurata.");
       setInstitutions(data.institutions ?? []);
@@ -779,7 +781,7 @@ export default function FinancialControlCenter() {
     try {
       const result = await bankApi("sync",id);
       setMessage(result.message ?? `Sincronizzazione completata: ${result.imported ?? 0} nuovi movimenti. ${result.warnings?.join(" ") ?? ""}`);
-      await Promise.all([loadConnections(),loadData(userId,companyId)]);
+      await Promise.all([loadConnections(companyId),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Sincronizzazione non riuscita."); }
     setWorking(false);
   }
@@ -791,7 +793,7 @@ export default function FinancialControlCenter() {
     try {
       await bankApi("disconnect",id);
       setMessage("Consenso revocato tramite provider e dati collegati rimossi.");
-      await Promise.all([loadConnections(),loadData(userId,companyId)]);
+      await Promise.all([loadConnections(companyId),loadData(userId,companyId)]);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Revoca non riuscita."); }
     setWorking(false);
   }
@@ -1148,12 +1150,12 @@ export default function FinancialControlCenter() {
         <section className="fc-panel">
           <h2><Landmark size={21}/> Collega banca in sola lettura</h2>
           {companyId && <div className="fc-disclaimer">
-            Per questa azienda l'accesso PSD2 non è ancora associato a una delega aziendale.
-            I saldi del tuo conto personale rimangono nascosti. Importa il CSV dell'azienda
-            qui a destra e verifica i movimenti proposti.
-          </div>}
+             Collega solo conti di questa azienda per cui hai titolo e consenso bancario.
+             I conti personali rimangono separati. Il saldo al 31 dicembre richiede
+             comunque l'estratto conto della banca.
+           </div>}
           <p className="fc-muted">Il consenso è gestito dalla banca tramite provider Open Banking regolamentato. DocuMio non chiede password bancarie e non può inviare bonifici.</p>
-          {personalConnections.length ? <div className="fc-list">{personalConnections.map((connection) =>
+          {workspaceConnections.length ? <div className="fc-list">{workspaceConnections.map((connection) =>
             <div className="fc-bank" key={connection.id}>
               <div><strong>{connection.institution_name}</strong>
                 <small>Stato: {connection.consent_status} · Ultimo controllo: {connection.last_sync_at
@@ -1171,7 +1173,7 @@ export default function FinancialControlCenter() {
                 <button disabled={working} onClick={()=>void disconnect(connection.id)}>Scollega</button>
               </div>
             </div>)}</div> : <div className="fc-empty">Nessuna banca collegata.</div>}
-          {!companyId && bankEnabled ? <>
+          {bankEnabled ? <>
             {institutions.length === 0 && <button disabled={working} className="fc-button secondary"
               onClick={()=>void loadBanks()}><Landmark size={16}/> Scegli una banca italiana</button>}
             {!!institutions.length && <div className="fc-form">
@@ -1200,6 +1202,10 @@ export default function FinancialControlCenter() {
           <small className="fc-muted">Gli importi e la data vengono convalidati; movimenti ambigui sono scartati. Controlla il riepilogo dopo l'importazione.</small>
         </section>
       </div>
+      {companyId&&<CompanyYearEndPanel key={companyId} userId={userId}
+        companyId={companyId}
+        movementLabels={movements.map(m=>m.account_label??"Conto senza nome")}
+        bankLabels={workspaceConnections.flatMap(c=>(c.balances??[]).map(b=>b.accountLabel))}/>}
       <section className="fc-panel">
         <h2><Wallet size={21}/> Movimenti registrati</h2>
         {!movements.length ? <div className="fc-empty">Non risultano movimenti importati.</div> :

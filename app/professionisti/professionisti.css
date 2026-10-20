@@ -141,3 +141,11 @@
 @media(max-width:800px){.prf-accounting-grid{grid-template-columns:1fr;gap:8px}
  .prf-accounting-list>div{flex-wrap:wrap}.prf-accounting-list button{margin-left:auto}
  .prf-requirement-title strong{flex:1 1 175px}}
+
+.prf-annual-report{background:#f7f8fd;border:1px solid #dedff1;border-radius:13px;margin:21px 0 13px;padding:16px}
+.prf-annual-report h3{display:flex;align-items:center;gap:9px;font-size:16px;margin:0 0 9px}
+.prf-annual-report .prf-row-form{justify-content:flex-start}
+.prf-annual-report .prf-row-form>.prf-field{flex:0 0 115px}
+.prf-annual-summary{margin-top:14px;background:#fff;border:1px solid #e2e5f2;border-radius:11px;padding:12px;font-size:13px;line-height:1.6}
+.prf-annual-summary p{margin:8px 0 0}
+@media(max-width:740px){.prf-annual-report{padding:12px}.prf-annual-report .prf-row-form{display:flex;flex-wrap:wrap}.prf-annual-report .prf-row-form>.prf-field{flex:1 1 100%}}

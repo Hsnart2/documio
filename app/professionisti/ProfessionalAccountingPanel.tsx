@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback,useEffect,useMemo,useRef,useState,type FormEvent } from "react";
-import { Calculator,CheckCircle2,FileSpreadsheet,Plus,ShieldCheck } from "lucide-react";
+import { Calculator,CheckCircle2,FileSpreadsheet,Plus,ShieldCheck,Download } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 
 type Account={id:string;code:string;name:string;account_type:string;active:boolean};
@@ -33,6 +33,14 @@ export default function ProfessionalAccountingPanel({clientId,studioId,canEdit,c
  const [busy,setBusy]=useState(false);
  const [error,setError]=useState("");
  const [notice,setNotice]=useState("");
+ const [annualYear,setAnnualYear]=useState(new Date().getFullYear()-1);
+ const [annualBusy,setAnnualBusy]=useState(false);
+ const [annualReport,setAnnualReport]=useState<null|{
+   postedPeriod:number;draftsPeriod:number;historicalEntries:number;
+   periodDebitCents:number;periodCreditCents:number;
+   accounts:Array<{code:string;name:string;endingCents:number}>;
+   warning:string;
+ }>(null);
  const current=useRef(0);
 
  const reload=useCallback(async()=>{
@@ -61,7 +69,7 @@ export default function ProfessionalAccountingPanel({clientId,studioId,canEdit,c
    setTotals((t.data??[]) as Totals[]);
    setVatItems((v.data??[]) as VatItem[]);
  },[studioId,clientId]);
- useEffect(()=>{setAccounts([]);setEntries([]);setTotals([]);setVatItems([]);
+ useEffect(()=>{setAnnualReport(null);setAccounts([]);setEntries([]);setTotals([]);setVatItems([]);
    setError("");setNotice("");void reload();
    return ()=>{current.current+=1;};
  },[reload]);
@@ -77,6 +85,28 @@ export default function ProfessionalAccountingPanel({clientId,studioId,canEdit,c
  const vatDebit=vatItems.filter(x=>x.direction==="sale").reduce((a,x)=>a+Number(x.vat),0);
  const vatCredit=vatItems.filter(x=>x.direction==="purchase").reduce((a,x)=>a+Number(x.vat),0);
 
+ async function annualDownload(format:"json"|"partitario"|"verifica"){
+   const sb=getSupabaseClient();if(!sb)return;
+   setAnnualBusy(true);setError("");
+   try{
+     const {data}=await sb.auth.getSession();
+     if(!data.session?.access_token)throw Error("Sessione scaduta.");
+     const url="/api/professionisti/partitario?clientId="+encodeURIComponent(clientId)
+       +"&year="+annualYear+"&format="+format;
+     const res=await fetch(url,{cache:"no-store",
+       headers:{Authorization:"Bearer "+data.session.access_token}});
+     if(!res.ok){const body=await res.json().catch(()=>null);
+       throw Error(body?.error??"Partitario non disponibile.");}
+     if(format==="json"){setAnnualReport(await res.json());return;}
+     const blob=await res.blob();
+     const object=URL.createObjectURL(blob);
+     const anchor=document.createElement("a");anchor.href=object;
+     anchor.download=(format==="partitario"?"partitario":"bilancio-verifica")+"-"+annualYear+".csv";
+     document.body.appendChild(anchor);anchor.click();anchor.remove();
+     setTimeout(()=>URL.revokeObjectURL(object),1500);
+   }catch(e){setError(e instanceof Error?e.message:"Report non disponibile.");}
+   finally{setAnnualBusy(false);}
+ }
  async function makeEntry(e:FormEvent){
    e.preventDefault();if(!canEdit||busy)return;
    const sum=amount(draft.value);
@@ -230,7 +260,32 @@ export default function ProfessionalAccountingPanel({clientId,studioId,canEdit,c
      <tfoot><tr><th>Quadratura registrazioni</th><th>{euro(debitTotal)}</th><th>{euro(creditTotal)}</th>
        <th>{Math.abs(debitTotal-creditTotal)<0.005?"Quadrata":"DA VERIFICARE"}</th></tr></tfoot>
    </table></div>
-   <div className="prf-accounting-grid prf-vat-section">
+   <div className="prf-annual-report">
+      <h3><FileSpreadsheet size={18}/> Partitario e bilancio di verifica annuale</h3>
+      <p className="prf-muted">Registra i movimenti Dare/Avere e falli convalidare prima di esportare.
+        Il saldo di apertura deriva soltanto dallo storico presente in DocuMio:
+        senza saldi di apertura e assestamenti non è il bilancio ufficiale.</p>
+      <div className="prf-row-form">
+        <label className="prf-field">Anno
+          <input type="number" min={2000} max={2100} value={annualYear}
+            onChange={e=>{setAnnualYear(Number(e.target.value));setAnnualReport(null);}}/>
+        </label>
+        <button type="button" className="prf-outline" disabled={annualBusy}
+          onClick={()=>void annualDownload("json")}>Calcola saldi annui</button>
+        <button type="button" className="prf-primary" disabled={annualBusy}
+          onClick={()=>void annualDownload("partitario")}><Download size={16}/> Esporta partitario CSV</button>
+        <button type="button" className="prf-outline" disabled={annualBusy}
+          onClick={()=>void annualDownload("verifica")}><Download size={16}/> Bilancio verifica CSV</button>
+      </div>
+      {annualReport&&<div className="prf-annual-summary">
+        <strong>{annualReport.postedPeriod} scritture contabilizzate ·
+          {annualReport.draftsPeriod} bozze escluse</strong>
+        <p>Dare dell'anno: {euro(annualReport.periodDebitCents/100)} ·
+          Avere dell'anno: {euro(annualReport.periodCreditCents/100)}</p>
+        <p className="prf-muted">{annualReport.warning}</p>
+      </div>}
+    </div>
+    <div className="prf-accounting-grid prf-vat-section">
      {canEdit&&<form className="prf-stack" onSubmit={e=>void addVat(e)}>
        <h3>Registro IVA provvisorio</h3>
        <label className="prf-field">Periodo

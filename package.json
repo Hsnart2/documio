@@ -18,7 +18,8 @@
     "test:suppliers": "node scripts/test-suppliers-duplicates.mjs",
     "test:professionals": "node scripts/test-professional-studios.mjs",
     "test:professional-documents": "node scripts/test-professional-client-documents.mjs",
-    "test:professional-important": "node scripts/test-professional-important.mjs"
+    "test:professional-important": "node scripts/test-professional-important.mjs",
+    "test:yearend": "node scripts/test-yearend-partitario.mjs"
   },
   "dependencies": {
     "@ilovepdf/ilovepdf-nodejs": "^0.3.1",
