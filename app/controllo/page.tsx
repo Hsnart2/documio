@@ -29,7 +29,7 @@ type BankBalance = {
   balanceType: string; referenceDate: string;
 };
 type Connection = {
-  id: string; institution_name: string; consent_status: string;
+  id: string; company_id:string|null; institution_name: string; consent_status: string;
   last_sync_at: string | null; created_at: string; balances: BankBalance[];
 };
 type Bank = { id: string; name: string };
@@ -253,12 +253,13 @@ export default function FinancialControlCenter() {
     }
   }, [userId, companyId, companyReady, loadData, loadConnections]);
 
-  const workspaceConnections=connections;
+  // Guard against stale personal/company bank data during a workspace switch.
+  const workspaceConnections=connections.filter(c=>c.company_id===companyId);
   const availableBalances = useMemo(() =>
-    connections.flatMap((connection) => connection.balances ?? [])
+    workspaceConnections.flatMap((connection) => connection.balances ?? [])
       .filter((balance) => balance.currency === "EUR" &&
         ["interimAvailable", "closingAvailable"].includes(balance.balanceType)),
-    [connections],
+    [workspaceConnections],
   );
   const availableTotal = availableBalances.reduce((sum,balance) => sum + Number(balance.amount), 0);
 
