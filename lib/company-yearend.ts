@@ -11,6 +11,10 @@ export type CompanyMovement={
 };
 export type CompanyMatch={
  id:string;invoice_id:string;transaction_id:string;allocated_amount:number|string;
+ confirmed_at?:string|null;matching_method?:string|null;
+};
+export type CompanyReview={
+ transaction_id:string;classification:string;note:string;
 };
 export type BankStatement={
  id:string;account_label:string;fiscal_year:number;opening_balance:number|string|null;
@@ -24,7 +28,8 @@ function money(v:number|string):number{
 }
 type Pending=CompanyInvoice&{paidCents:number;unmatchedCents:number};
 export function companyYearEnd(year:number,invoices:CompanyInvoice[],
- movements:CompanyMovement[],matches:CompanyMatch[],statements:BankStatement[]){
+ movements:CompanyMovement[],matches:CompanyMatch[],statements:BankStatement[],
+ reviews:CompanyReview[]=[]){
  if(!Number.isInteger(year)||year<2000||year>2100)throw Error("Anno non valido");
  const first=year+"-01-01",last=year+"-12-31";
  const endInvoices=invoices.filter(i=>i.issue_date<=last);
@@ -33,6 +38,10 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
  const movementsToEnd=new Map(movements.filter(t=>t.booking_date<=last)
   .map(t=>[t.id,t]));
  const importedInYear=movements.filter(t=>t.booking_date>=first&&t.booking_date<=last);
+ const reviewMap=new Map(reviews.map(r=>[r.transaction_id,r]));
+ const byBank=new Map<string,number>();
+ const attributedDetails:Array<{transaction:CompanyMovement;invoice:CompanyInvoice|null;
+   amountCents:number;method:string;confirmedAt:string|null}>=[];
  const invoicePaid=new Map<string,number>();
  for(const m of matches){
   const tx=movementsToEnd.get(m.transaction_id);
@@ -40,7 +49,22 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
   const invoice=invoiceById.get(m.invoice_id);
   if(!invoice||tx.currency!==invoice.currency)continue;
   invoicePaid.set(invoice.id,(invoicePaid.get(invoice.id)??0)+money(m.allocated_amount));
+  byBank.set(tx.id,(byBank.get(tx.id)??0)+money(m.allocated_amount));
+  if(tx.booking_date>=first){
+    attributedDetails.push({transaction:tx,invoice,
+      amountCents:money(m.allocated_amount),method:m.matching_method??"manual",
+      confirmedAt:m.confirmed_at??null});
+  }
  }
+ const bankUnattributed=importedInYear.map(tx=>{
+   const full=Math.abs(money(tx.amount));
+   const allocated=byBank.get(tx.id)??0;
+   return {...tx,allocatedCents:allocated,
+      residualCents:Math.max(0,full-allocated),
+      classification:reviewMap.get(tx.id)?.classification??
+        (/\\b(acconto|acconti|anticipo)\\b/i.test(tx.description)?"advance":"to_review"),
+      reviewNote:reviewMap.get(tx.id)?.note??""};
+ }).filter(tx=>tx.residualCents>0);
  const details:Pending[]=endInvoices.filter(i=>i.currency==="EUR").map(i=>{
    const full=money(i.amount);
    const paid=Math.min(Math.max(invoicePaid.get(i.id)??0,0),Math.abs(full));
@@ -98,13 +122,19 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
  });
  return {
   year,yearlyInvoices,open,counterparties,importedInYear,banks,
+  bankUnattributed,attributedDetails,
   totals:{invoicedIncome,invoicedCosts,pendingReceivables,pendingPayables,
+    unallocatedBankCents:bankUnattributed.reduce((sum,tx)=>sum+tx.residualCents,0),
+    unallocatedMovements:bankUnattributed.length,
+    advancesToVerify:bankUnattributed.filter(tx=>tx.classification==="advance").length,
     bankStatements:statements.filter(s=>s.currency==="EUR"&&s.fiscal_year===year).length,
     bankClosingCents:banks.every(b=>b.closingCents!==null)&&banks.length>0
       ?banks.reduce((s,b)=>s+(b.closingCents??0),0):null},
   warnings:[
    "Sono riportate fatture registrate e importi lordi, non un conto economico fiscale.",
    "Le fatture non riconciliate non sono necessariamente insolute; verificare pagamenti esterni e incassi cumulativi.",
+   "Gli acconti non attribuiti alle fatture sono conservati come partite da verificare, anche in assenza di numero fattura nella causale.",
+   "Le proposte di ripartizione non costituiscono incasso/pagamento accertato prima della conferma dell'utente.",
    "Il saldo bancario al 31/12 è soltanto quello trascritto dall'estratto conto, mai dedotto dalla somma dei movimenti.",
    "L'accesso PSD2 fornisce principalmente saldi attuali e solo lo storico concesso dalla banca: non garantisce il saldo storico 31/12.",
    "Il pacchetto NON contiene scritture di assestamento, rimanenze, ammortamenti o bilancio civilistico.",
@@ -147,6 +177,32 @@ export function companyYearEndFiles(report:Report,companyName:string){
     t.source,t.counterparty??"",t.description,t.currency,
     t.currency==="EUR"?euroCents(money(t.amount)):String(t.amount)]),
  ]);
+ const allocationsCsv=csv([
+  ["ATTRIBUZIONI BANCARIE CONFERMATE - "+year,
+   "Una riga per ciascuna fattura collegata a un movimento"],
+  ["Data banca","Conto","Controparte banca","Causale banca",
+   "Fattura","Cliente/Fornitore","Tipo","Quota EUR","Metodo","Confermata il"],
+  ...report.attributedDetails.map(row=>[
+    row.transaction.booking_date,row.transaction.account_label??"",
+    row.transaction.counterparty??"",row.transaction.description,
+    row.invoice?.invoice_number??"",row.invoice?.counterparty??"",
+    row.invoice?.direction==="income"?"Incasso":"Pagamento",
+    euroCents(row.amountCents),row.method,row.confirmedAt??"",
+  ]),
+ ]);
+ const unappliedCsv=csv([
+  ["ACCONTI E MOVIMENTI NON ATTRIBUITI - "+year,
+   "Non dichiararli debiti o crediti definitivi senza documenti"],
+  ["Data","Conto","Controparte","Causale","Direzione",
+   "Importo movimento EUR","Già attribuito EUR","Rimanente EUR",
+   "Classificazione","Nota/revisione"],
+  ...report.bankUnattributed.filter(tx=>tx.currency==="EUR").map(tx=>[
+    tx.booking_date,tx.account_label??"",tx.counterparty??"",tx.description,
+    Number(tx.amount)>0?"Incasso":"Uscita",euroCents(money(tx.amount)),
+    euroCents(tx.allocatedCents),euroCents(tx.residualCents),
+    tx.classification,tx.reviewNote,
+  ]),
+ ]);
  const balancesCsv=csv([
   ["SALDI BANCARI 31/12/"+year,"Riportati dall'utente e non certificati da DocuMio"],
   ["Conto","Saldo iniziale dichiarato EUR","Movimenti importati EUR",
@@ -170,6 +226,8 @@ export function companyYearEndFiles(report:Report,companyName:string){
   ["scadenzario_"+year+".csv"]:pendingCsv,
   ["partitario_clienti_fornitori_da_verificare_"+year+".csv"]:counterpartiesCsv,
   ["movimenti_banche_"+year+".csv"]:movementCsv,
+  ["attribuzioni_fatture_confermate_"+year+".csv"]:allocationsCsv,
+  ["acconti_e_movimenti_da_verificare_"+year+".csv"]:unappliedCsv,
   ["saldi_bancari_31-12-"+year+".csv"]:balancesCsv,
   ["LEGGIMI.txt"]:notes,
  };
