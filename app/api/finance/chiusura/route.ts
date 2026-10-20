@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { zipSync, strToU8 } from "fflate";
 import {
  companyYearEnd,companyYearEndFiles,
- type CompanyInvoice,type CompanyMatch,type CompanyMovement,type BankStatement,
+ type CompanyInvoice,type CompanyMatch,type CompanyMovement,type BankStatement,type CompanyReview,
 } from "@/lib/company-yearend";
 
 export const runtime="nodejs";
@@ -45,7 +45,7 @@ export async function GET(request:Request){
  if(error||!company)return json({error:"Azienda non accessibile."},404);
  const end=year+"-12-31";
  try{
-  const [invoices,movements,matches,statements]=await Promise.all([
+  const [invoices,movements,matches,statements,reviews]=await Promise.all([
    all<CompanyInvoice>(async(from,to)=>{
     const r=await client.from("financial_invoices")
      .select("id,invoice_number,issue_date,direction,counterparty,vat_number,amount,currency,cost_category,category_status")
@@ -62,7 +62,7 @@ export async function GET(request:Request){
    }),
    all<CompanyMatch>(async(from,to)=>{
     const r=await client.from("financial_matches")
-     .select("id,invoice_id,transaction_id,allocated_amount")
+     .select("id,invoice_id,transaction_id,allocated_amount,confirmed_at,matching_method")
      .eq("user_id",user.id).eq("company_id",companyId)
      .order("id").range(from,to);
     return {data:r.data as CompanyMatch[]|null,error:r.error};
@@ -74,14 +74,23 @@ export async function GET(request:Request){
      .order("account_label").range(from,to);
     return {data:r.data as BankStatement[]|null,error:r.error};
    },1000),
+   all<CompanyReview>(async(from,to)=>{
+    const r=await client.from("financial_transaction_reviews")
+      .select("transaction_id,classification,note")
+      .eq("user_id",user.id).eq("company_id",companyId)
+      .order("transaction_id").range(from,to);
+    return {data:r.data as CompanyReview[]|null,error:r.error};
+   }),
   ]);
-  const report=companyYearEnd(year,invoices,movements,matches,statements);
+  const report=companyYearEnd(year,invoices,movements,matches,statements,reviews);
   if(format==="json")return json({
    companyName:company.legal_name,year,totals:report.totals,
    banks:report.banks,warnings:report.warnings,
    invoiceYearCount:report.yearlyInvoices.length,
    openInvoiceCount:report.open.length,
    movementYearCount:report.importedInYear.length,
+   unallocatedMovements:report.totals.unallocatedMovements,
+   advancesToVerify:report.totals.advancesToVerify,
   });
   const files=companyYearEndFiles(report,company.legal_name);
   const zipped=zipSync(Object.fromEntries(Object.entries(files)
