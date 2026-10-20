@@ -144,12 +144,28 @@ export default function FinancialControlCenter() {
     // Filtra sempre nel database per azienda/personale, mai soltanto nell'UI.
     const scope = (query: any) => scopeId
       ? query.eq("company_id", scopeId) : query.is("company_id", null);
+    // The account might have thousands of invoices and bank entries.
+    // Load stable 500-row pages instead of silently returning a partial
+    // register from PostgREST's per-request row cap.
+    const allRows=async(table:"financial_invoices"|"financial_transactions"|"financial_matches",
+      dateColumn:string)=>{
+      const collected:Array<Record<string,unknown>>=[];
+      for(let from=0;from<30000;from+=500){
+        if(version!==loadVersion.current)return {data:[],error:null};
+        const {data:rows,error}=await scope(
+          supabase.from(table).select("*").eq("user_id",id))
+          .order(dateColumn,{ascending:false})
+          .order("id",{ascending:false}).range(from,from+499);
+        if(error)return {data:[],error};
+        collected.push(...((rows??[]) as Record<string,unknown>[]));
+        if((rows??[]).length<500)return {data:collected,error:null};
+      }
+      return {data:[],error:{message:"Limite 30000 righe: suddividere il periodo"}};
+    };
     const [a, b, c, d, e, f, g] = await Promise.all([
-      scope(supabase.from("financial_invoices").select("*").eq("user_id", id))
-        .order("issue_date", { ascending: false }).limit(2000),
-      scope(supabase.from("financial_transactions").select("*").eq("user_id", id))
-        .order("booking_date", { ascending: false }).limit(4000),
-      scope(supabase.from("financial_matches").select("*").eq("user_id", id)).limit(4000),
+      allRows("financial_invoices","issue_date"),
+      allRows("financial_transactions","booking_date"),
+      allRows("financial_matches","confirmed_at"),
       scope(supabase.from("financial_deadlines").select("*").eq("user_id", id))
         .order("due_date", { ascending: true }).limit(1000),
       scope(supabase.from("documents")
