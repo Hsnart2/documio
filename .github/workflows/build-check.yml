@@ -117,6 +117,21 @@ jobs:
             cat supabase/migrations/20261020_bank_yearend_statements.sql
             cat scripts/yearend-bank-db-rls.sql
           } | docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d documio_yearend_ci
+      - name: DEBOX bank advances, allocations and read-only API tests
+        run: npm run test:debox-bank
+      - name: Multi-invoice bank allocations RLS on disposable PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_id="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2=="postgres:17"{print $1;exit}')"
+          test -n "$pg_id"
+          docker exec "$pg_id" createdb -U postgres documio_debox_ci
+          { sed '/^create role /d' scripts/professional-db-setup.sql
+            cat scripts/yearend-bank-db-setup.sql
+            cat scripts/debox-bank-allocations-test-setup.sql
+            cat supabase/migrations/20261020_debox_multi_invoice_bank_allocations.sql
+            cat scripts/debox-bank-allocations-test-rls.sql
+          } | docker exec -i "$pg_id" psql -X -v ON_ERROR_STOP=1 -U postgres -d documio_debox_ci
       - name: Build
         shell: bash
         run: |
