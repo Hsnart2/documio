@@ -82,7 +82,10 @@ test("Dossier commerciale distingue fatture non riconciliate dai saldi bancari",
  assert.equal(report.banks[0].differenceCents,0);
  assert.equal(report.banks[0].status,"dichiarato_dall_utente");
  const files=company.companyYearEndFiles(report,"Azienda Prova");
- assert.deepEqual(Object.keys(files).length,5);
+ assert.deepEqual(Object.keys(files).length,6);
+ assert.equal(report.counterparties.length,1);
+ assert.equal(report.counterparties[0].unmatchedCents,5000);
+ assert.match(files["partitario_clienti_fornitori_da_verificare_2026.csv"],/Cliente XY/);
  assert.match(files["LEGGIMI.txt"],/NON contiene|NON|non/g);
 });
 test("Nessun saldo al 31/12 inventato dai movimenti",()=>{
