@@ -28,6 +28,7 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
  if(!Number.isInteger(year)||year<2000||year>2100)throw Error("Anno non valido");
  const first=year+"-01-01",last=year+"-12-31";
  const endInvoices=invoices.filter(i=>i.issue_date<=last);
+ const invoiceById=new Map(endInvoices.map(i=>[i.id,i]));
  const yearlyInvoices=endInvoices.filter(i=>i.issue_date>=first);
  const movementsToEnd=new Map(movements.filter(t=>t.booking_date<=last)
   .map(t=>[t.id,t]));
@@ -36,7 +37,7 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
  for(const m of matches){
   const tx=movementsToEnd.get(m.transaction_id);
   if(!tx)continue;
-  const invoice=endInvoices.find(i=>i.id===m.invoice_id);
+  const invoice=invoiceById.get(m.invoice_id);
   if(!invoice||tx.currency!==invoice.currency)continue;
   invoicePaid.set(invoice.id,(invoicePaid.get(invoice.id)??0)+money(m.allocated_amount));
  }
@@ -46,6 +47,26 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
    return {...i,paidCents:paid,unmatchedCents:Math.max(0,Math.abs(full)-paid)};
  });
  const open=details.filter(i=>i.unmatchedCents>0);
+ const byCounterparty=new Map<string,{
+  counterparty:string;vatNumber:string;direction:string;invoiceCount:number;
+  invoicedCents:number;paidCents:number;unmatchedCents:number;
+ }>();
+ for(const invoice of details){
+  const key=invoice.direction+"|"+(invoice.vat_number?.trim()||
+    invoice.counterparty.toLowerCase().replace(/\s+/g," ").trim());
+  const group=byCounterparty.get(key)??{
+   counterparty:invoice.counterparty,vatNumber:invoice.vat_number??"",
+   direction:invoice.direction,invoiceCount:0,invoicedCents:0,paidCents:0,
+   unmatchedCents:0,
+  };
+  group.invoiceCount++;
+  group.invoicedCents+=money(invoice.amount);
+  group.paidCents+=invoice.paidCents;
+  group.unmatchedCents+=invoice.unmatchedCents;
+  byCounterparty.set(key,group);
+ }
+ const counterparties=[...byCounterparty.values()].sort((a,b)=>
+   a.counterparty.localeCompare(b.counterparty,"it"));
  const invoicedIncome=yearlyInvoices.filter(i=>i.direction==="income"&&i.currency==="EUR")
    .reduce((s,i)=>s+money(i.amount),0);
  const invoicedCosts=yearlyInvoices.filter(i=>i.direction==="expense"&&i.currency==="EUR")
@@ -76,7 +97,7 @@ export function companyYearEnd(year:number,invoices:CompanyInvoice[],
   };
  });
  return {
-  year,yearlyInvoices,open,importedInYear,banks,
+  year,yearlyInvoices,open,counterparties,importedInYear,banks,
   totals:{invoicedIncome,invoicedCosts,pendingReceivables,pendingPayables,
     bankStatements:statements.filter(s=>s.currency==="EUR"&&s.fiscal_year===year).length,
     bankClosingCents:banks.every(b=>b.closingCents!==null)&&banks.length>0
@@ -110,6 +131,15 @@ export function companyYearEndFiles(report:Report,companyName:string){
     i.currency==="EUR"?euroCents(money(i.amount)):String(i.amount)+" "+i.currency,
     i.cost_category??"",i.category_status??""]),
  ]);
+ const counterpartiesCsv=csv([
+  ["PROSPETTO CLIENTI E FORNITORI AL 31/12/"+year,
+   "Da riconciliare e validare; non è il partitario fiscale completo"],
+  ["Tipo","Controparte","P.IVA","Fatture registrate","Totale lordo fatture EUR",
+   "Pagamenti abbinati entro il 31/12 EUR","Saldo da riconciliare EUR"],
+  ...report.counterparties.map(c=>[c.direction==="income"?"Clienti":"Fornitori",
+    c.counterparty,c.vatNumber,c.invoiceCount,euroCents(c.invoicedCents),
+    euroCents(c.paidCents),euroCents(c.unmatchedCents)]),
+ ]);
  const movementCsv=csv([
   ["MOVIMENTI BANCARI IMPORTATI",yearText,"Non garantisce completezza dei conti"],
   ["Data","Conto","Fonte","Controparte","Causale","Valuta","Importo"],
@@ -138,6 +168,7 @@ export function companyYearEndFiles(report:Report,companyName:string){
  return {
   ["fatture_"+year+".csv"]:invoicesCsv,
   ["scadenzario_"+year+".csv"]:pendingCsv,
+  ["partitario_clienti_fornitori_da_verificare_"+year+".csv"]:counterpartiesCsv,
   ["movimenti_banche_"+year+".csv"]:movementCsv,
   ["saldi_bancari_31-12-"+year+".csv"]:balancesCsv,
   ["LEGGIMI.txt"]:notes,
