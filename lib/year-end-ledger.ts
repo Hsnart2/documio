@@ -25,9 +25,10 @@ export function euroCents(value:number):string{
 }
 export function csvCell(value:string|number):string{
  const raw=String(value);
- // Protegge fogli Excel/Calc da formula injection anche con caratteri Unicode
- // invisibili e spazi iniziali.
- const safe=/^[\s\u200b-\u200f\ufeff]*[=+@\-]/u.test(raw)?"'"+raw:raw;
+ // Numeri decimali puri (compresi saldi bancari negativi) restano numeri
+ // importabili in Excel; il testo arbitrario non deve eseguire formule.
+ const pureNumber=/^-?\d+(?:[.,]\d+)?$/.test(raw);
+ const safe=!pureNumber && /^[\s\u200b-\u200f\ufeff]*[=+@\-]/u.test(raw)?"'"+raw:raw;
  return '"'+safe.replace(/"/g,'""')+'"';
 }
 export function csv(records:(string|number)[][]):string{
