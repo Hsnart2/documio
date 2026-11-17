@@ -1,0 +1,65 @@
+name: Build Fable2 Asset Browser (Windows)
+on:
+  push:
+    branches:
+      - tools/fable2-asset-browser-win-build
+    paths:
+      - .github/workflows/build-fable2-browser.yml
+      - tools/fable2-browser/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-release:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout isolated build branch
+        uses: actions/checkout@v4
+      - name: Check out open-source Fable2 Asset Browser
+        shell: pwsh
+        run: git clone --depth=1 https://github.com/adarec1994/Fable2AssetBrowser.git fable-src
+      - name: Apply source modifications
+        shell: pwsh
+        run: |
+          $patchBase64 = (Get-Content -LiteralPath 'tools/fable2-browser/fable_patch.b64' -Raw).Trim()
+          [System.IO.File]::WriteAllBytes('fable_patch.zip', [Convert]::FromBase64String($patchBase64))
+          Expand-Archive -LiteralPath 'fable_patch.zip' -DestinationPath 'fable-patch' -Force
+          python fable-patch/applica_modifica.py fable-src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Configure MSVC x64 Release
+        shell: pwsh
+        run: |
+          cmake -S fable-src/source -B fable-build -G "Visual Studio 17 2022" -A x64 -DFABLE_BUILD_TESTS=OFF -DFABLE_BUILD_TOOLS=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile Windows EXE
+        shell: pwsh
+        run: |
+          cmake --build fable-build --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package executable and license
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem 'fable-build' -Filter 'Fable_2_Asset_Browser.exe' -File -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'Windows EXE was not generated.' }
+          New-Item -ItemType Directory -Force 'Fable2AssetBrowser_Mod_Windows' | Out-Null
+          Copy-Item -LiteralPath $exe.FullName -Destination 'Fable2AssetBrowser_Mod_Windows/Fable_2_Asset_Browser.exe'
+          Copy-Item -LiteralPath 'fable-src/LICENSE' -Destination 'Fable2AssetBrowser_Mod_Windows/LICENSE.txt'
+          Copy-Item -LiteralPath 'fable-patch/applica_modifica.py' -Destination 'Fable2AssetBrowser_Mod_Windows/applica_modifica.py'
+          Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_Mod_Windows/source' -Recurse
+          @'
+          Fable 2 Asset Browser - Windows x64 Release (modificato)
+          Include: selezione multipla, navigazione con frecce, categorie e selezione esportazione GLB/FBX/MDL.
+          Questo EXE e' basato sul progetto GPL-3.0 adarec1994/Fable2AssetBrowser.
+          Il codice delle modifiche e' incluso; il sorgente originale: https://github.com/adarec1994/Fable2AssetBrowser
+          Non include asset del gioco. Conservare sempre una copia del vecchio EXE.
+          '@ | Set-Content -LiteralPath 'Fable2AssetBrowser_Mod_Windows/LEGGIMI.txt'
+          Write-Host "Built:" $exe.FullName $exe.Length
+      - name: Upload installer-free Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fable2AssetBrowser_Mod_Windows
+          path: Fable2AssetBrowser_Mod_Windows/
+          retention-days: 14
