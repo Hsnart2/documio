@@ -4,6 +4,7 @@ on:
     branches:
       - tools/fable2-asset-browser-win-build
       - tools/fable2-asset-browser-ultralight-v2
+      - tools/fable2-asset-browser-mobile-only-v3
     paths:
       - .github/workflows/build-fable2-browser.yml
       - tools/fable2-browser/**
@@ -35,6 +36,11 @@ jobs:
         run: |
           python tools/fable2-browser/enable_mobile_export.py fable-src
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Mobile-only default with stronger image optimization
+        shell: pwsh
+        run: |
+          python tools/fable2-browser/mobile_only_v3.py fable-src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
@@ -60,21 +66,29 @@ jobs:
         run: |
           $exe = Get-ChildItem 'fable-build' -Filter 'Fable_2_Asset_Browser.exe' -File -Recurse | Select-Object -First 1
           if (-not $exe) { throw 'Windows EXE was not generated.' }
-          New-Item -ItemType Directory -Force 'Fable2AssetBrowser_Mod_Windows' | Out-Null
-          Copy-Item -LiteralPath $exe.FullName -Destination 'Fable2AssetBrowser_Mod_Windows/Fable_2_Asset_Browser.exe'
-          Copy-Item -LiteralPath 'gltfpack.exe' -Destination 'Fable2AssetBrowser_Mod_Windows/gltfpack.exe'
-          Copy-Item -LiteralPath 'meshoptimizer_LICENSE.md' -Destination 'Fable2AssetBrowser_Mod_Windows/meshoptimizer_LICENSE.md'
-          Copy-Item -LiteralPath 'fable-src/LICENSE' -Destination 'Fable2AssetBrowser_Mod_Windows/LICENSE.txt'
-          Copy-Item -LiteralPath 'fable-patch/applica_modifica.py' -Destination 'Fable2AssetBrowser_Mod_Windows/applica_modifica.py'
-          Copy-Item -LiteralPath 'tools/fable2-browser/enable_mobile_export.py' -Destination 'Fable2AssetBrowser_Mod_Windows/enable_mobile_export.py'
-          Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_Mod_Windows/source' -Recurse
-          Copy-Item -LiteralPath 'fable-src/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Destination 'Fable2AssetBrowser_Mod_Windows/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Force
-          Copy-Item -LiteralPath 'fable-src/source/src/ISO/IsoDump/Models/MobileOptimizer.inl' -Destination 'Fable2AssetBrowser_Mod_Windows/source/src/ISO/IsoDump/Models/MobileOptimizer.inl'
+          New-Item -ItemType Directory -Force 'Fable2AssetBrowser_MobileOnly_Windows' | Out-Null
+          Copy-Item -LiteralPath $exe.FullName -Destination 'Fable2AssetBrowser_MobileOnly_Windows/Fable_2_Asset_Browser.exe'
+          Copy-Item -LiteralPath 'gltfpack.exe' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/gltfpack.exe'
+          Copy-Item -LiteralPath 'meshoptimizer_LICENSE.md' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/meshoptimizer_LICENSE.md'
+          Copy-Item -LiteralPath 'fable-src/LICENSE' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/LICENSE.txt'
+          Copy-Item -LiteralPath 'fable-patch/applica_modifica.py' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/applica_modifica.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/enable_mobile_export.py' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/enable_mobile_export.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/mobile_only_v3.py' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/mobile_only_v3.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/Ottimizza-GLB.ps1' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/Ottimizza-GLB.ps1'
+          Copy-Item -LiteralPath 'tools/fable2-browser/OTTIMIZZA_I_MIEI_GLB.bat' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/OTTIMIZZA_I_MIEI_GLB.bat'
+          Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/source' -Recurse
+          Copy-Item -LiteralPath 'fable-src/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Force
+          Copy-Item -LiteralPath 'fable-src/source/src/ISO/IsoDump/Models/MobileOptimizer.inl' -Destination 'Fable2AssetBrowser_MobileOnly_Windows/source/src/ISO/IsoDump/Models/MobileOptimizer.inl'
           @'
           Fable 2 Asset Browser - Windows x64 Release (modificato)
           Include: selezione multipla, frecce, categorie e selezione GLB/FBX/MDL.
-          NOVITA: con 'GLB mobile automatico' attivo, ogni export GLB produce l'originale
-          e una copia *_mobile.glb ottimizzata con gltfpack (meshopt + WebP).
+          NOVITA: di default ogni export GLB produce SOLO *_mobile.glb leggero.
+          Compressione meshopt + WebP + riduzione texture 50%, triangoli 85%.
+          Preset Qualita alta, Mobile, Ultra (texture 25%, triangoli 65%).
+          Facoltativo: "Salva anche originale pesante". In caso di errore,
+          conserva un GLB originale anziche' perdere l'asset.
+          Per i vecchi GLB giganti, trascina la cartella su OTTIMIZZA_I_MIEI_GLB.bat
+          e recupera i modelli nella cartella GLB_MOBILE_OTTIMIZZATI.
           Lascia gltfpack.exe accanto al programma. Il file originale resta intatto.
           I file *_mobile.glb richiedono EXT_meshopt_compression e EXT_texture_webp
           nel loader del gioco. In Three.js configurare GLTFLoader.setMeshoptDecoder.
@@ -84,11 +98,11 @@ jobs:
           Questo EXE e' basato sul progetto GPL-3.0 adarec1994/Fable2AssetBrowser.
           Il codice delle modifiche e' incluso; il sorgente originale: https://github.com/adarec1994/Fable2AssetBrowser
           Non include asset del gioco. Conservare sempre una copia del vecchio EXE.
-          '@ | Set-Content -LiteralPath 'Fable2AssetBrowser_Mod_Windows/LEGGIMI.txt'
+          '@ | Set-Content -LiteralPath 'Fable2AssetBrowser_MobileOnly_Windows/LEGGIMI.txt'
           Write-Host "Built:" $exe.FullName $exe.Length
       - name: Upload installer-free Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Fable2AssetBrowser_Mod_Windows
-          path: Fable2AssetBrowser_Mod_Windows/
+          name: Fable2AssetBrowser_MobileOnly_Windows
+          path: Fable2AssetBrowser_MobileOnly_Windows/
           retention-days: 14
