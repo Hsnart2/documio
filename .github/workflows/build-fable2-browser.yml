@@ -88,7 +88,6 @@ jobs:
           Copy-Item -LiteralPath 'tools/fable2-browser/mobile_only_v3.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/mobile_only_v3.py'
           Copy-Item -LiteralPath 'tools/fable2-browser/enable_unity_flycam.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/enable_unity_flycam.py'
           Copy-Item -LiteralPath 'tools/fable2-browser/fix_left_drag.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/fix_left_drag.py'
-          Copy-Item -LiteralPath 'fable-src/source/src/UI/Layout/RenderPanel/DirectX/ModelView/Interaction/SkeletonCameraAndRender.inl' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/source/src/UI/Layout/RenderPanel/DirectX/ModelView/Interaction/SkeletonCameraAndRender.inl' -Force
           Copy-Item -LiteralPath 'tools/fable2-browser/Ottimizza-GLB.ps1' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/Ottimizza-GLB.ps1'
           Copy-Item -LiteralPath 'tools/fable2-browser/OTTIMIZZA_I_MIEI_GLB.bat' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/OTTIMIZZA_I_MIEI_GLB.bat'
           Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/source' -Recurse
