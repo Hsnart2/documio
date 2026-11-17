@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - tools/fable2-asset-browser-win-build
+      - tools/fable2-asset-browser-ultralight-v2
     paths:
       - .github/workflows/build-fable2-browser.yml
       - tools/fable2-browser/**
@@ -29,6 +30,11 @@ jobs:
           Expand-Archive -LiteralPath 'fable_patch.zip' -DestinationPath 'fable-patch' -Force
           python fable-patch/applica_modifica.py fable-src
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Enable automatic mobile GLB optimization
+        shell: pwsh
+        run: |
+          python tools/fable2-browser/enable_mobile_export.py fable-src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
@@ -39,6 +45,16 @@ jobs:
         run: |
           cmake --build fable-build --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Download pinned gltfpack Windows optimizer
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/zeux/meshoptimizer/releases/download/v1.3/gltfpack-windows.zip'
+          Invoke-WebRequest -Uri $url -OutFile 'gltfpack-windows.zip'
+          Expand-Archive -LiteralPath 'gltfpack-windows.zip' -DestinationPath 'gltfpack-bin' -Force
+          $gltfpack = Get-ChildItem 'gltfpack-bin' -Filter 'gltfpack.exe' -File -Recurse | Select-Object -First 1
+          if (-not $gltfpack) { throw 'gltfpack.exe missing in release archive.' }
+          Copy-Item -LiteralPath $gltfpack.FullName -Destination 'gltfpack.exe'
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/zeux/meshoptimizer/v1.3/LICENSE.md' -OutFile 'meshoptimizer_LICENSE.md'
       - name: Package executable and license
         shell: pwsh
         run: |
@@ -46,12 +62,25 @@ jobs:
           if (-not $exe) { throw 'Windows EXE was not generated.' }
           New-Item -ItemType Directory -Force 'Fable2AssetBrowser_Mod_Windows' | Out-Null
           Copy-Item -LiteralPath $exe.FullName -Destination 'Fable2AssetBrowser_Mod_Windows/Fable_2_Asset_Browser.exe'
+          Copy-Item -LiteralPath 'gltfpack.exe' -Destination 'Fable2AssetBrowser_Mod_Windows/gltfpack.exe'
+          Copy-Item -LiteralPath 'meshoptimizer_LICENSE.md' -Destination 'Fable2AssetBrowser_Mod_Windows/meshoptimizer_LICENSE.md'
           Copy-Item -LiteralPath 'fable-src/LICENSE' -Destination 'Fable2AssetBrowser_Mod_Windows/LICENSE.txt'
           Copy-Item -LiteralPath 'fable-patch/applica_modifica.py' -Destination 'Fable2AssetBrowser_Mod_Windows/applica_modifica.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/enable_mobile_export.py' -Destination 'Fable2AssetBrowser_Mod_Windows/enable_mobile_export.py'
           Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_Mod_Windows/source' -Recurse
+          Copy-Item -LiteralPath 'fable-src/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Destination 'Fable2AssetBrowser_Mod_Windows/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Force
+          Copy-Item -LiteralPath 'fable-src/source/src/ISO/IsoDump/Models/MobileOptimizer.inl' -Destination 'Fable2AssetBrowser_Mod_Windows/source/src/ISO/IsoDump/Models/MobileOptimizer.inl'
           @'
           Fable 2 Asset Browser - Windows x64 Release (modificato)
-          Include: selezione multipla, navigazione con frecce, categorie e selezione esportazione GLB/FBX/MDL.
+          Include: selezione multipla, frecce, categorie e selezione GLB/FBX/MDL.
+          NOVITA: con 'GLB mobile automatico' attivo, ogni export GLB produce l'originale
+          e una copia *_mobile.glb ottimizzata con gltfpack (meshopt + WebP).
+          Lascia gltfpack.exe accanto al programma. Il file originale resta intatto.
+          I file *_mobile.glb richiedono EXT_meshopt_compression e EXT_texture_webp
+          nel loader del gioco. In Three.js configurare GLTFLoader.setMeshoptDecoder.
+          La riduzione non e' garantita: dipende dai dati, non elimina automaticamente
+          porte/finestre e non alleggerisce collisioni del motore di gioco.
+          Licenza gltfpack/meshoptimizer: MIT, vedi meshoptimizer_LICENSE.md.
           Questo EXE e' basato sul progetto GPL-3.0 adarec1994/Fable2AssetBrowser.
           Il codice delle modifiche e' incluso; il sorgente originale: https://github.com/adarec1994/Fable2AssetBrowser
           Non include asset del gioco. Conservare sempre una copia del vecchio EXE.
