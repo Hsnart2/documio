@@ -7,6 +7,7 @@ on:
       - tools/fable2-asset-browser-mobile-only-v3
       - tools/fable2-asset-browser-unity-navigation-v4
       - tools/fable2-asset-browser-natural-left-drag-v5
+      - tools/fable2-hero-designer-export-v6
     paths:
       - .github/workflows/build-fable2-browser.yml
       - tools/fable2-browser/**
@@ -53,6 +54,16 @@ jobs:
         run: |
           python tools/fable2-browser/fix_left_drag.py fable-src
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Add Hero Designer assembled export
+        shell: pwsh
+        run: |
+          python tools/fable2-browser/enable_hero_export.py fable-src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Add full male female Hero pack export
+        shell: pwsh
+        run: |
+          python tools/fable2-browser/enable_hero_pack.py fable-src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Configure MSVC x64 Release
         shell: pwsh
         run: |
@@ -78,24 +89,36 @@ jobs:
         run: |
           $exe = Get-ChildItem 'fable-build' -Filter 'Fable_2_Asset_Browser.exe' -File -Recurse | Select-Object -First 1
           if (-not $exe) { throw 'Windows EXE was not generated.' }
-          New-Item -ItemType Directory -Force 'Fable2AssetBrowser_MouseNaturale_Windows' | Out-Null
-          Copy-Item -LiteralPath $exe.FullName -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/Fable_2_Asset_Browser.exe'
-          Copy-Item -LiteralPath 'gltfpack.exe' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/gltfpack.exe'
-          Copy-Item -LiteralPath 'meshoptimizer_LICENSE.md' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/meshoptimizer_LICENSE.md'
-          Copy-Item -LiteralPath 'fable-src/LICENSE' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/LICENSE.txt'
-          Copy-Item -LiteralPath 'fable-patch/applica_modifica.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/applica_modifica.py'
-          Copy-Item -LiteralPath 'tools/fable2-browser/enable_mobile_export.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/enable_mobile_export.py'
-          Copy-Item -LiteralPath 'tools/fable2-browser/mobile_only_v3.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/mobile_only_v3.py'
-          Copy-Item -LiteralPath 'tools/fable2-browser/enable_unity_flycam.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/enable_unity_flycam.py'
-          Copy-Item -LiteralPath 'tools/fable2-browser/fix_left_drag.py' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/fix_left_drag.py'
-          Copy-Item -LiteralPath 'tools/fable2-browser/Ottimizza-GLB.ps1' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/Ottimizza-GLB.ps1'
-          Copy-Item -LiteralPath 'tools/fable2-browser/OTTIMIZZA_I_MIEI_GLB.bat' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/OTTIMIZZA_I_MIEI_GLB.bat'
-          Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/source' -Recurse
-          Copy-Item -LiteralPath 'fable-src/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Force
-          Copy-Item -LiteralPath 'fable-src/source/src/ISO/IsoDump/Models/MobileOptimizer.inl' -Destination 'Fable2AssetBrowser_MouseNaturale_Windows/source/src/ISO/IsoDump/Models/MobileOptimizer.inl'
+          New-Item -ItemType Directory -Force 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows' | Out-Null
+          Copy-Item -LiteralPath $exe.FullName -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/Fable_2_Asset_Browser.exe'
+          Copy-Item -LiteralPath 'gltfpack.exe' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/gltfpack.exe'
+          Copy-Item -LiteralPath 'meshoptimizer_LICENSE.md' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/meshoptimizer_LICENSE.md'
+          Copy-Item -LiteralPath 'fable-src/LICENSE' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/LICENSE.txt'
+          Copy-Item -LiteralPath 'fable-patch/applica_modifica.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/applica_modifica.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/enable_mobile_export.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/enable_mobile_export.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/mobile_only_v3.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/mobile_only_v3.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/enable_unity_flycam.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/enable_unity_flycam.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/fix_left_drag.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/fix_left_drag.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/enable_hero_export.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/enable_hero_export.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/enable_hero_pack.py' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/enable_hero_pack.py'
+          Copy-Item -LiteralPath 'tools/fable2-browser/Ottimizza-GLB.ps1' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/Ottimizza-GLB.ps1'
+          Copy-Item -LiteralPath 'tools/fable2-browser/OTTIMIZZA_I_MIEI_GLB.bat' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/OTTIMIZZA_I_MIEI_GLB.bat'
+          Copy-Item -LiteralPath 'fable-patch/source' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/source' -Recurse
+          Copy-Item -LiteralPath 'fable-src/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/source/src/UI/Panels/LeftPanel/Draw/Assets/ModelOrganizer.inl' -Force
+          Copy-Item -LiteralPath 'fable-src/source/src/ISO/IsoDump/Models/MobileOptimizer.inl' -Destination 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/source/src/ISO/IsoDump/Models/MobileOptimizer.inl'
           @'
           Fable 2 Asset Browser - Windows x64 Release (modificato)
           Include: selezione multipla, frecce, categorie e selezione GLB/FBX/MDL.
+          NUOVO HERO DESIGNER: ESPORTA HERO + ANIMAZIONI (GLB).
+          NUOVO: ESPORTA PACCHETTO HERO UOMO + DONNA.
+          Crea HeroPack_Uomo_Donna_<timestamp> con:
+          - Hero_Male_Base_Animated.glb e Hero_Female_Base_Animated.glb;
+          - Variants/Male/... Variants/Female/... (Hair/Beard/Moustache,
+            Hat, Mask, Accessories), piu' eventuali vestiti e armi;
+          - manifest.json con nomi delle varianti e file di origine.
+          Le animazioni compatibili sono incluse nei due GLB base;
+          le varianti non duplicano corpo e animazioni.
+          Il programma usa SOLO gli asset gia' presenti nella tua ISO.
           FIX: tasto sinistro + trascinamento naturale (mouse non invertito).
           Nel pannello del modello si possono invertire X e Y separatamente.
           NOVITA: navigazione libera nelle scene Levels come Unity.
@@ -119,11 +142,11 @@ jobs:
           Questo EXE e' basato sul progetto GPL-3.0 adarec1994/Fable2AssetBrowser.
           Il codice delle modifiche e' incluso; il sorgente originale: https://github.com/adarec1994/Fable2AssetBrowser
           Non include asset del gioco. Conservare sempre una copia del vecchio EXE.
-          '@ | Set-Content -LiteralPath 'Fable2AssetBrowser_MouseNaturale_Windows/LEGGIMI.txt'
+          '@ | Set-Content -LiteralPath 'Fable2AssetBrowser_Hero_Uomo_Donna_Windows/LEGGIMI.txt'
           Write-Host "Built:" $exe.FullName $exe.Length
       - name: Upload installer-free Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: Fable2AssetBrowser_MouseNaturale_Windows
-          path: Fable2AssetBrowser_MouseNaturale_Windows/
+          name: Fable2AssetBrowser_Hero_Uomo_Donna_Windows
+          path: Fable2AssetBrowser_Hero_Uomo_Donna_Windows/
           retention-days: 14
