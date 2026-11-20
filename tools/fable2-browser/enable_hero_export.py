@@ -203,11 +203,11 @@ bool mdl_to_glb_from_geometry(
 '''        size_t uv_offset = add_data(geom.uvs.data(), geom.uvs.size() * sizeof(float));''',
 '''        size_t uv_offset = add_data(uv_coords.data(), uv_coords.size() * sizeof(float));''')
     edit(root,"MDL/mdl_converter.cpp",
-'''        bufferViews << "{\"buffer\":0,\"byteOffset\":" << uv_offset << ",\"byteLength\":" << (geom.uvs.size() * sizeof(float)) << ",\"target\":34962}";''',
-'''        bufferViews << "{\"buffer\":0,\"byteOffset\":" << uv_offset << ",\"byteLength\":" << (uv_coords.size() * sizeof(float)) << ",\"target\":34962}";''')
+r'''        bufferViews << "{\"buffer\":0,\"byteOffset\":" << uv_offset << ",\"byteLength\":" << (geom.uvs.size() * sizeof(float)) << ",\"target\":34962}";''',
+r'''        bufferViews << "{\"buffer\":0,\"byteOffset\":" << uv_offset << ",\"byteLength\":" << (uv_coords.size() * sizeof(float)) << ",\"target\":34962}";''')
     edit(root,"MDL/mdl_converter.cpp",
-'''        accessors << "{\"bufferView\":" << uv_bv << ",\"componentType\":5126,\"count\":" << (geom.uvs.size()/2) << ",\"type\":\"VEC2\"}";''',
-'''        accessors << "{\"bufferView\":" << uv_bv << ",\"componentType\":5126,\"count\":" << (uv_coords.size()/2) << ",\"type\":\"VEC2\"}";''')
+r'''        accessors << "{\"bufferView\":" << uv_bv << ",\"componentType\":5126,\"count\":" << (geom.uvs.size()/2) << ",\"type\":\"VEC2\"}";''',
+r'''        accessors << "{\"bufferView\":" << uv_bv << ",\"componentType\":5126,\"count\":" << (uv_coords.size()/2) << ",\"type\":\"VEC2\"}";''')
     edit(root,"MDL/mdl_converter.cpp",
 '''        if (!geom.bone_ids.empty() && !geom.bone_weights.empty() && !valid_bones.empty()) {''',
 '''        if (geom.bone_ids.size() == vcount * 4 &&
